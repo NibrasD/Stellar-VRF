@@ -13,7 +13,6 @@ import {
   Networks,
   TransactionBuilder,
   Operation,
-  Address,
   nativeToScVal,
   xdr,
   rpc as SorobanRpc,
@@ -29,8 +28,9 @@ const FEE         = "1000000"; // 0.1 XLM max
 // Fixed oracle Stellar keypair — funded from Friendbot on first use
 // This is a Stellar Ed25519 key for paying gas (distinct from the secp256k1 VRF key)
 // IMPORTANT: testnet only — do not use real XLM
+// GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI
 const ORACLE_STELLAR_SEED =
-  "SAQLZCQA6AYUXK6JSKVPJ2MY6LQLUCHJ7Q7PBNUKHFH6MRBJPOPZ7K6";
+  "SCOYJ5ZYDYBAM7FPRHL4PTFYNSE62AAL7LREU676VWAUSP75CCJUW7QO";
 
 let oracleKP: Keypair;
 let server: SorobanRpc.Server;
@@ -78,7 +78,7 @@ async function pollTx(hash: string): Promise<SorobanRpc.Api.GetTransactionRespon
     const status = await srv.getTransaction(hash);
     if (status.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) return status;
     if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-      throw new Error(`On-chain tx failed: ${hash}`);
+      throw new Error(`On-chain tx failed (${hash}): ${JSON.stringify((status as any).resultMetaXdr ?? (status as any).resultXdr ?? status)}`);
     }
   }
   throw new Error("Timeout waiting for tx: " + hash);
@@ -141,9 +141,18 @@ export async function sorobanRequest(
 
   const result = await sendTx(tx);
   // Return value is SCV_U64 — the contract-assigned request ID
-  const contractId = Number(
-    (result.returnValue as xdr.ScVal).u64()
-  );
+  // xdr Uint64 is represented as a Long object — convert via toString first
+  let contractId = 0;
+  try {
+    const rv = result.returnValue as xdr.ScVal;
+    const u64val = rv.u64();
+    // xdr Long objects have a .toNumber() or .toString() method
+    contractId = typeof (u64val as any).toNumber === "function"
+      ? (u64val as any).toNumber()
+      : Number(BigInt((u64val as any).toString()));
+  } catch (e) {
+    // Non-critical — we still have the tx hash
+  }
   const txHash = result.txHash || "";
   return { contractRequestId: contractId, txHash };
 }
@@ -163,7 +172,19 @@ export async function sorobanFulfill(
 
   // Build EcvrfProof struct matching the Soroban contract
   const alphaBytes  = Buffer.from(alphaSeed, "utf-8");
-  const gammaBytes  = Buffer.from(proof.gammaPoint, "hex");       // 33 bytes compressed
+  // gammaPoint is stored as 65-byte uncompressed (04||x||y) — contract wants 33-byte compressed
+  // Compress manually: if y is even → 02||x, if y is odd → 03||x (no library needed)
+  const gammaHex = proof.gammaPoint;
+  let gammaBytes: Buffer;
+  if (gammaHex.startsWith("04") && gammaHex.length === 130) {
+    const raw = Buffer.from(gammaHex.slice(2), "hex"); // 64 bytes: x||y
+    const x   = raw.subarray(0, 32);
+    const yLastByte = raw[63]; // last byte of y
+    const prefix = (yLastByte & 1) === 0 ? 0x02 : 0x03;
+    gammaBytes = Buffer.concat([Buffer.from([prefix]), x]); // 33 bytes
+  } else {
+    gammaBytes = Buffer.from(gammaHex, "hex"); // already compact
+  }
   // challenge is 16 bytes (first half of 32-byte hash)
   const cBytes      = Buffer.from(proof.challengeScalar, "hex").subarray(0, 16);
   const sBytes      = Buffer.from(proof.responseScalar,  "hex");  // 32 bytes
