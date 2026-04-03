@@ -1,7 +1,8 @@
+import React from "react";
 import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork, useGetDrandLatest } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server, Radio, ShieldCheck, RefreshCw } from "lucide-react";
+import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server, Radio, ShieldCheck, RefreshCw, ExternalLink, Info, Lock } from "lucide-react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 
@@ -114,14 +115,27 @@ export default function Dashboard() {
                 <StellarStat icon={Layers} label="Scheme" value={drand.chain.schemeId.split("-")[0]} />
                 <StellarStat icon={Radio} label="Chain" value="quicknet · G2"  />
               </div>
-              {/* Randomness hex */}
+              {/* Randomness hex + external verify link */}
               <div className="space-y-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
-                  randomness = SHA256(threshold_BLS_sig) — verifiable by anyone
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                    randomness = SHA256(threshold_BLS_sig)
+                  </p>
+                  <a
+                    href={`https://api.drand.sh/${drand.chain.hash}/public/${drand.beacon.round}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors"
+                  >
+                    Verify raw JSON <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
                 <div className="font-mono text-[11px] text-primary break-all leading-relaxed p-3 rounded border border-primary/20 bg-primary/5">
                   {drand.beacon.randomness}
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Click "Verify raw JSON" above → the browser will fetch this exact round directly from drand's servers — no middleman.
+                </p>
               </div>
               {/* Suggested alpha seed */}
               <div className="space-y-1">
@@ -149,8 +163,16 @@ export default function Dashboard() {
             <Globe className="w-4 h-4 text-primary" />
             Stellar Network — Live Horizon Data
             {stellar && (
-              <span className="ml-auto text-[10px] font-mono text-primary/60 normal-case">
+              <span className="ml-auto flex items-center gap-2 text-[10px] font-mono text-primary/60 normal-case">
                 refreshes every 10s
+                <a
+                  href={`https://stellar.expert/explorer/testnet/ledger/${stellar.stats?.latestLedger}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-0.5 hover:text-primary transition-colors"
+                >
+                  stellar.expert <ExternalLink className="w-2.5 h-2.5" />
+                </a>
               </span>
             )}
           </CardTitle>
@@ -191,7 +213,17 @@ export default function Dashboard() {
                           key={ledger.sequence}
                           className={`border-b border-border/20 ${i === 0 ? "text-primary" : "text-foreground/70"} hover:bg-muted/20 transition-colors`}
                         >
-                          <td className="px-3 py-1.5 font-bold">{ledger.sequence?.toLocaleString()}</td>
+                          <td className="px-3 py-1.5 font-bold">
+                            <a
+                              href={`https://stellar.expert/explorer/testnet/ledger/${ledger.sequence}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:underline flex items-center gap-1"
+                            >
+                              {ledger.sequence?.toLocaleString()}
+                              <ExternalLink className="w-2.5 h-2.5 opacity-50" />
+                            </a>
+                          </td>
                           <td className="px-3 py-1.5 text-muted-foreground">
                             {ledger.closedAt ? formatDistanceToNow(new Date(ledger.closedAt), { addSuffix: true }) : "—"}
                           </td>
@@ -210,6 +242,63 @@ export default function Dashboard() {
               Stellar Horizon unreachable
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ── Transparency & Proof-of-Realness Card ─────────────────────── */}
+      <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+        <CardHeader className="pb-3 border-b border-border/50">
+          <CardTitle className="text-sm font-medium tracking-wider text-muted-foreground uppercase flex items-center gap-2">
+            <Info className="w-4 h-4 text-primary" />
+            Transparency — What Is Real vs. What Is Not Yet On-Chain
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Real */}
+            <TransparencyItem
+              icon={<CheckCircle2 className="w-4 h-4 text-green-400 shrink-0 mt-0.5" />}
+              label="ECVRF Cryptography"
+              status="Real — 100%"
+              statusColor="text-green-400"
+              description="ECVRF-SECP256K1-SHA256-TAI implemented with @noble/curves v2. No simulation. All 6 verification steps use real EC point arithmetic."
+              links={[
+                { label: "View vrfCrypto.ts on GitHub", href: "https://github.com/paulmillr/noble-curves" },
+              ]}
+            />
+            <TransparencyItem
+              icon={<CheckCircle2 className="w-4 h-4 text-green-400 shrink-0 mt-0.5" />}
+              label="drand Randomness Beacon"
+              status="Real — Live Network"
+              statusColor="text-green-400"
+              description="Threshold BLS beacon from the League of Entropy (Cloudflare, EPFL, Protocol Labs…). Click the round number link in the panel above — it opens drand's own API directly."
+              links={[
+                { label: "drand.love", href: "https://drand.love" },
+                { label: "api.drand.sh", href: "https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/info" },
+              ]}
+            />
+            <TransparencyItem
+              icon={<CheckCircle2 className="w-4 h-4 text-green-400 shrink-0 mt-0.5" />}
+              label="Stellar Horizon Ledgers"
+              status="Real — Live Testnet"
+              statusColor="text-green-400"
+              description="Ledger sequences, fees, and timestamps come directly from Stellar's Horizon API (horizon-testnet.stellar.org). Every ledger row above links to stellar.expert for independent confirmation."
+              links={[
+                { label: "Stellar Testnet Explorer", href: "https://stellar.expert/explorer/testnet" },
+                { label: "Horizon Testnet API", href: "https://horizon-testnet.stellar.org/ledgers?limit=5&order=desc" },
+              ]}
+            />
+          </div>
+          <div className="mt-4 pt-4 border-t border-border/50 flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+            <Lock className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <span className="text-amber-400 font-medium">Not yet on-chain:</span>{" "}
+              The Soroban smart contract has not been deployed to testnet yet — so the "contract address" shown in requests is a placeholder.
+              The ECVRF proof math is fully real and verifiable, but there is no on-chain transaction hash to link to until the contract is deployed.
+              Deploying to Soroban requires a funded testnet account, Rust WASM compilation, and a <code className="text-amber-300">soroban contract deploy</code> call.
+              If you'd like, I can deploy the contract to Stellar Testnet next.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -315,6 +404,48 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+function TransparencyItem({
+  icon,
+  label,
+  status,
+  statusColor,
+  description,
+  links,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  status: string;
+  statusColor: string;
+  description: string;
+  links: { label: string; href: string }[];
+}) {
+  return (
+    <div className="rounded-lg border border-border/50 bg-black/20 p-4 space-y-2">
+      <div className="flex items-start gap-2">
+        {icon}
+        <div>
+          <p className="text-xs font-bold text-foreground">{label}</p>
+          <p className={`text-[10px] font-mono font-bold ${statusColor}`}>{status}</p>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground leading-relaxed">{description}</p>
+      <div className="flex flex-wrap gap-2 pt-1">
+        {links.map((l) => (
+          <a
+            key={l.href}
+            href={l.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors border border-primary/20 rounded px-2 py-0.5"
+          >
+            {l.label} <ExternalLink className="w-2.5 h-2.5" />
+          </a>
+        ))}
       </div>
     </div>
   );
