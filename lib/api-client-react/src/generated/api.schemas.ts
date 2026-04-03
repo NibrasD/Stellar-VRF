@@ -197,6 +197,52 @@ export interface StellarNetworkData {
   fee: StellarFeeEstimate;
 }
 
+/**
+ * A single drand randomness beacon
+ */
+export interface DrandBeacon {
+  /** Monotonically increasing round number */
+  round: number;
+  /** sha256 of the threshold BLS signature — the verifiable random output */
+  randomness: string;
+  /** Combined threshold BLS signature from the League of Entropy */
+  signature: string;
+  /** Signature from the previous round (chained chains only) */
+  previousSignature?: string;
+}
+
+/**
+ * Metadata about the drand chain
+ */
+export interface DrandChainInfo {
+  chainId: string;
+  name: string;
+  /** Unique chain hash (32 bytes hex) */
+  hash: string;
+  /** Seconds between beacons */
+  period: number;
+  /** Unix timestamp of round 1 */
+  genesisTime: number;
+  /** Cryptographic scheme identifier */
+  schemeId: string;
+}
+
+/**
+ * Full drand beacon response including chain metadata, the beacon itself, and a pre-computed VRF alpha seed string derived from the beacon randomness. Use suggestedAlphaSeed as the alpha input to /vrf-requests to guarantee that the VRF output cannot be biased by the oracle operator.
+
+ */
+export interface DrandResponse {
+  chain: DrandChainInfo;
+  beacon: DrandBeacon;
+  /** Unix timestamp when the next beacon will be available */
+  nextRoundAt: number;
+  /** Seconds until the next beacon */
+  secondsUntilNext: number;
+  /** Ready-to-use VRF alpha seed that embeds chain hash, round number, and the drand randomness hex. Pass this as alphaSeed to POST /vrf-requests.
+   */
+  suggestedAlphaSeed: string;
+}
+
 export type ListVrfRequestsParams = {
   status?: ListVrfRequestsStatus;
   limit?: number;
@@ -209,4 +255,31 @@ export const ListVrfRequestsStatus = {
   pending: "pending",
   fulfilled: "fulfilled",
   failed: "failed",
+} as const;
+
+export type GetDrandLatestParams = {
+  /**
+   * drand chain to query (quicknet = 3s period, default = 30s period)
+   */
+  chain?: GetDrandLatestChain;
+};
+
+export type GetDrandLatestChain =
+  (typeof GetDrandLatestChain)[keyof typeof GetDrandLatestChain];
+
+export const GetDrandLatestChain = {
+  quicknet: "quicknet",
+  default: "default",
+} as const;
+
+export type GetDrandRoundParams = {
+  chain?: GetDrandRoundChain;
+};
+
+export type GetDrandRoundChain =
+  (typeof GetDrandRoundChain)[keyof typeof GetDrandRoundChain];
+
+export const GetDrandRoundChain = {
+  quicknet: "quicknet",
+  default: "default",
 } as const;
