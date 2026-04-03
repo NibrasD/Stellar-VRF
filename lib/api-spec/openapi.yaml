@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Soroban VRF API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: vrf-requests
+    description: VRF randomness request operations
+  - name: vrf-proofs
+    description: VRF proof management and verification
+  - name: stats
+    description: Dashboard statistics and analytics
 paths:
   /healthz:
     get:
@@ -24,6 +30,206 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /vrf-requests:
+    get:
+      operationId: listVrfRequests
+      tags: [vrf-requests]
+      summary: List VRF requests
+      description: Returns all VRF randomness requests
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, fulfilled, failed]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: List of VRF requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VrfRequest"
+    post:
+      operationId: createVrfRequest
+      tags: [vrf-requests]
+      summary: Submit a new VRF request
+      description: Creates a new randomness request with the given alpha seed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVrfRequestBody"
+      responses:
+        "201":
+          description: Request created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VrfRequest"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /vrf-requests/{id}:
+    get:
+      operationId: getVrfRequest
+      tags: [vrf-requests]
+      summary: Get a VRF request
+      description: Returns details for a specific VRF request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: VRF request details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VrfRequestDetail"
+        "404":
+          description: Request not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /vrf-requests/{id}/fulfill:
+    post:
+      operationId: fulfillVrfRequest
+      tags: [vrf-requests]
+      summary: Fulfill a VRF request
+      description: Generates ECVRF proof and fulfills the request with verifiable randomness
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Request fulfilled with proof
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VrfRequestDetail"
+        "400":
+          description: Request already fulfilled or failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Request not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /vrf-proofs:
+    get:
+      operationId: listVrfProofs
+      tags: [vrf-proofs]
+      summary: List VRF proofs
+      description: Returns all generated ECVRF proofs
+      responses:
+        "200":
+          description: List of VRF proofs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VrfProof"
+
+  /vrf-proofs/{id}/verify:
+    post:
+      operationId: verifyVrfProof
+      tags: [vrf-proofs]
+      summary: Verify a VRF proof
+      description: Simulates on-chain verification of an ECVRF proof
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationResult"
+        "404":
+          description: Proof not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /stats/dashboard:
+    get:
+      operationId: getDashboardStats
+      tags: [stats]
+      summary: Get dashboard statistics
+      description: Returns aggregate statistics for the VRF dashboard
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /stats/randomness-distribution:
+    get:
+      operationId: getRandomnessDistribution
+      tags: [stats]
+      summary: Get randomness distribution
+      description: Returns the distribution of generated random values for visualization
+      responses:
+        "200":
+          description: Randomness distribution data
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RandomnessDistributionPoint"
+
+  /stats/recent-activity:
+    get:
+      operationId: getRecentActivity
+      tags: [stats]
+      summary: Get recent activity
+      description: Returns a timeline of recent VRF requests and proof generations
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +240,259 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    VrfRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+        alphaSeed:
+          type: string
+          description: The input seed provided by the requester
+        requesterAddress:
+          type: string
+          description: Simulated Soroban contract address of the requester
+        status:
+          type: string
+          enum: [pending, fulfilled, failed]
+        randomOutput:
+          type: ["string", "null"]
+          description: The generated verifiable random output (hex)
+        contractAddress:
+          type: string
+          description: Simulated VRF oracle contract address
+        gasEstimate:
+          type: integer
+          description: Simulated gas cost for on-chain verification
+        createdAt:
+          type: string
+          format: date-time
+        fulfilledAt:
+          type: ["string", "null"]
+          format: date-time
+      required:
+        - id
+        - alphaSeed
+        - requesterAddress
+        - status
+        - randomOutput
+        - contractAddress
+        - gasEstimate
+        - createdAt
+        - fulfilledAt
+
+    VrfRequestDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        alphaSeed:
+          type: string
+        requesterAddress:
+          type: string
+        status:
+          type: string
+          enum: [pending, fulfilled, failed]
+        randomOutput:
+          type: ["string", "null"]
+        contractAddress:
+          type: string
+        gasEstimate:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        fulfilledAt:
+          type: ["string", "null"]
+          format: date-time
+        proof:
+          $ref: "#/components/schemas/VrfProof"
+      required:
+        - id
+        - alphaSeed
+        - requesterAddress
+        - status
+        - randomOutput
+        - contractAddress
+        - gasEstimate
+        - createdAt
+        - fulfilledAt
+
+    CreateVrfRequestBody:
+      type: object
+      properties:
+        alphaSeed:
+          type: string
+          description: Input seed for randomness generation
+        requesterAddress:
+          type: string
+          description: Soroban contract address of the requester
+      required:
+        - alphaSeed
+        - requesterAddress
+
+    VrfProof:
+      type: object
+      properties:
+        id:
+          type: integer
+        requestId:
+          type: integer
+        gammaPoint:
+          type: string
+          description: EC point gamma (part of the ECVRF proof)
+        challengeScalar:
+          type: string
+          description: Challenge scalar c in the proof
+        responseScalar:
+          type: string
+          description: Response scalar s in the proof
+        publicKey:
+          type: string
+          description: VRF public key (hex)
+        proofBytes:
+          type: string
+          description: Full serialized proof (hex)
+        verificationStatus:
+          type: string
+          enum: [unverified, verified, invalid]
+        verificationSteps:
+          type: ["string", "null"]
+          description: JSON array of verification steps
+        computedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - requestId
+        - gammaPoint
+        - challengeScalar
+        - responseScalar
+        - publicKey
+        - proofBytes
+        - verificationStatus
+        - verificationSteps
+        - computedAt
+
+    VerificationResult:
+      type: object
+      properties:
+        proofId:
+          type: integer
+        valid:
+          type: boolean
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationStep"
+        gasUsed:
+          type: integer
+        blockTime:
+          type: integer
+          description: Simulated block time in milliseconds
+      required:
+        - proofId
+        - valid
+        - steps
+        - gasUsed
+        - blockTime
+
+    VerificationStep:
+      type: object
+      properties:
+        stepNumber:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        passed:
+          type: boolean
+        detail:
+          type: string
+      required:
+        - stepNumber
+        - name
+        - description
+        - passed
+        - detail
+
+    DashboardStats:
+      type: object
+      properties:
+        totalRequests:
+          type: integer
+        pendingRequests:
+          type: integer
+        fulfilledRequests:
+          type: integer
+        failedRequests:
+          type: integer
+        proofSuccessRate:
+          type: number
+          description: Percentage of proofs that passed verification
+        avgGasPerVerification:
+          type: integer
+        avgFulfillmentTimeMs:
+          type: integer
+        totalProofsGenerated:
+          type: integer
+        totalProofsVerified:
+          type: integer
+      required:
+        - totalRequests
+        - pendingRequests
+        - fulfilledRequests
+        - failedRequests
+        - proofSuccessRate
+        - avgGasPerVerification
+        - avgFulfillmentTimeMs
+        - totalProofsGenerated
+        - totalProofsVerified
+
+    RandomnessDistributionPoint:
+      type: object
+      properties:
+        bucket:
+          type: string
+          description: Hex range bucket
+        count:
+          type: integer
+        percentage:
+          type: number
+      required:
+        - bucket
+        - count
+        - percentage
+
+    ActivityItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [request_created, proof_generated, proof_verified, request_fulfilled]
+        description:
+          type: string
+        requestId:
+          type: ["integer", "null"]
+        proofId:
+          type: ["integer", "null"]
+        timestamp:
+          type: string
+          format: date-time
+      required:
+        - id
+        - type
+        - description
+        - requestId
+        - proofId
+        - timestamp
