@@ -28,6 +28,14 @@ async function buildAll() {
     // - uses native modules and loads them dynamically (e.g. sharp)
     // - use path traversal to read files (e.g. @google-cloud/secret-manager loads sibling .proto files)
     external: [
+      // Real crypto/blockchain libraries — use ESM subpath exports; let Node resolve them natively
+      "@noble/curves",
+      "@noble/curves/*",
+      "@noble/hashes",
+      "@noble/hashes/*.js",
+      "@stellar/stellar-sdk",
+      "@stellar/stellar-base",
+      "eventsource",
       "*.node",
       "sharp",
       "better-sqlite3",

@@ -233,3 +233,37 @@ export const GetRecentActivityResponseItem = zod.object({
 export const GetRecentActivityResponse = zod.array(
   GetRecentActivityResponseItem,
 );
+
+/**
+ * Returns real-time Stellar Testnet stats, recent ledgers, and Soroban fee estimates from Horizon
+ * @summary Get live Stellar network data
+ */
+export const GetStellarNetworkResponse = zod.object({
+  stats: zod.object({
+    network: zod.string(),
+    horizonUrl: zod.string(),
+    latestLedger: zod.number(),
+    latestLedgerClosedAt: zod.string(),
+    baseFeeInStroops: zod.number(),
+    baseFeeInXLM: zod.number(),
+    networkPassphrase: zod.string(),
+    protocolVersion: zod.number(),
+  }),
+  ledgers: zod.array(
+    zod.object({
+      sequence: zod.number(),
+      hash: zod.string(),
+      closedAt: zod.string(),
+      txCount: zod.number(),
+      operationCount: zod.number(),
+      baseFee: zod.number(),
+    }),
+  ),
+  fee: zod.object({
+    instructionFee: zod.number(),
+    readFee: zod.number(),
+    writeFee: zod.number(),
+    totalStroops: zod.number(),
+    totalXLM: zod.number(),
+  }),
+});

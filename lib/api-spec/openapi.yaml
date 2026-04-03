@@ -230,6 +230,26 @@ paths:
                 items:
                   $ref: "#/components/schemas/ActivityItem"
 
+  /stellar/network:
+    get:
+      operationId: getStellarNetwork
+      tags: [stats]
+      summary: Get live Stellar network data
+      description: Returns real-time Stellar Testnet stats, recent ledgers, and Soroban fee estimates from Horizon
+      responses:
+        "200":
+          description: Live Stellar network data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StellarNetworkData"
+        "503":
+          description: Stellar Horizon unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -496,3 +516,91 @@ components:
         - requestId
         - proofId
         - timestamp
+
+    StellarLedger:
+      type: object
+      properties:
+        sequence:
+          type: integer
+        hash:
+          type: string
+        closedAt:
+          type: string
+        txCount:
+          type: integer
+        operationCount:
+          type: integer
+        baseFee:
+          type: integer
+      required:
+        - sequence
+        - hash
+        - closedAt
+        - txCount
+        - operationCount
+        - baseFee
+
+    StellarNetworkStats:
+      type: object
+      properties:
+        network:
+          type: string
+        horizonUrl:
+          type: string
+        latestLedger:
+          type: integer
+        latestLedgerClosedAt:
+          type: string
+        baseFeeInStroops:
+          type: integer
+        baseFeeInXLM:
+          type: number
+        networkPassphrase:
+          type: string
+        protocolVersion:
+          type: integer
+      required:
+        - network
+        - horizonUrl
+        - latestLedger
+        - latestLedgerClosedAt
+        - baseFeeInStroops
+        - baseFeeInXLM
+        - networkPassphrase
+        - protocolVersion
+
+    StellarFeeEstimate:
+      type: object
+      properties:
+        instructionFee:
+          type: integer
+        readFee:
+          type: integer
+        writeFee:
+          type: integer
+        totalStroops:
+          type: integer
+        totalXLM:
+          type: number
+      required:
+        - instructionFee
+        - readFee
+        - writeFee
+        - totalStroops
+        - totalXLM
+
+    StellarNetworkData:
+      type: object
+      properties:
+        stats:
+          $ref: "#/components/schemas/StellarNetworkStats"
+        ledgers:
+          type: array
+          items:
+            $ref: "#/components/schemas/StellarLedger"
+        fee:
+          $ref: "#/components/schemas/StellarFeeEstimate"
+      required:
+        - stats
+        - ledgers
+        - fee

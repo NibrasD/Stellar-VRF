@@ -3,6 +3,7 @@ import healthRouter from "./health";
 import vrfRequestsRouter from "./vrfRequests";
 import vrfProofsRouter from "./vrfProofs";
 import statsRouter from "./stats";
+import stellarRouter from "./stellar";
 
 const router: IRouter = Router();
 
@@ -10,5 +11,6 @@ router.use(healthRouter);
 router.use(vrfRequestsRouter);
 router.use(vrfProofsRouter);
 router.use(statsRouter);
+router.use(stellarRouter);
 
 export default router;

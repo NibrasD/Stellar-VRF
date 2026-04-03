@@ -24,6 +24,7 @@ import type {
   HealthStatus,
   ListVrfRequestsParams,
   RandomnessDistributionPoint,
+  StellarNetworkData,
   VerificationResult,
   VrfProof,
   VrfRequest,
@@ -855,6 +856,82 @@ export function useGetRecentActivity<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetRecentActivityQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Returns real-time Stellar Testnet stats, recent ledgers, and Soroban fee estimates from Horizon
+ * @summary Get live Stellar network data
+ */
+export const getGetStellarNetworkUrl = () => {
+  return `/api/stellar/network`;
+};
+
+export const getStellarNetwork = async (
+  options?: RequestInit,
+): Promise<StellarNetworkData> => {
+  return customFetch<StellarNetworkData>(getGetStellarNetworkUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetStellarNetworkQueryKey = () => {
+  return [`/api/stellar/network`] as const;
+};
+
+export const getGetStellarNetworkQueryOptions = <
+  TData = Awaited<ReturnType<typeof getStellarNetwork>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getStellarNetwork>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetStellarNetworkQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getStellarNetwork>>
+  > = ({ signal }) => getStellarNetwork({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getStellarNetwork>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetStellarNetworkQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getStellarNetwork>>
+>;
+export type GetStellarNetworkQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get live Stellar network data
+ */
+
+export function useGetStellarNetwork<
+  TData = Awaited<ReturnType<typeof getStellarNetwork>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getStellarNetwork>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetStellarNetworkQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

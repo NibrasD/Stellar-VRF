@@ -163,6 +163,40 @@ export interface ActivityItem {
   timestamp: string;
 }
 
+export interface StellarLedger {
+  sequence: number;
+  hash: string;
+  closedAt: string;
+  txCount: number;
+  operationCount: number;
+  baseFee: number;
+}
+
+export interface StellarNetworkStats {
+  network: string;
+  horizonUrl: string;
+  latestLedger: number;
+  latestLedgerClosedAt: string;
+  baseFeeInStroops: number;
+  baseFeeInXLM: number;
+  networkPassphrase: string;
+  protocolVersion: number;
+}
+
+export interface StellarFeeEstimate {
+  instructionFee: number;
+  readFee: number;
+  writeFee: number;
+  totalStroops: number;
+  totalXLM: number;
+}
+
+export interface StellarNetworkData {
+  stats: StellarNetworkStats;
+  ledgers: StellarLedger[];
+  fee: StellarFeeEstimate;
+}
+
 export type ListVrfRequestsParams = {
   status?: ListVrfRequestsStatus;
   limit?: number;

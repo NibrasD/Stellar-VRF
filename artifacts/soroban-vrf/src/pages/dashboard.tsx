@@ -1,7 +1,7 @@
-import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity } from "@workspace/api-client-react";
+import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { Activity, Clock, Zap, CheckCircle2, Shield, AlertTriangle } from "lucide-react";
+import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server } from "lucide-react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 
@@ -9,6 +9,9 @@ export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useGetDashboardStats();
   const { data: distribution, isLoading: distLoading } = useGetRandomnessDistribution();
   const { data: activity, isLoading: activityLoading } = useGetRecentActivity();
+  const { data: stellar, isLoading: stellarLoading } = useGetStellarNetwork({
+    query: { refetchInterval: 10000 },
+  });
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -17,36 +20,114 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold tracking-tight">System Status</h1>
           <p className="text-muted-foreground mt-1">Real-time VRF oracle metrics</p>
         </div>
+        {/* Live Stellar Network Badge */}
+        {stellar && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-xs font-mono text-primary">
+            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            Stellar {stellar.stats?.networkPassphrase?.includes("Test") ? "Testnet" : "Mainnet"} Live
+          </div>
+        )}
       </div>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard 
-          title="Total Requests" 
-          value={stats?.totalRequests} 
-          icon={Activity} 
-          loading={statsLoading} 
+        <StatCard
+          title="Total Requests"
+          value={stats?.totalRequests}
+          icon={Activity}
+          loading={statsLoading}
         />
-        <StatCard 
-          title="Proof Success Rate" 
-          value={stats ? `${stats.proofSuccessRate.toFixed(2)}%` : undefined} 
-          icon={CheckCircle2} 
-          loading={statsLoading} 
+        <StatCard
+          title="Proof Success Rate"
+          value={stats ? `${stats.proofSuccessRate.toFixed(2)}%` : undefined}
+          icon={CheckCircle2}
+          loading={statsLoading}
           highlight
         />
-        <StatCard 
-          title="Avg Fulfillment Time" 
-          value={stats ? `${stats.avgFulfillmentTimeMs}ms` : undefined} 
-          icon={Clock} 
-          loading={statsLoading} 
+        <StatCard
+          title="Avg Fulfillment Time"
+          value={stats ? `${stats.avgFulfillmentTimeMs}ms` : undefined}
+          icon={Clock}
+          loading={statsLoading}
         />
-        <StatCard 
-          title="Avg Gas Used" 
-          value={stats?.avgGasPerVerification} 
-          icon={Zap} 
-          loading={statsLoading} 
+        <StatCard
+          title="Avg Gas Used"
+          value={stats?.avgGasPerVerification}
+          icon={Zap}
+          loading={statsLoading}
         />
       </div>
+
+      {/* Live Stellar Network Panel */}
+      <Card className="border-primary/20 bg-card/50 backdrop-blur-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium tracking-wider text-muted-foreground uppercase flex items-center gap-2">
+            <Globe className="w-4 h-4 text-primary" />
+            Stellar Network — Live Horizon Data
+            {stellar && (
+              <span className="ml-auto text-[10px] font-mono text-primary/60 normal-case">
+                refreshes every 10s
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {stellarLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="h-3 w-20 bg-muted animate-pulse rounded" />
+                  <div className="h-6 w-28 bg-muted animate-pulse rounded" />
+                </div>
+              ))}
+            </div>
+          ) : stellar ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <StellarStat icon={Layers} label="Latest Ledger" value={stellar.stats?.latestLedger?.toLocaleString() ?? "—"} />
+                <StellarStat icon={Hash} label="Base Fee (XLM)" value={stellar.stats?.baseFeeInXLM != null ? stellar.stats.baseFeeInXLM.toFixed(7) : "—"} />
+                <StellarStat icon={Server} label="Soroban Fee (stroops)" value={stellar.fee?.totalStroops?.toLocaleString() ?? "—"} />
+                <StellarStat icon={Clock} label="Recent Ledgers" value={`${stellar.ledgers?.length ?? 0} loaded`} />
+              </div>
+              {/* Recent ledgers mini table */}
+              {stellar.ledgers && stellar.ledgers.length > 0 && (
+                <div className="mt-2 overflow-auto max-h-[180px] rounded border border-border/40">
+                  <table className="w-full text-[11px] font-mono">
+                    <thead className="sticky top-0 bg-card border-b border-border/40">
+                      <tr className="text-muted-foreground">
+                        <th className="text-left px-3 py-2">Sequence</th>
+                        <th className="text-left px-3 py-2">Closed At</th>
+                        <th className="text-right px-3 py-2">Ops</th>
+                        <th className="text-right px-3 py-2">Base Fee</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stellar.ledgers.map((ledger, i) => (
+                        <tr
+                          key={ledger.sequence}
+                          className={`border-b border-border/20 ${i === 0 ? "text-primary" : "text-foreground/70"} hover:bg-muted/20 transition-colors`}
+                        >
+                          <td className="px-3 py-1.5 font-bold">{ledger.sequence?.toLocaleString()}</td>
+                          <td className="px-3 py-1.5 text-muted-foreground">
+                            {ledger.closedAt ? formatDistanceToNow(new Date(ledger.closedAt), { addSuffix: true }) : "—"}
+                          </td>
+                          <td className="px-3 py-1.5 text-right">{ledger.operationCount ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-right">{ledger.baseFee ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="py-4 text-sm text-muted-foreground flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-destructive" />
+              Stellar Horizon unreachable
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Randomness Distribution Chart */}
@@ -64,12 +145,12 @@ export default function Dashboard() {
               ) : distribution ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={distribution}>
-                    <XAxis 
-                      dataKey="bucket" 
-                      stroke="#888888" 
-                      fontSize={12} 
-                      tickLine={false} 
-                      axisLine={false} 
+                    <XAxis
+                      dataKey="bucket"
+                      stroke="#888888"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
                     />
                     <YAxis
                       stroke="#888888"
@@ -117,7 +198,7 @@ export default function Dashboard() {
             <div className="space-y-0 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-border before:to-transparent">
               {activityLoading ? (
                 <div className="py-4 text-center text-muted-foreground text-sm">Syncing feed...</div>
-              ) : activity?.map((item, i) => (
+              ) : activity?.map((item) => (
                 <div key={item.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active py-3 px-4">
                   <div className="flex items-center justify-center w-2 h-2 rounded-full border border-primary bg-background shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-primary/20 z-10 ml-4 md:ml-0" />
                   <div className="w-[calc(100%-3rem)] md:w-[calc(50%-1.5rem)] ml-4 md:ml-0 p-3 rounded border border-border/50 bg-card/30 hover:bg-card/80 transition-colors">
@@ -155,16 +236,28 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ 
-  title, 
-  value, 
-  icon: Icon, 
+function StellarStat({ icon: Icon, label, value }: { icon: any; label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        <Icon className="w-3 h-3" />
+        <span className="text-[11px] uppercase tracking-wider">{label}</span>
+      </div>
+      <p className="text-lg font-mono font-bold text-foreground tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  icon: Icon,
   loading,
-  highlight = false 
-}: { 
-  title: string; 
-  value?: string | number; 
-  icon: any; 
+  highlight = false
+}: {
+  title: string;
+  value?: string | number;
+  icon: any;
   loading: boolean;
   highlight?: boolean;
 }) {
