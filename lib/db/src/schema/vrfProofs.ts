@@ -13,6 +13,8 @@ export const vrfProofsTable = pgTable("vrf_proofs", {
   verificationStatus: text("verification_status", { enum: ["unverified", "verified", "invalid"] }).notNull().default("unverified"),
   verificationSteps: text("verification_steps"),
   computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  fulfillTxHash: text("fulfill_tx_hash"),
+  onChainExplorerUrl: text("on_chain_explorer_url"),
 });
 
 export const insertVrfProofSchema = createInsertSchema(vrfProofsTable).omit({

@@ -87,7 +87,34 @@ export default function RequestDetail() {
           <CardContent className="pt-6 space-y-6">
             <DataRow label="Alpha Seed" value={request.alphaSeed} isHex />
             <DataRow label="Requester" value={request.requesterAddress} isHex={false} />
-            <DataRow label="Oracle Contract" value={request.contractAddress} isHex={false} />
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Oracle Contract (Stellar Testnet)</p>
+              <div className="flex items-center gap-2 p-2 rounded bg-black/40 border border-border/50 font-mono text-[11px] break-all text-primary/80">
+                <span>{request.contractAddress}</span>
+                <a
+                  href={`https://stellar.expert/explorer/testnet/contract/${request.contractAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 text-primary hover:text-primary/60 transition-colors"
+                  title="View on stellar.expert"
+                >
+                  <ArrowRight className="w-3 h-3 rotate-[-45deg]" />
+                </a>
+              </div>
+            </div>
+            {(request as any).requestTxHash && (
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">On-Chain Request Tx</p>
+                <a
+                  href={`https://stellar.expert/explorer/testnet/tx/${(request as any).requestTxHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 p-2 rounded bg-primary/5 border border-primary/20 font-mono text-[11px] break-all text-primary hover:bg-primary/10 transition-colors"
+                >
+                  {(request as any).requestTxHash}
+                </a>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4 pt-2">
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Created At</p>

@@ -12,6 +12,8 @@ export const vrfRequestsTable = pgTable("vrf_requests", {
   gasEstimate: integer("gas_estimate").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   fulfilledAt: timestamp("fulfilled_at", { withTimezone: true }),
+  contractRequestId: integer("contract_request_id"),
+  requestTxHash: text("request_tx_hash"),
 });
 
 export const insertVrfRequestSchema = createInsertSchema(vrfRequestsTable).omit({

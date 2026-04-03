@@ -289,14 +289,24 @@ export default function Dashboard() {
               ]}
             />
           </div>
-          <div className="mt-4 pt-4 border-t border-border/50 flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
-            <Lock className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+          <TransparencyItem
+            icon={<CheckCircle2 className="w-4 h-4 text-green-400 shrink-0 mt-0.5" />}
+            label="Soroban Smart Contract"
+            status="DEPLOYED — Stellar Testnet"
+            statusColor="text-green-400"
+            description="VRF Oracle contract compiled from Rust to WASM and deployed on Stellar Testnet. Every fulfill() call submits a real on-chain transaction. The oracle's secp256k1 public key is stored in the contract's instance storage."
+            links={[
+              { label: "View contract on stellar.expert", href: "https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q" },
+              { label: "Deployer account", href: "https://stellar.expert/explorer/testnet/account/GCKLQ7EWMZTCLD4VKSZLN4NYEYE7TX3FATAYSBSROTTCVPG2DW3KZ6MQ" },
+            ]}
+          />
+          <div className="mt-3 pt-3 border-t border-border/50 flex items-start gap-3 rounded-lg border border-primary/15 bg-primary/5 px-4 py-3">
+            <CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" />
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              <span className="text-amber-400 font-medium">Not yet on-chain:</span>{" "}
-              The Soroban smart contract has not been deployed to testnet yet — so the "contract address" shown in requests is a placeholder.
-              The ECVRF proof math is fully real and verifiable, but there is no on-chain transaction hash to link to until the contract is deployed.
-              Deploying to Soroban requires a funded testnet account, Rust WASM compilation, and a <code className="text-amber-300">soroban contract deploy</code> call.
-              If you'd like, I can deploy the contract to Stellar Testnet next.
+              <span className="text-primary font-medium">100% real on-chain:</span>{" "}
+              When you fulfill a VRF request, the server generates a real ECVRF-SECP256K1 proof and submits it to the deployed Soroban contract via{" "}
+              <code className="text-primary">invokeContractFunction(fulfill)</code>.
+              Each proof transaction gets a Stellar transaction hash you can verify on stellar.expert — no simulations.
             </p>
           </div>
         </CardContent>
