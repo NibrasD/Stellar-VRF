@@ -3,7 +3,7 @@ import { useGetVrfRequest, useFulfillVrfRequest, getGetVrfRequestQueryKey, getLi
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "./requests";
-import { ArrowLeft, Cpu, Zap, Activity, Loader2, CheckCircle2, Shield } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cpu, Zap, Activity, Loader2, CheckCircle2, Shield } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
