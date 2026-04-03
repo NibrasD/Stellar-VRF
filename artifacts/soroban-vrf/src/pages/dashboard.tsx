@@ -1,7 +1,7 @@
-import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork } from "@workspace/api-client-react";
+import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork, useGetDrandLatest } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server } from "lucide-react";
+import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server, Radio, ShieldCheck, RefreshCw } from "lucide-react";
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
 
@@ -12,6 +12,10 @@ export default function Dashboard() {
   const { data: stellar, isLoading: stellarLoading } = useGetStellarNetwork({
     query: { refetchInterval: 10000 },
   });
+  const { data: drand, isLoading: drandLoading, refetch: refetchDrand, isFetching: drandFetching } = useGetDrandLatest(
+    { chain: "quicknet" },
+    { query: { refetchInterval: 6000 } },
+  );
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -57,6 +61,86 @@ export default function Dashboard() {
           loading={statsLoading}
         />
       </div>
+
+      {/* drand Distributed Randomness Beacon Panel */}
+      <Card className="border-primary/30 bg-card/50 backdrop-blur-sm shadow-[0_0_20px_rgba(0,255,255,0.06)]">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium tracking-wider text-muted-foreground uppercase flex items-center gap-2">
+            <Radio className="w-4 h-4 text-primary" />
+            drand — League of Entropy Distributed Beacon
+            {drand && (
+              <span className="flex items-center gap-1 ml-auto text-[10px] font-mono text-primary/60 normal-case">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                quicknet · {drand.chain.period}s period
+                <button
+                  onClick={() => refetchDrand()}
+                  disabled={drandFetching}
+                  className="ml-2 hover:text-primary transition-colors"
+                  title="Refresh beacon"
+                >
+                  <RefreshCw className={`w-3 h-3 ${drandFetching ? "animate-spin" : ""}`} />
+                </button>
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Why drand solves the NebulaVRF problem */}
+          <div className="flex items-start gap-3 rounded-lg border border-primary/15 bg-primary/5 px-4 py-3">
+            <ShieldCheck className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <span className="text-foreground font-medium">Why drand?</span>{" "}
+              Commit-reveal schemes (like NebulaVRF) let the operator pre-choose the seed and manipulate outcomes.
+              drand's <span className="text-primary">threshold BLS signature</span> requires a quorum of independent nodes (Cloudflare, EPFL, Protocol Labs…)
+              — no single party controls the output, making it impossible for our oracle to bias the VRF result.
+              Use the <span className="text-primary">suggestedAlphaSeed</span> below as your alpha input when creating a request.
+            </p>
+          </div>
+
+          {drandLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="h-3 w-20 bg-muted animate-pulse rounded" />
+                  <div className="h-6 w-28 bg-muted animate-pulse rounded" />
+                </div>
+              ))}
+            </div>
+          ) : drand ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <StellarStat icon={Hash} label="Round" value={`#${drand.beacon.round.toLocaleString()}`} />
+                <StellarStat icon={Clock} label="Next beacon" value={`in ${drand.secondsUntilNext}s`} />
+                <StellarStat icon={Layers} label="Scheme" value={drand.chain.schemeId.split("-")[0]} />
+                <StellarStat icon={Radio} label="Chain" value="quicknet · G2"  />
+              </div>
+              {/* Randomness hex */}
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                  randomness = SHA256(threshold_BLS_sig) — verifiable by anyone
+                </p>
+                <div className="font-mono text-[11px] text-primary break-all leading-relaxed p-3 rounded border border-primary/20 bg-primary/5">
+                  {drand.beacon.randomness}
+                </div>
+              </div>
+              {/* Suggested alpha seed */}
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                  suggestedAlphaSeed — use this in New Request for trustless VRF
+                </p>
+                <div className="font-mono text-[11px] text-foreground/80 break-all leading-relaxed p-3 rounded border border-border/50 bg-muted/20">
+                  {drand.suggestedAlphaSeed}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="py-4 text-sm text-muted-foreground flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-destructive" />
+              drand network unreachable
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Live Stellar Network Panel */}
       <Card className="border-primary/20 bg-card/50 backdrop-blur-sm">

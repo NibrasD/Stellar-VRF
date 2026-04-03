@@ -20,7 +20,10 @@ import type {
   ActivityItem,
   CreateVrfRequestBody,
   DashboardStats,
+  DrandResponse,
   ErrorResponse,
+  GetDrandLatestParams,
+  GetDrandRoundParams,
   HealthStatus,
   ListVrfRequestsParams,
   RandomnessDistributionPoint,
@@ -856,6 +859,212 @@ export function useGetRecentActivity<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetRecentActivityQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Fetches the latest randomness beacon from the League of Entropy drand network. The beacon's randomness is a sha256 of a threshold BLS signature — no single operator can bias or predict it, making it ideal as a trustless VRF alpha seed.
+
+ * @summary Get latest drand beacon
+ */
+export const getGetDrandLatestUrl = (params?: GetDrandLatestParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/drand/latest?${stringifiedParams}`
+    : `/api/drand/latest`;
+};
+
+export const getDrandLatest = async (
+  params?: GetDrandLatestParams,
+  options?: RequestInit,
+): Promise<DrandResponse> => {
+  return customFetch<DrandResponse>(getGetDrandLatestUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDrandLatestQueryKey = (params?: GetDrandLatestParams) => {
+  return [`/api/drand/latest`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetDrandLatestQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDrandLatest>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetDrandLatestParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDrandLatest>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDrandLatestQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getDrandLatest>>> = ({
+    signal,
+  }) => getDrandLatest(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDrandLatest>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDrandLatestQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDrandLatest>>
+>;
+export type GetDrandLatestQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get latest drand beacon
+ */
+
+export function useGetDrandLatest<
+  TData = Awaited<ReturnType<typeof getDrandLatest>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetDrandLatestParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDrandLatest>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDrandLatestQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Fetches a specific historical or upcoming drand beacon by round number.
+ * @summary Get a specific drand beacon round
+ */
+export const getGetDrandRoundUrl = (
+  round: number,
+  params?: GetDrandRoundParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/drand/round/${round}?${stringifiedParams}`
+    : `/api/drand/round/${round}`;
+};
+
+export const getDrandRound = async (
+  round: number,
+  params?: GetDrandRoundParams,
+  options?: RequestInit,
+): Promise<DrandResponse> => {
+  return customFetch<DrandResponse>(getGetDrandRoundUrl(round, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDrandRoundQueryKey = (
+  round: number,
+  params?: GetDrandRoundParams,
+) => {
+  return [`/api/drand/round/${round}`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetDrandRoundQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDrandRound>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  round: number,
+  params?: GetDrandRoundParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDrandRound>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDrandRoundQueryKey(round, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getDrandRound>>> = ({
+    signal,
+  }) => getDrandRound(round, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!round,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDrandRound>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDrandRoundQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDrandRound>>
+>;
+export type GetDrandRoundQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get a specific drand beacon round
+ */
+
+export function useGetDrandRound<
+  TData = Awaited<ReturnType<typeof getDrandRound>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  round: number,
+  params?: GetDrandRoundParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDrandRound>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDrandRoundQueryOptions(round, params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

@@ -16,6 +16,8 @@ tags:
     description: VRF proof management and verification
   - name: stats
     description: Dashboard statistics and analytics
+  - name: drand
+    description: drand distributed randomness beacon (League of Entropy)
 paths:
   /healthz:
     get:
@@ -229,6 +231,72 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ActivityItem"
+
+  /drand/latest:
+    get:
+      operationId: getDrandLatest
+      tags: [drand]
+      summary: Get latest drand beacon
+      description: >
+        Fetches the latest randomness beacon from the League of Entropy drand network.
+        The beacon's randomness is a sha256 of a threshold BLS signature — no single
+        operator can bias or predict it, making it ideal as a trustless VRF alpha seed.
+      parameters:
+        - name: chain
+          in: query
+          required: false
+          description: drand chain to query (quicknet = 3s period, default = 30s period)
+          schema:
+            type: string
+            enum: [quicknet, default]
+            default: quicknet
+      responses:
+        "200":
+          description: Latest drand beacon
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrandResponse"
+        "503":
+          description: drand network unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /drand/round/{round}:
+    get:
+      operationId: getDrandRound
+      tags: [drand]
+      summary: Get a specific drand beacon round
+      description: Fetches a specific historical or upcoming drand beacon by round number.
+      parameters:
+        - name: round
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: chain
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [quicknet, default]
+            default: quicknet
+      responses:
+        "200":
+          description: Specific drand beacon round
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrandResponse"
+        "503":
+          description: Round unavailable or drand unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /stellar/network:
     get:
@@ -604,3 +672,82 @@ components:
         - stats
         - ledgers
         - fee
+
+    DrandBeacon:
+      type: object
+      description: A single drand randomness beacon
+      properties:
+        round:
+          type: integer
+          description: Monotonically increasing round number
+        randomness:
+          type: string
+          description: sha256 of the threshold BLS signature — the verifiable random output
+        signature:
+          type: string
+          description: Combined threshold BLS signature from the League of Entropy
+        previousSignature:
+          type: string
+          description: Signature from the previous round (chained chains only)
+      required:
+        - round
+        - randomness
+        - signature
+
+    DrandChainInfo:
+      type: object
+      description: Metadata about the drand chain
+      properties:
+        chainId:
+          type: string
+        name:
+          type: string
+        hash:
+          type: string
+          description: Unique chain hash (32 bytes hex)
+        period:
+          type: integer
+          description: Seconds between beacons
+        genesisTime:
+          type: integer
+          description: Unix timestamp of round 1
+        schemeId:
+          type: string
+          description: Cryptographic scheme identifier
+      required:
+        - chainId
+        - name
+        - hash
+        - period
+        - genesisTime
+        - schemeId
+
+    DrandResponse:
+      type: object
+      description: >
+        Full drand beacon response including chain metadata, the beacon itself,
+        and a pre-computed VRF alpha seed string derived from the beacon randomness.
+        Use suggestedAlphaSeed as the alpha input to /vrf-requests to guarantee
+        that the VRF output cannot be biased by the oracle operator.
+      properties:
+        chain:
+          $ref: "#/components/schemas/DrandChainInfo"
+        beacon:
+          $ref: "#/components/schemas/DrandBeacon"
+        nextRoundAt:
+          type: integer
+          description: Unix timestamp when the next beacon will be available
+        secondsUntilNext:
+          type: integer
+          description: Seconds until the next beacon
+        suggestedAlphaSeed:
+          type: string
+          description: >
+            Ready-to-use VRF alpha seed that embeds chain hash, round number,
+            and the drand randomness hex. Pass this as alphaSeed to POST /vrf-requests.
+      required:
+        - chain
+        - beacon
+        - nextRoundAt
+        - secondsUntilNext
+        - suggestedAlphaSeed

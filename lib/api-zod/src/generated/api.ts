@@ -235,6 +235,129 @@ export const GetRecentActivityResponse = zod.array(
 );
 
 /**
+ * Fetches the latest randomness beacon from the League of Entropy drand network. The beacon's randomness is a sha256 of a threshold BLS signature — no single operator can bias or predict it, making it ideal as a trustless VRF alpha seed.
+
+ * @summary Get latest drand beacon
+ */
+export const getDrandLatestQueryChainDefault = `quicknet`;
+
+export const GetDrandLatestQueryParams = zod.object({
+  chain: zod
+    .enum(["quicknet", "default"])
+    .default(getDrandLatestQueryChainDefault)
+    .describe(
+      "drand chain to query (quicknet = 3s period, default = 30s period)",
+    ),
+});
+
+export const GetDrandLatestResponse = zod
+  .object({
+    chain: zod
+      .object({
+        chainId: zod.string(),
+        name: zod.string(),
+        hash: zod.string().describe("Unique chain hash (32 bytes hex)"),
+        period: zod.number().describe("Seconds between beacons"),
+        genesisTime: zod.number().describe("Unix timestamp of round 1"),
+        schemeId: zod.string().describe("Cryptographic scheme identifier"),
+      })
+      .describe("Metadata about the drand chain"),
+    beacon: zod
+      .object({
+        round: zod.number().describe("Monotonically increasing round number"),
+        randomness: zod
+          .string()
+          .describe(
+            "sha256 of the threshold BLS signature — the verifiable random output",
+          ),
+        signature: zod
+          .string()
+          .describe(
+            "Combined threshold BLS signature from the League of Entropy",
+          ),
+        previousSignature: zod
+          .string()
+          .optional()
+          .describe("Signature from the previous round (chained chains only)"),
+      })
+      .describe("A single drand randomness beacon"),
+    nextRoundAt: zod
+      .number()
+      .describe("Unix timestamp when the next beacon will be available"),
+    secondsUntilNext: zod.number().describe("Seconds until the next beacon"),
+    suggestedAlphaSeed: zod
+      .string()
+      .describe(
+        "Ready-to-use VRF alpha seed that embeds chain hash, round number, and the drand randomness hex. Pass this as alphaSeed to POST \/vrf-requests.\n",
+      ),
+  })
+  .describe(
+    "Full drand beacon response including chain metadata, the beacon itself, and a pre-computed VRF alpha seed string derived from the beacon randomness. Use suggestedAlphaSeed as the alpha input to \/vrf-requests to guarantee that the VRF output cannot be biased by the oracle operator.\n",
+  );
+
+/**
+ * Fetches a specific historical or upcoming drand beacon by round number.
+ * @summary Get a specific drand beacon round
+ */
+
+export const GetDrandRoundParams = zod.object({
+  round: zod.coerce.number().min(1),
+});
+
+export const getDrandRoundQueryChainDefault = `quicknet`;
+
+export const GetDrandRoundQueryParams = zod.object({
+  chain: zod
+    .enum(["quicknet", "default"])
+    .default(getDrandRoundQueryChainDefault),
+});
+
+export const GetDrandRoundResponse = zod
+  .object({
+    chain: zod
+      .object({
+        chainId: zod.string(),
+        name: zod.string(),
+        hash: zod.string().describe("Unique chain hash (32 bytes hex)"),
+        period: zod.number().describe("Seconds between beacons"),
+        genesisTime: zod.number().describe("Unix timestamp of round 1"),
+        schemeId: zod.string().describe("Cryptographic scheme identifier"),
+      })
+      .describe("Metadata about the drand chain"),
+    beacon: zod
+      .object({
+        round: zod.number().describe("Monotonically increasing round number"),
+        randomness: zod
+          .string()
+          .describe(
+            "sha256 of the threshold BLS signature — the verifiable random output",
+          ),
+        signature: zod
+          .string()
+          .describe(
+            "Combined threshold BLS signature from the League of Entropy",
+          ),
+        previousSignature: zod
+          .string()
+          .optional()
+          .describe("Signature from the previous round (chained chains only)"),
+      })
+      .describe("A single drand randomness beacon"),
+    nextRoundAt: zod
+      .number()
+      .describe("Unix timestamp when the next beacon will be available"),
+    secondsUntilNext: zod.number().describe("Seconds until the next beacon"),
+    suggestedAlphaSeed: zod
+      .string()
+      .describe(
+        "Ready-to-use VRF alpha seed that embeds chain hash, round number, and the drand randomness hex. Pass this as alphaSeed to POST \/vrf-requests.\n",
+      ),
+  })
+  .describe(
+    "Full drand beacon response including chain metadata, the beacon itself, and a pre-computed VRF alpha seed string derived from the beacon randomness. Use suggestedAlphaSeed as the alpha input to \/vrf-requests to guarantee that the VRF output cannot be biased by the oracle operator.\n",
+  );
+
+/**
  * Returns real-time Stellar Testnet stats, recent ledgers, and Soroban fee estimates from Horizon
  * @summary Get live Stellar network data
  */

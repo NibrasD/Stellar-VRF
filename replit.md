@@ -29,28 +29,31 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 ## Artifacts
 
 ### Soroban VRF Dashboard (`artifacts/soroban-vrf`)
-- **Purpose**: Full-stack web app for demonstrating and simulating Soroban Verifiable Random Function (VRF) workflows
+- **Purpose**: Production-quality full-stack VRF oracle dashboard for Soroban/Stellar — 100% real cryptography
 - **Preview path**: `/`
 - **Framework**: React + Vite
 - **Pages**:
-  - `/` — Dashboard: aggregate stats, randomness distribution chart, recent activity
-  - `/requests` — VRF Requests list with create form and fulfill action
-  - `/requests/:id` — Request detail with proof components
+  - `/` — Dashboard: stats, drand live beacon, Stellar Testnet data, randomness chart, activity log
+  - `/requests` — VRF Requests list; New Request dialog has "Seed from drand" button
+  - `/requests/:id` — Request detail with proof and "Verify Proof" action
   - `/proofs` — All ECVRF proofs with verification status
-  - `/verify/:id` — Step-by-step on-chain verification simulator
+  - `/verify/:id` — Step-by-step 6-check ECVRF verification
 
 ### API Server (`artifacts/api-server`)
-- **Purpose**: Express 5 API server implementing the VRF contract
+- **Purpose**: Express 5 API server with real ECVRF, live Stellar Horizon, and drand integration
 - **Preview path**: `/api`
 - **Routes**:
   - `GET/POST /api/vrf-requests` — List and create VRF requests
   - `GET /api/vrf-requests/:id` — Get request detail with proof
-  - `POST /api/vrf-requests/:id/fulfill` — Generate ECVRF proof and fulfill request
+  - `POST /api/vrf-requests/:id/fulfill` — Generate REAL ECVRF-SECP256K1-SHA256-TAI proof
   - `GET /api/vrf-proofs` — List all proofs
-  - `POST /api/vrf-proofs/:id/verify` — Run on-chain verification simulation
+  - `POST /api/vrf-proofs/:id/verify` — Real 6-step EC arithmetic verification
   - `GET /api/stats/dashboard` — Aggregate stats
   - `GET /api/stats/randomness-distribution` — Hex distribution data
   - `GET /api/stats/recent-activity` — Activity log feed
+  - `GET /api/stellar/network` — Live Stellar Testnet ledger data from Horizon
+  - `GET /api/drand/latest?chain=quicknet|default` — Live drand beacon (League of Entropy)
+  - `GET /api/drand/round/:round?chain=...` — Specific drand round
 
 ## Database Schema
 
@@ -60,6 +63,25 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 
 ## VRF Cryptography
 
-The `artifacts/api-server/src/lib/vrfCrypto.ts` module simulates ECVRF-P256-SHA256-TAI:
-- `generateEcvrfProof(alphaSeed)` — Generates gamma point, challenge scalar, response scalar, and random output
-- `verifyEcvrfProof(proof, alphaSeed)` — Runs 6-step on-chain verification simulation
+Real ECVRF-SECP256K1-SHA256-TAI (`artifacts/api-server/src/lib/vrfCrypto.ts`):
+- Suite: ECVRF-SECP256K1-SHA256-TAI per draft-irtf-cfrg-vrf-15
+- Library: `@noble/curves` v2 secp256k1 + `@noble/hashes` sha2 (NO mocks or simulations)
+- Private key: fixed deterministic oracle key `c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721`
+- `generateEcvrfProof(alphaSeed)` — hash_to_try_and_increment → Γ=xH → k nonce → c challenge → s response
+- `verifyEcvrfProof(proof, alphaSeed)` — 6 real EC arithmetic checks: PK valid, Γ valid, H=hashToCurve, U'=sG−cPK, V'=sH−cΓ, c'==c
+
+## drand Integration
+
+`artifacts/api-server/src/lib/drand.ts` connects to the League of Entropy drand network:
+- **Chains**: quicknet (BLS12-381 G2, 3s period) and default (BLS12-381 G1, 30s period)
+- **Why**: Threshold BLS signatures from Cloudflare, EPFL, Protocol Labs etc. — no single operator can bias output
+- **Solves NebulaVRF problem**: commit-reveal lets operator pre-select seed; drand prevents oracle from predicting alpha seed
+- `suggestedAlphaSeed` embeds chain hash + round + randomness hex for ready-to-use trustless VRF seeding
+
+## Key Library Notes
+
+- `@noble/curves` v2 uses `.js` subpath exports: `secp256k1.js`, `utils.js`
+- `@noble/hashes` v2 uses `sha2.js` (not `sha256.js`)
+- Both must be externalized in `build.mjs` so Node resolves them natively at runtime
+- `secp256k1.Point.Fn.ORDER` = curve order n (v2 API; v1 used `secp256k1.CURVE.n`)
+- `point.toBytes(false)` = uncompressed 65 bytes (v2 API; v1 used `toRawBytes`)
