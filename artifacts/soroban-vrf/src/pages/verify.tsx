@@ -101,6 +101,27 @@ export default function VerifySimulator() {
                   {proof.proofBytes}
                 </div>
               </div>
+
+              {(proof as any).fulfillTxHash && (
+                <div className="pt-4 mt-4 border-t border-border/50">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">On-Chain Fulfill Tx</p>
+                  <a
+                    href={(proof as any).onChainExplorerUrl || `https://stellar.expert/explorer/testnet/tx/${(proof as any).fulfillTxHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 p-2 rounded bg-primary/5 border border-primary/20 font-mono text-[10px] break-all text-primary hover:bg-primary/10 transition-colors"
+                  >
+                    <ShieldCheck className="w-3 h-3 shrink-0" />
+                    {(proof as any).fulfillTxHash}
+                  </a>
+                  <p className="text-[10px] text-muted-foreground mt-1">Click to view this proof transaction on Stellar Expert</p>
+                </div>
+              )}
+              {!(proof as any).fulfillTxHash && proof.verificationStatus === 'verified' && (
+                <div className="pt-3 mt-3 border-t border-border/50">
+                  <p className="text-[10px] text-muted-foreground">On-chain tx hash pending — the Soroban contract submission runs asynchronously. Reload in a few seconds.</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

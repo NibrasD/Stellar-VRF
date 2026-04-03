@@ -70,6 +70,19 @@ Real ECVRF-SECP256K1-SHA256-TAI (`artifacts/api-server/src/lib/vrfCrypto.ts`):
 - `generateEcvrfProof(alphaSeed)` — hash_to_try_and_increment → Γ=xH → k nonce → c challenge → s response
 - `verifyEcvrfProof(proof, alphaSeed)` — 6 real EC arithmetic checks: PK valid, Γ valid, H=hashToCurve, U'=sG−cPK, V'=sH−cΓ, c'==c
 
+## Soroban Contract Deployment
+
+**Contract: `CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q`** (Stellar Testnet, deployed 2026-04-03)
+- Explorer: https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q
+- WASM hash: `df23d973258f9376f28249c70d3c17b72761dd54c6b0bca0f58b90dffc5857b4` (soroban_vrf_oracle.wasm, 4.4 KB)
+- Deployer: `GCKLQ7EWMZTCLD4VKSZLN4NYEYE7TX3FATAYSBSROTTCVPG2DW3KZ6MQ` (funded via Friendbot)
+- Build: `soroban-contract/` → Rust `#[no_std]` with `soroban-sdk v20.5`, compiled to wasm32-unknown-unknown, Rust 1.88 via rustup
+- Contract functions: `init(oracle_pk)`, `request(alpha_seed, requester) → u64`, `fulfill(request_id, EcvrfProof)`, `get_proof(id)`, `is_fulfilled(id)`, `oracle_pk()`
+- Deploy script: `node soroban-contract/deploy.mjs`
+- Deployment result saved in `soroban-contract/deployed.json`
+
+On fulfill: `sorobanRequest()` runs in background → stores `contractRequestId` + `requestTxHash`; `sorobanFulfill()` runs in background → stores `fulfillTxHash` + `onChainExplorerUrl` in vrf_proofs
+
 ## drand Integration
 
 `artifacts/api-server/src/lib/drand.ts` connects to the League of Entropy drand network:

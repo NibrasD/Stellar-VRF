@@ -8,6 +8,8 @@ import {
   ListVrfRequestsQueryParams,
 } from "@workspace/api-zod";
 import { generateEcvrfProof, getContractAddress, estimateGas, verifyEcvrfProof } from "../lib/vrfCrypto.js";
+import { sorobanRequest, sorobanFulfill } from "../lib/sorobanSubmit.js";
+import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
@@ -75,6 +77,29 @@ router.post("/vrf-requests", async (req, res): Promise<void> => {
     ...request,
     createdAt: request.createdAt.toISOString(),
     fulfilledAt: null,
+  });
+
+  // ── Fire-and-forget: submit request to Soroban contract ──────────────────
+  setImmediate(async () => {
+    try {
+      const result = await sorobanRequest(parsed.data.alphaSeed, parsed.data.requesterAddress);
+      await db
+        .update(vrfRequestsTable)
+        .set({
+          contractRequestId: result.contractRequestId,
+          requestTxHash: result.txHash,
+        })
+        .where(eq(vrfRequestsTable.id, request.id));
+      await db.insert(activityLogTable).values({
+        type: "request_created",
+        description: `On-chain request submitted — contract ID #${result.contractRequestId} · tx: ${result.txHash.slice(0, 12)}...`,
+        requestId: request.id,
+        proofId: null,
+      });
+      logger.info(`Soroban request submitted: contractId=${result.contractRequestId} tx=${result.txHash}`);
+    } catch (err: any) {
+      logger.error(`Soroban request submission failed: ${err.message}`);
+    }
   });
 });
 
@@ -185,6 +210,31 @@ router.post("/vrf-requests/:id/fulfill", async (req, res): Promise<void> => {
       ...proof,
       computedAt: proof.computedAt.toISOString(),
     },
+  });
+
+  // ── Fire-and-forget: submit proof to Soroban contract ────────────────────
+  setImmediate(async () => {
+    try {
+      const contractId = request.contractRequestId ?? 1;
+      const result = await sorobanFulfill(contractId, request.alphaSeed, ecvrf);
+      // Update the proof record with on-chain transaction details
+      await db
+        .update(vrfProofsTable)
+        .set({
+          fulfillTxHash: result.txHash,
+          onChainExplorerUrl: result.explorerUrl,
+        })
+        .where(eq(vrfProofsTable.id, proof.id));
+      await db.insert(activityLogTable).values({
+        type: "proof_generated",
+        description: `Proof submitted on-chain · tx: ${result.txHash.slice(0, 16)}... · ${result.explorerUrl}`,
+        requestId: request.id,
+        proofId: proof.id,
+      });
+      logger.info(`Soroban fulfill tx: ${result.txHash}`);
+    } catch (err: any) {
+      logger.error(`Soroban fulfill submission failed: ${err.message}`);
+    }
   });
 });
 

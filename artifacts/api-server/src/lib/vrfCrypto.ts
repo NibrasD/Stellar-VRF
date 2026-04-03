@@ -27,9 +27,15 @@ const VRF_PRIVATE_KEY = hexToBytes(VRF_PRIVATE_KEY_HEX);
 const VRF_PUBLIC_KEY = secp256k1.getPublicKey(VRF_PRIVATE_KEY, true); // compressed 33 bytes
 const VRF_PUBLIC_KEY_HEX = bytesToHex(VRF_PUBLIC_KEY);
 
-// Soroban VRF Oracle contract address on Futurenet
+// Soroban VRF Oracle contract — DEPLOYED on Stellar Testnet 2026-04-03
+// https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q
 export const VRF_CONTRACT_ADDRESS =
-  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCNM";
+  "CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q";
+export const VRF_WASM_HASH =
+  "df23d973258f9376f28249c70d3c17b72761dd54c6b0bca0f58b90dffc5857b4";
+export const VRF_DEPLOYED_AT = "2026-04-03T19:32:05.269Z";
+export const VRF_EXPLORER_URL =
+  "https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q";
 
 // ── Suite constants (ECVRF-SECP256K1-SHA256-TAI) ───────────────────────────
 const SUITE_STRING = new Uint8Array([0xfe]);
