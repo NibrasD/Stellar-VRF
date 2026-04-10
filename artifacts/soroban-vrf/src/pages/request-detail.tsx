@@ -41,7 +41,7 @@ export default function RequestDetail() {
         onError: (error) => {
           toast({
             title: "Fulfillment Failed",
-            description: error.error || "An error occurred during fulfillment.",
+            description: (error as any).data?.error || "An error occurred during fulfillment.",
             variant: "destructive",
           });
         }

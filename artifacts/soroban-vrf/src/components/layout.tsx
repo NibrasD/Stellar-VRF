@@ -47,7 +47,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className="p-4 border-t border-border">
           <div className="flex items-center text-xs text-muted-foreground">
             <div className="w-2 h-2 rounded-full bg-primary animate-pulse mr-2"></div>
-            <span>Network: Futurenet</span>
+            <span>Network: Testnet</span>
           </div>
         </div>
       </aside>

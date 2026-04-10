@@ -6,6 +6,11 @@
  *
  * This module funds an ephemeral oracle Stellar account from Friendbot,
  * then submits `request` and `fulfill` invocations to the live contract.
+ *
+ * Security: The fulfill() function now requires oracle address authentication.
+ * The contract verifies that the caller is the registered oracle, that the
+ * proof's public key matches the stored oracle PK, and that the alpha seed
+ * matches the original request.
  */
 
 import {
@@ -13,6 +18,7 @@ import {
   Networks,
   TransactionBuilder,
   Operation,
+  Address,
   nativeToScVal,
   xdr,
   rpc as SorobanRpc,
@@ -144,7 +150,7 @@ export async function sorobanRequest(
   // xdr Uint64 is represented as a Long object — convert via toString first
   let contractId = 0;
   try {
-    const rv = result.returnValue as xdr.ScVal;
+    const rv = (result as any).returnValue as xdr.ScVal;
     const u64val = rv.u64();
     // xdr Long objects have a .toNumber() or .toString() method
     contractId = typeof (u64val as any).toNumber === "function"
@@ -159,6 +165,13 @@ export async function sorobanRequest(
 
 /**
  * Submit a fulfilled ECVRF proof to the Soroban contract.
+ *
+ * The contract performs 5 security checks:
+ *   1. require_auth — verifies the oracle's Stellar signature
+ *   2. Oracle address match — confirms caller is the registered oracle
+ *   3. Double-fulfillment prevention
+ *   4. Public key integrity — proof.public_key == stored oracle PK
+ *   5. Alpha seed integrity — proof.alpha_seed == original request seed
  */
 export async function sorobanFulfill(
   contractRequestId: number,
@@ -169,6 +182,10 @@ export async function sorobanFulfill(
   const kp  = getOracleKP();
   const srv = getServer();
   const account = await srv.getAccount(kp.publicKey());
+
+  // Build the oracle address ScVal for access control
+  const oracleAddress = new Address(kp.publicKey());
+  const oracleAddressScVal = oracleAddress.toScVal();
 
   // Build EcvrfProof struct matching the Soroban contract
   const alphaBytes  = Buffer.from(alphaSeed, "utf-8");
@@ -193,6 +210,7 @@ export async function sorobanFulfill(
 
   // Soroban contracttype EcvrfProof fields (in declaration order from lib.rs):
   //   alpha_seed, gamma_point, c_scalar, s_scalar, beta_output, public_key
+  // Note: Soroban sorts map keys alphabetically when matching to struct fields
   const proofMap = xdr.ScVal.scvMap([
     new xdr.ScMapEntry({
       key: xdr.ScVal.scvSymbol("alpha_seed"),
@@ -220,12 +238,14 @@ export async function sorobanFulfill(
     }),
   ]);
 
+  // Updated contract signature: fulfill(oracle: Address, request_id: u64, proof: EcvrfProof)
   const tx = new TransactionBuilder(account, { fee: FEE, networkPassphrase: NETWORK })
     .addOperation(
       Operation.invokeContractFunction({
         contract: VRF_CONTRACT_ADDRESS,
         function: "fulfill",
         args: [
+          oracleAddressScVal,
           nativeToScVal(contractRequestId, { type: "u64" }),
           proofMap,
         ],

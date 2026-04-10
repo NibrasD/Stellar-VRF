@@ -66,7 +66,7 @@ export async function getRecentLedgers(limit = 5): Promise<StellarLedger[]> {
     sequence: l.sequence,
     hash: l.hash,
     closedAt: l.closed_at,
-    txCount: l.transaction_count,
+    txCount: (l as any).successful_transaction_count ?? 0,
     operationCount: l.operation_count,
     baseFee: l.base_fee_in_stroops ?? 100,
   }));

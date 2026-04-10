@@ -47,3 +47,24 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Security - Secrets
+.env
+.env.*
+!.env.example
+
+# Build Artifacts
+dist/
+**/dist/
+**/target/
+build/
+.pnpm-store/
+.pnpm-debug.log
+
+# Logs
+logs
+*.log
+
+# OS Files
+.DS_Store
+Thumbs.db

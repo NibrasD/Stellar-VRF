@@ -1,5 +1,4 @@
-import React from "react";
-import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork, useGetDrandLatest } from "@workspace/api-client-react";
+import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork, useGetDrandLatest, getGetStellarNetworkQueryKey, getGetDrandLatestQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server, Radio, ShieldCheck, RefreshCw, ExternalLink, Info, Lock } from "lucide-react";
@@ -11,11 +10,11 @@ export default function Dashboard() {
   const { data: distribution, isLoading: distLoading } = useGetRandomnessDistribution();
   const { data: activity, isLoading: activityLoading } = useGetRecentActivity();
   const { data: stellar, isLoading: stellarLoading } = useGetStellarNetwork({
-    query: { refetchInterval: 10000 },
+    query: { refetchInterval: 10000, queryKey: getGetStellarNetworkQueryKey() },
   });
   const { data: drand, isLoading: drandLoading, refetch: refetchDrand, isFetching: drandFetching } = useGetDrandLatest(
     { chain: "quicknet" },
-    { query: { refetchInterval: 6000 } },
+    { query: { refetchInterval: 6000, queryKey: getGetDrandLatestQueryKey({ chain: "quicknet" }) } },
   );
 
   return (
@@ -44,7 +43,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Proof Success Rate"
-          value={stats ? `${stats.proofSuccessRate.toFixed(2)}%` : undefined}
+          value={stats?.proofSuccessRate != null ? `${stats.proofSuccessRate.toFixed(2)}%` : undefined}
           icon={CheckCircle2}
           loading={statsLoading}
           highlight
