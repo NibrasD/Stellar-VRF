@@ -75,8 +75,8 @@ export default function RequestsList() {
         },
         onError: (error) => {
           toast({
-            title: "Error",
-            description: error.error || "Failed to create request",
+            title: "Request Failed",
+            description: error.data?.error || "Failed to create request",
             variant: "destructive",
           });
         },

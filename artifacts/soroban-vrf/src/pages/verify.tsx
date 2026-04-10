@@ -45,11 +45,11 @@ export default function VerifySimulator() {
         },
         onError: (error) => {
           toast({
-            title: "Error",
-            description: error.error || "Simulation failed to execute.",
+            title: "Verification Failed",
+            description: (error as any).data?.error || "An error occurred during verification",
             variant: "destructive",
           });
-        }
+        },
       }
     );
   };

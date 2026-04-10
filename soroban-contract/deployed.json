@@ -1,10 +1,10 @@
 {
-  "contractAddress": "CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q",
-  "wasmHash": "df23d973258f9376f28249c70d3c17b72761dd54c6b0bca0f58b90dffc5857b4",
-  "deployerPublicKey": "GCKLQ7EWMZTCLD4VKSZLN4NYEYE7TX3FATAYSBSROTTCVPG2DW3KZ6MQ",
+  "contractAddress": "CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72",
+  "wasmHash": "219802f8218cea5cfb5d89fcf4cd81e8cc6eb140b474a362d31e5661c0c2b55e",
+  "deployerPublicKey": "GBLDJDCDH37EW46PJH6X5AIZNWE2PMLW32BENHSHGLCVRFLRRDVDLNIZ",
   "oraclePublicKeyHex": "032c8c31fc9f990c6b55e3865a184a4ce50e09481f2eaeb3e60ec1cea13a6ae645",
   "network": "testnet",
   "sorobanRpcUrl": "https://soroban-testnet.stellar.org",
-  "deployedAt": "2026-04-03T19:32:05.269Z",
-  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q"
+  "deployedAt": "2026-04-10T15:51:57.920Z",
+  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72"
 }

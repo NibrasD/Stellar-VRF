@@ -20,11 +20,12 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Import from pnpm hoisted location
+import { pathToFileURL } from "url";
 const SDK_INDEX = path.resolve(
   __dirname,
   "../node_modules/.pnpm/@stellar+stellar-sdk@15.0.1/node_modules/@stellar/stellar-sdk/lib/index.js"
 );
-const stellar = await import(SDK_INDEX);
+const stellar = await import(pathToFileURL(SDK_INDEX).href);
 
 const {
   Keypair,
@@ -43,6 +44,11 @@ const FRIENDBOT   = "https://friendbot.stellar.org";
 // Oracle secp256k1 compressed public key (matches vrfCrypto.ts private key)
 const ORACLE_PK_HEX =
   "032c8c31fc9f990c6b55e3865a184a4ce50e09481f2eaeb3e60ec1cea13a6ae645";
+
+// Oracle Stellar keypair — same key used in sorobanSubmit.ts for access control
+// The oracle address is stored on-chain and checked in fulfill() via require_auth
+const ORACLE_STELLAR_SEED =
+  "SCOYJ5ZYDYBAM7FPRHL4PTFYNSE62AAL7LREU676VWAUSP75CCJUW7QO";
 
 const WASM_PATH = path.join(
   __dirname,
@@ -164,9 +170,13 @@ async function main() {
   const contractAddress = contractAddressObj.toString();
   console.log(`  Contract address: ${contractAddress}`);
 
-  // 5. Init
+  // 5. Init — pass oracle address (for access control) and oracle PK (for proof verification)
   console.log("\n[4/4] Initializing contract...");
   account = await server.getAccount(deployerKP.publicKey());
+
+  // Oracle Stellar address — used for require_auth in fulfill()
+  const oracleKP = Keypair.fromSecret(ORACLE_STELLAR_SEED);
+  const oracleAddrScVal = new Address(oracleKP.publicKey()).toScVal();
   const oraclePKScVal = nativeToScVal(Buffer.from(ORACLE_PK_HEX, "hex"), {
     type: "bytes",
   });
@@ -179,14 +189,15 @@ async function main() {
       Operation.invokeContractFunction({
         contract: contractAddress,
         function: "init",
-        args: [oraclePKScVal],
+        args: [oracleAddrScVal, oraclePKScVal],
       })
     )
     .setTimeout(120)
     .build();
 
   await sendAndConfirm(server, deployerKP, initTx);
-  console.log("  Contract initialized with oracle public key.");
+  console.log(`  Contract initialized with oracle address: ${oracleKP.publicKey()}`);
+  console.log(`  Oracle VRF public key: ${ORACLE_PK_HEX}`);
 
   // 6. Persist
   const result = {

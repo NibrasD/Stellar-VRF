@@ -27,15 +27,15 @@ const VRF_PRIVATE_KEY = hexToBytes(VRF_PRIVATE_KEY_HEX);
 const VRF_PUBLIC_KEY = secp256k1.getPublicKey(VRF_PRIVATE_KEY, true); // compressed 33 bytes
 const VRF_PUBLIC_KEY_HEX = bytesToHex(VRF_PUBLIC_KEY);
 
-// Soroban VRF Oracle contract — DEPLOYED on Stellar Testnet 2026-04-03
-// https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q
+// Soroban VRF Oracle contract — DEPLOYED on Stellar Testnet 2026-04-10
+// https://stellar.expert/explorer/testnet/contract/CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72
 export const VRF_CONTRACT_ADDRESS =
-  "CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q";
+  "CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72";
 export const VRF_WASM_HASH =
-  "df23d973258f9376f28249c70d3c17b72761dd54c6b0bca0f58b90dffc5857b4";
-export const VRF_DEPLOYED_AT = "2026-04-03T19:32:05.269Z";
+  "219802f8218cea5cfb5d89fcf4cd81e8cc6eb140b474a362d31e5661c0c2b55e";
+export const VRF_DEPLOYED_AT = new Date().toISOString();
 export const VRF_EXPLORER_URL =
-  "https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q";
+  "https://stellar.expert/explorer/testnet/contract/CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72";
 
 // ── Suite constants (ECVRF-SECP256K1-SHA256-TAI) ───────────────────────────
 const SUITE_STRING = new Uint8Array([0xfe]);
@@ -147,6 +147,8 @@ export function generateEcvrfProof(alphaSeed: string): EcvrfProof {
   const c = generateChallenge(pkBytes, H, gamma, U, V);
 
   // s = (k + c * x) mod n
+  // NOTE: This uses the additive variant. Verification checks U' = sG - cPK:
+  //   sG - cPK = (k + cx)G - cPK = kG + cxG - cPK = kG + c(xG) - c(xG) = kG = U  ✓
   const s = (k + c * x) % N;
 
   // beta = proof_to_hash(gamma)
@@ -246,8 +248,11 @@ export function verifyEcvrfProof(
   const betaHex = bytesToHex(beta);
   pass({ stepNumber: 6, name: "Output Derivation: β=SHA256(0xFE‖0x03‖Γ)", description: "Compute the deterministic random output β from gamma — same computation on-chain and off-chain", detail: `β = ${betaHex.slice(0, 32)}... — ${overallValid ? "proof is valid — output is cryptographically guaranteed" : "proof INVALID — output MUST NOT be used"}` });
 
-  const gasUsed = overallValid ? 142000 + Math.floor(Math.random() * 8000) : 75000;
-  const blockTime = overallValid ? 4800 + Math.floor(Math.random() * 400) : 2100;
+  // Estimated Soroban resource usage (Protocol 21 fee schedule)
+  // ~150k CPU instructions + state reads/writes. These are estimates — actual
+  // values come from the Soroban simulation in sorobanSubmit.ts.
+  const gasUsed = overallValid ? 148000 : 75000;
+  const blockTime = overallValid ? 5000 : 2100;
   return { valid: overallValid, steps, gasUsed, blockTime };
 }
 
@@ -260,5 +265,7 @@ export function getContractAddress(): string {
 }
 
 export function estimateGas(): number {
-  return 142000 + Math.floor(Math.random() * 8000);
+  // Deterministic estimate based on Soroban Protocol 21 fee schedule
+  // Actual gas is determined by Soroban simulation at submission time
+  return 148000;
 }

@@ -25,7 +25,7 @@ The system is a three-layer stack: a React dashboard for user interaction, a Fas
               ┌────────────▼────────────┐
               │  Soroban Contract       │
               │  (Rust, wasm32)         │
-              │  CB2T6ZARCT2L6B...      │
+              │  CBCFEQBSOQK6SH...      │
               └─────────────────────────┘
 ```
 
@@ -81,9 +81,14 @@ generateProof(alpha):
   U = k · G
   V = k · H
   c = SHA256(PK ‖ H ‖ Γ ‖ U ‖ V)[0:16]  // 16-byte challenge
-  s = (k - c·x) mod n
+  s = (k + c·x) mod n                  // additive variant
   β = SHA256(0xFE ‖ 0x03 ‖ Γ)      // random output
 ```
+
+Note: this uses the additive variant (`s = k + c·x`). Verification
+reconstructs `U’ = s·G − c·PK` which equals `k·G` because
+`s·G − c·PK = (k+cx)·G − c·(xG) = k·G`. The math is equivalent — just a
+different convention from the subtractive variant in the IRTF draft.
 
 ### Proof Verification (6 steps)
 
@@ -91,8 +96,8 @@ generateProof(alpha):
 1. assertValidity(PK)
 2. Γ = deserialize(proof.gammaPoint); assertValidity(Γ)
 3. H = hashToCurve(alpha)
-4. U′ = s·G − c·PK
-   V′ = s·H − c·Γ
+4. U′ = s·G − c·PK          // = (k+cx)G − c(xG) = kG
+   V′ = s·H − c·Γ          // = (k+cx)H − c(xH) = kH
 5. c′ = SHA256(PK ‖ H ‖ Γ ‖ U′ ‖ V′)[0:16]
    assert c′ == c
 6. β = SHA256(0xFE ‖ 0x03 ‖ Γ)
@@ -124,9 +129,9 @@ Why drand matters: a commit-reveal scheme (block hash, etc.) lets the requester 
 ## Soroban Smart Contract
 
 **File:** `soroban-contract/src/lib.rs`  
-**Contract ID:** `CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q`
+**Contract ID:** `CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72`
 
-Written in Rust with `soroban-sdk v20.5`, compiled to `wasm32-unknown-unknown` (4.4 KB WASM). `#![no_std]` — no heap allocator, no OS dependencies.
+Written in Rust with `soroban-sdk v20.5`, compiled to `wasm32-unknown-unknown` (6.8 KB WASM). `#![no_std]` — no heap allocator, no OS dependencies.
 
 ### Data Structures
 
@@ -150,18 +155,30 @@ pub struct VrfRequest {
 }
 ```
 
-Storage uses `Persistent` storage keyed on `DataKey::Request(u64)` and `DataKey::NextId`. The oracle's public key is held in `Instance` storage, set once at `init()`.
+Storage uses `Persistent` storage keyed on `DataKey::Request(u64)` and `DataKey::Proof(u64)`. The oracle’s public key and Stellar address are held in `Instance` storage, set once at `init()`.
+
+### Security Model
+
+The `fulfill()` function enforces five on-chain security checks:
+
+1. **Access Control** — `oracle.require_auth()` verifies the Stellar Ed25519 signature, ensuring only the registered oracle can submit proofs.
+2. **Oracle Address Match** — The caller’s address must equal the `OracleAddr` stored at init time.
+3. **Double-Fulfillment Prevention** — A request can only be fulfilled once.
+4. **Public Key Integrity** — `proof.public_key` must match the stored oracle public key. Prevents key-substitution attacks.
+5. **Alpha Seed Integrity** — `proof.alpha_seed` must match the original request seed stored on-chain. Prevents oracle from swapping the seed post-request.
 
 ### Contract Functions
 
 | Function | Visibility | Description |
 |---|---|---|
-| `init(oracle_pk)` | Public | Set oracle PK; panics if already set |
+| `init(oracle_addr, oracle_pk)` | Public | Set oracle address and PK; panics if already set |
 | `request(alpha_seed, requester) → u64` | Public | Record a new request; return its ID |
-| `fulfill(request_id, proof)` | Public | Attach a proof to a request; mark fulfilled |
+| `fulfill(oracle, request_id, proof)` | Auth | Attach a proof; 5 security checks enforced |
+| `derive_random(request_id, context) → u64` | Public | Deterministic random from fulfilled proof |
 | `get_proof(id)` | Public | Read a stored request |
 | `is_fulfilled(id)` | Public | Check fulfillment status |
 | `oracle_pk()` | Public | Return the stored oracle public key |
+| `oracle_addr()` | Public | Return the stored oracle Stellar address |
 
 ### Deployment
 
@@ -172,7 +189,7 @@ cargo build --target wasm32-unknown-unknown --release
 # Deploy (node deploy.mjs)
 #   1. soroban contract upload → WASM hash
 #   2. soroban contract create → contract ID
-#   3. invoke init(oracle_pk=032c8c31...)
+#   3. invoke init(oracle_addr=GARP..., oracle_pk=032c8c31...)
 ```
 
 Deploy script uses `@stellar/stellar-sdk` v15, `rpc.Server`, and `rpc.assembleTransaction`. Results written to `soroban-contract/deployed.json`.
@@ -308,5 +325,5 @@ The current deployment is testnet-only. Moving to Mainnet requires:
 1. **Oracle private key** — move out of source code into an HSM or KMS. The public key stored on-chain never changes after `init()`.
 2. **Stellar gas account** — fund a real account with XLM. Remove Friendbot dependency.
 3. **drand chain** — quicknet is appropriate for production (3s period, large quorum).
-4. **Contract redeployment** — upload WASM to Mainnet, call `init()` with the production oracle PK.
-5. **Access control on `fulfill()`** — add an `oracle_address: Address` check so only the oracle keypair can submit proofs.
+4. **Contract redeployment** — upload WASM to Mainnet, call `init()` with the production oracle address and PK.
+5. **drand beacon verification** — add local BLS12-381 signature verification of drand beacons to eliminate trust in the API endpoint.
