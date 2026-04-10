@@ -3,7 +3,6 @@ services:
   - type: web
     name: soroban-vrf-api
     env: node
-    plan: free # Use free tier for hackathon
     rootDir: .
     buildCommand: pnpm install && pnpm build
     startCommand: pnpm --filter @workspace/api-server run start:prod
