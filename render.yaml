@@ -4,7 +4,7 @@ services:
     name: soroban-vrf-api
     env: node
     rootDir: .
-    buildCommand: pnpm install && pnpm build
+    buildCommand: pnpm install && pnpm --filter @workspace/api-server... run build
     startCommand: pnpm --filter @workspace/api-server run start:prod
     envVars:
       - key: NODE_ENV
@@ -19,7 +19,7 @@ services:
     name: soroban-vrf-frontend
     env: static
     rootDir: .
-    buildCommand: pnpm install && pnpm --filter @workspace/soroban-vrf run build
+    buildCommand: pnpm install && pnpm --filter @workspace/soroban-vrf... run build
     staticPublishPath: artifacts/soroban-vrf/dist/public
     envVars:
       - key: VITE_API_URL
