@@ -1,4 +1,5 @@
-import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork, useGetDrandLatest, getGetStellarNetworkQueryKey, getGetDrandLatestQueryKey } from "@workspace/api-client-react";
+import React from "react";
+import { useGetDashboardStats, useGetRandomnessDistribution, useGetRecentActivity, useGetStellarNetwork, useGetDrandLatest } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bar, BarChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Activity, Clock, Zap, CheckCircle2, Shield, Globe, Layers, Hash, Server, Radio, ShieldCheck, RefreshCw, ExternalLink, Info, Lock } from "lucide-react";
@@ -10,11 +11,11 @@ export default function Dashboard() {
   const { data: distribution, isLoading: distLoading } = useGetRandomnessDistribution();
   const { data: activity, isLoading: activityLoading } = useGetRecentActivity();
   const { data: stellar, isLoading: stellarLoading } = useGetStellarNetwork({
-    query: { refetchInterval: 10000, queryKey: getGetStellarNetworkQueryKey() },
+    query: { refetchInterval: 10000 },
   });
   const { data: drand, isLoading: drandLoading, refetch: refetchDrand, isFetching: drandFetching } = useGetDrandLatest(
     { chain: "quicknet" },
-    { query: { refetchInterval: 6000, queryKey: getGetDrandLatestQueryKey({ chain: "quicknet" }) } },
+    { query: { refetchInterval: 6000 } },
   );
 
   return (
@@ -43,7 +44,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Proof Success Rate"
-          value={stats?.proofSuccessRate != null ? `${stats.proofSuccessRate.toFixed(2)}%` : undefined}
+          value={stats ? `${stats.proofSuccessRate.toFixed(2)}%` : undefined}
           icon={CheckCircle2}
           loading={statsLoading}
           highlight
@@ -112,7 +113,7 @@ export default function Dashboard() {
                 <StellarStat icon={Hash} label="Round" value={`#${drand.beacon.round.toLocaleString()}`} />
                 <StellarStat icon={Clock} label="Next beacon" value={`in ${drand.secondsUntilNext}s`} />
                 <StellarStat icon={Layers} label="Scheme" value={drand.chain.schemeId.split("-")[0]} />
-                <StellarStat icon={Radio} label="Chain" value="quicknet · G2"  />
+                <StellarStat icon={Radio} label="Chain" value="quicknet · G2" />
               </div>
               {/* Randomness hex + external verify link */}
               <div className="space-y-1">
@@ -293,19 +294,19 @@ export default function Dashboard() {
             label="Soroban Smart Contract"
             status="DEPLOYED — Stellar Testnet"
             statusColor="text-green-400"
-            description="VRF Oracle contract compiled from Rust to WASM and deployed on Stellar Testnet. Every fulfill() call submits a real on-chain transaction. The oracle's secp256k1 public key is stored in the contract's instance storage."
+            description="VRF Oracle contract v2 deployed on Stellar Testnet with full access control. fulfill() enforces require_auth() (only oracle can call), verifies proof.public_key matches stored PK, and validates Ed25519 signature on proof data on-chain."
             links={[
-              { label: "View contract on stellar.expert", href: "https://stellar.expert/explorer/testnet/contract/CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q" },
-              { label: "Deployer account", href: "https://stellar.expert/explorer/testnet/account/GCKLQ7EWMZTCLD4VKSZLN4NYEYE7TX3FATAYSBSROTTCVPG2DW3KZ6MQ" },
+              { label: "View contract on stellar.expert", href: "https://stellar.expert/explorer/testnet/contract/CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA" },
+              { label: "Oracle account", href: "https://stellar.expert/explorer/testnet/account/GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI" },
             ]}
           />
           <div className="mt-3 pt-3 border-t border-border/50 flex items-start gap-3 rounded-lg border border-primary/15 bg-primary/5 px-4 py-3">
             <CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" />
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              <span className="text-primary font-medium">100% real on-chain:</span>{" "}
-              When you fulfill a VRF request, the server generates a real ECVRF-SECP256K1 proof and submits it to the deployed Soroban contract via{" "}
-              <code className="text-primary">invokeContractFunction(fulfill)</code>.
-              Each proof transaction gets a Stellar transaction hash you can verify on stellar.expert — no simulations.
+              <span className="text-primary font-medium">3-layer on-chain security:</span>{" "}
+              (1) <code className="text-primary">require_auth()</code> — only the registered oracle address can call fulfill,{" "}
+              (2) PK match — contract verifies proof.public_key matches the stored oracle secp256k1 key,{" "}
+              (3) Ed25519 signature — oracle signs proof data, contract verifies via <code className="text-primary">env.crypto().ed25519_verify()</code> on-chain.
             </p>
           </div>
         </CardContent>
