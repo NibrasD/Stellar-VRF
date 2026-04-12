@@ -4,6 +4,11 @@ use soroban_sdk::{
     Address, Bytes, BytesN, Env, String,
 };
 
+const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
+const PERSISTENT_TTL_EXTEND: u32 = 518_400;
+const INSTANCE_TTL_THRESHOLD: u32 = 17_280;
+const INSTANCE_TTL_EXTEND: u32 = 518_400;
+
 #[contracttype]
 #[derive(Clone)]
 pub struct EcvrfProof {
@@ -45,13 +50,16 @@ impl VRFOracleContract {
         env.storage().instance().set(&DataKey::OracleAddr, &oracle_address);
         env.storage().instance().set(&DataKey::OracleEd25519, &oracle_ed25519_pk);
         env.storage().instance().set(&DataKey::Counter, &0u64);
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
         env.events().publish(
             (symbol_short!("init"),),
             oracle_pk,
         );
     }
 
-    pub fn request(env: Env, alpha_seed: Bytes, requester: String) -> u64 {
+    pub fn request(env: Env, alpha_seed: Bytes, requester: Address) -> u64 {
+        requester.require_auth();
+
         let counter: u64 = env
             .storage()
             .instance()
@@ -65,6 +73,15 @@ impl VRFOracleContract {
         env.storage()
             .persistent()
             .set(&DataKey::Fulfilled(id), &false);
+
+        env.storage().persistent().extend_ttl(
+            &DataKey::RequestSeed(id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::Fulfilled(id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
         env.events().publish(
             (symbol_short!("request"),),
             (id, requester),
@@ -73,7 +90,6 @@ impl VRFOracleContract {
     }
 
     pub fn fulfill(env: Env, request_id: u64, proof: EcvrfProof, signature: BytesN<64>) {
-        // 1. Access control: only the registered oracle address can call fulfill
         let oracle_addr: Address = env
             .storage()
             .instance()
@@ -81,12 +97,10 @@ impl VRFOracleContract {
             .unwrap();
         oracle_addr.require_auth();
 
-        // 2. Verify request exists
         if !env.storage().persistent().has(&DataKey::RequestSeed(request_id)) {
             panic!("request not found");
         }
 
-        // 3. Check not already fulfilled
         let already: bool = env
             .storage()
             .persistent()
@@ -96,7 +110,6 @@ impl VRFOracleContract {
             panic!("already fulfilled");
         }
 
-        // 4. Verify proof.public_key matches the stored oracle secp256k1 PK
         let stored_pk: BytesN<33> = env
             .storage()
             .instance()
@@ -106,8 +119,6 @@ impl VRFOracleContract {
             panic!("oracle key mismatch");
         }
 
-        // 5. Ed25519 signature verification on proof data
-        //    message = gamma_point(33) || c_scalar(16) || s_scalar(32) || beta_output(32) = 113 bytes
         let oracle_ed25519: BytesN<32> = env
             .storage()
             .instance()
@@ -115,19 +126,37 @@ impl VRFOracleContract {
             .unwrap();
 
         let mut message = Bytes::new(&env);
+        let mut rid_bytes = [0u8; 8];
+        rid_bytes[0] = (request_id >> 56) as u8;
+        rid_bytes[1] = (request_id >> 48) as u8;
+        rid_bytes[2] = (request_id >> 40) as u8;
+        rid_bytes[3] = (request_id >> 32) as u8;
+        rid_bytes[4] = (request_id >> 24) as u8;
+        rid_bytes[5] = (request_id >> 16) as u8;
+        rid_bytes[6] = (request_id >> 8) as u8;
+        rid_bytes[7] = request_id as u8;
+        message.append(&Bytes::from_slice(&env, &rid_bytes));
         message.append(&Bytes::from_slice(&env, &proof.gamma_point.to_array()));
         message.append(&Bytes::from_slice(&env, &proof.c_scalar.to_array()));
         message.append(&Bytes::from_slice(&env, &proof.s_scalar.to_array()));
         message.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
         env.crypto().ed25519_verify(&oracle_ed25519, &message, &signature);
 
-        // 6. Store proof and mark fulfilled
         env.storage()
             .persistent()
             .set(&DataKey::Proof(request_id), &proof.clone());
         env.storage()
             .persistent()
             .set(&DataKey::Fulfilled(request_id), &true);
+
+        env.storage().persistent().extend_ttl(
+            &DataKey::Proof(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::Fulfilled(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
         env.events().publish(
             (symbol_short!("fulfill"),),
             (request_id, proof.beta_output),
@@ -135,30 +164,47 @@ impl VRFOracleContract {
     }
 
     pub fn get_proof(env: Env, request_id: u64) -> EcvrfProof {
-        env.storage()
+        let proof: EcvrfProof = env.storage()
             .persistent()
             .get(&DataKey::Proof(request_id))
-            .unwrap_or_else(|| panic!("proof not found"))
+            .unwrap_or_else(|| panic!("proof not found"));
+        env.storage().persistent().extend_ttl(
+            &DataKey::Proof(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::Fulfilled(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        proof
     }
 
     pub fn oracle_pk(env: Env) -> BytesN<33> {
-        env.storage()
+        let pk: BytesN<33> = env.storage()
             .instance()
             .get(&DataKey::OraclePK)
-            .unwrap()
+            .unwrap();
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        pk
     }
 
     pub fn oracle_address(env: Env) -> Address {
-        env.storage()
+        let addr: Address = env.storage()
             .instance()
             .get(&DataKey::OracleAddr)
-            .unwrap()
+            .unwrap();
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        addr
     }
 
     pub fn is_fulfilled(env: Env, request_id: u64) -> bool {
-        env.storage()
+        let fulfilled: bool = env.storage()
             .persistent()
             .get(&DataKey::Fulfilled(request_id))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if env.storage().persistent().has(&DataKey::Fulfilled(request_id)) {
+            env.storage().persistent().extend_ttl(
+                &DataKey::Fulfilled(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            );
+        }
+        fulfilled
     }
 }

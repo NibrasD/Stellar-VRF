@@ -129,6 +129,9 @@ export async function sorobanRequest(
 
   const alphaBytes = Buffer.from(alphaSeed, "utf-8");
 
+  // requester = oracle address (signs require_auth on-chain)
+  const requesterAddr = new Address(kp.publicKey());
+
   const tx = new TransactionBuilder(account, { fee: FEE, networkPassphrase: NETWORK })
     .addOperation(
       Operation.invokeContractFunction({
@@ -136,7 +139,7 @@ export async function sorobanRequest(
         function: "request",
         args: [
           nativeToScVal(alphaBytes, { type: "bytes" }),
-          nativeToScVal(requesterAddress, { type: "string" }),
+          requesterAddr.toScVal(),
         ],
       })
     )
@@ -198,9 +201,11 @@ export async function sorobanFulfill(
   const betaBytes = Buffer.from(proof.randomOutput, "hex");  // 32 bytes
   const pkBytes = Buffer.from(proof.publicKey, "hex");  // 33 bytes compressed
 
-  // Ed25519 signature: sign (gamma_compressed || c || s || beta) with oracle Stellar keypair
-  // This is the same message the contract reconstructs and verifies
-  const proofMessage = Buffer.concat([gammaBytes, cBytes, sBytes, betaBytes]);
+  // Ed25519 signature: sign (request_id_be8 || gamma || c || s || beta)
+  // request_id as 8-byte big-endian — prevents proof reuse across different requests
+  const ridBuf = Buffer.alloc(8);
+  ridBuf.writeBigUInt64BE(BigInt(contractRequestId));
+  const proofMessage = Buffer.concat([ridBuf, gammaBytes, cBytes, sBytes, betaBytes]);
   const ed25519Signature = kp.sign(proofMessage); // 64 bytes
 
   // Soroban contract type EcvrfProof fields (alphabetical order for Soroban map encoding)
