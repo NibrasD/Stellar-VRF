@@ -15,12 +15,14 @@ services:
         value: 8080
 
   # ── Frontend: Static Site ──────────────────────────────────────────────────
-  - type: web
+  - type: static
     name: soroban-vrf-frontend
-    env: static
-    rootDir: .
     buildCommand: pnpm install && pnpm --filter @workspace/soroban-vrf... run build
     staticPublishPath: artifacts/soroban-vrf/dist/public
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: VITE_API_URL
         sync: false # User must set this to the URL of the soroban-vrf-api service
