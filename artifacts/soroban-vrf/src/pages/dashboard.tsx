@@ -296,7 +296,7 @@ export default function Dashboard() {
             statusColor="text-green-400"
             description="VRF Oracle contract v2 deployed on Stellar Testnet with full access control. fulfill() enforces require_auth() (only oracle can call), verifies proof.public_key matches stored PK, and validates Ed25519 signature on proof data on-chain."
             links={[
-              { label: "View contract on stellar.expert", href: "https://stellar.expert/explorer/testnet/contract/CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA" },
+              { label: "View contract on stellar.expert", href: "https://stellar.expert/explorer/testnet/contract/CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3" },
               { label: "Oracle account", href: "https://stellar.expert/explorer/testnet/account/GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI" },
             ]}
           />

@@ -29,14 +29,14 @@ const VRF_PUBLIC_KEY_HEX = bytesToHex(VRF_PUBLIC_KEY);
 
 // Soroban VRF Oracle contract v2 — DEPLOYED on Stellar Testnet
 // Security: require_auth() + PK match + Ed25519 signature verification
-// https://stellar.expert/explorer/testnet/contract/CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA
+// https://stellar.expert/explorer/testnet/contract/CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3
 export const VRF_CONTRACT_ADDRESS =
-  "CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA";
+  "CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3";
 export const VRF_WASM_HASH =
-  "0479083a97e136a1f6a4c8ad0a613538eead2d55c286238dc22780dadea49ba6";
+  "cb0a4b03edbeb078edadab9d7f979406dade2d3809d941b7bc7128e9d7dfa294";
 export const VRF_DEPLOYED_AT = "2026-04-12T13:39:00.000Z";
 export const VRF_EXPLORER_URL =
-  "https://stellar.expert/explorer/testnet/contract/CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA";
+  "https://stellar.expert/explorer/testnet/contract/CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3";
 
 // ── Suite constants (ECVRF-SECP256K1-SHA256-TAI) ───────────────────────────
 const SUITE_STRING = new Uint8Array([0xfe]);
