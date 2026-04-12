@@ -1,10 +1,17 @@
 {
-  "contractAddress": "CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72",
-  "wasmHash": "219802f8218cea5cfb5d89fcf4cd81e8cc6eb140b474a362d31e5661c0c2b55e",
-  "deployerPublicKey": "GBLDJDCDH37EW46PJH6X5AIZNWE2PMLW32BENHSHGLCVRFLRRDVDLNIZ",
+  "contractAddress": "CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA",
+  "wasmHash": "0479083a97e136a1f6a4c8ad0a613538eead2d55c286238dc22780dadea49ba6",
+  "deployerPublicKey": "GCFFIQUTAFP6OLOAXVH2IZAAP63HEV5CY4MP3UZGK2OWCJIW252AZK6L",
   "oraclePublicKeyHex": "032c8c31fc9f990c6b55e3865a184a4ce50e09481f2eaeb3e60ec1cea13a6ae645",
+  "oracleStellarAddress": "GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI",
+  "oracleEd25519Hex": "22f63c29e9f9ba37075a05cf325888cc5e65aaa6279c0f15b765a9d1d1030398",
   "network": "testnet",
   "sorobanRpcUrl": "https://soroban-testnet.stellar.org",
-  "deployedAt": "2026-04-10T15:51:57.920Z",
-  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72"
+  "deployedAt": "2026-04-12T13:48:17.685Z",
+  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CCNFT3MLN3FQLWYCA7DVYQZNVLIVJ3UBHYNXU2FUAXJDG2VPZ74C6NKA",
+  "securityFeatures": [
+    "require_auth() — only oracle address can call fulfill()",
+    "PK match — proof.public_key must equal stored oracle secp256k1 PK",
+    "Ed25519 signature — proof data signed by oracle Ed25519 key, verified on-chain"
+  ]
 }
