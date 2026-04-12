@@ -1,16 +1,13 @@
 /**
  * sorobanSubmit.ts — Submit VRF proofs to the deployed Soroban contract
  *
- * Contract: CB2T6ZARCT2L6BIKTSIOJLPBSY4HY2Z6VKWPW3N6XEMJDJXASKGPG77Q
- * Network:  Stellar Testnet
+ * Security model:
+ *   1. require_auth() — only the oracle Stellar address can call fulfill()
+ *   2. PK match — contract verifies proof.public_key == stored oracle secp256k1 PK
+ *   3. Ed25519 sig — oracle signs proof data with its Stellar Ed25519 key;
+ *      contract verifies the signature on-chain via env.crypto().ed25519_verify()
  *
- * This module funds an ephemeral oracle Stellar account from Friendbot,
- * then submits `request` and `fulfill` invocations to the live contract.
- *
- * Security: The fulfill() function now requires oracle address authentication.
- * The contract verifies that the caller is the registered oracle, that the
- * proof's public key matches the stored oracle PK, and that the alpha seed
- * matches the original request.
+ * Network: Stellar Testnet
  */
 
 import {
@@ -27,13 +24,15 @@ import { VRF_CONTRACT_ADDRESS } from "./vrfCrypto.js";
 import type { EcvrfProof } from "./vrfCrypto.js";
 
 const SOROBAN_URL = "https://soroban-testnet.stellar.org";
-const FRIENDBOT   = "https://friendbot.stellar.org";
-const NETWORK     = Networks.TESTNET;
-const FEE         = "1000000"; // 0.1 XLM max
+const FRIENDBOT = "https://friendbot.stellar.org";
+const NETWORK = Networks.TESTNET;
+const FEE = "1000000"; // 0.1 XLM max
 
 // Fixed oracle Stellar keypair — funded from Friendbot on first use
-// This is a Stellar Ed25519 key for paying gas (distinct from the secp256k1 VRF key)
-// IMPORTANT: testnet only — do not use real XLM
+// This is a Stellar Ed25519 key for:
+//   - paying gas (source account)
+//   - require_auth() access control (only this address can call fulfill)
+//   - Ed25519 signing of proof data (verified on-chain)
 // GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI
 const ORACLE_STELLAR_SEED =
   "SCOYJ5ZYDYBAM7FPRHL4PTFYNSE62AAL7LREU676VWAUSP75CCJUW7QO";
@@ -64,7 +63,6 @@ async function ensureFunded(): Promise<void> {
     await srv.getAccount(kp.publicKey());
     oracleFunded = true;
   } catch {
-    // Account doesn't exist — fund it
     const res = await fetch(`${FRIENDBOT}?addr=${kp.publicKey()}`);
     if (!res.ok) {
       const body = await res.text();
@@ -92,7 +90,7 @@ async function pollTx(hash: string): Promise<SorobanRpc.Api.GetTransactionRespon
 
 async function sendTx(tx: any): Promise<SorobanRpc.Api.GetTransactionResponse> {
   const srv = getServer();
-  const kp  = getOracleKP();
+  const kp = getOracleKP();
 
   const simulated = await srv.simulateTransaction(tx);
   if (SorobanRpc.Api.isSimulationError(simulated)) {
@@ -125,7 +123,7 @@ export async function sorobanRequest(
   requesterAddress: string
 ): Promise<SorobanRequestResult> {
   await ensureFunded();
-  const kp  = getOracleKP();
+  const kp = getOracleKP();
   const srv = getServer();
   const account = await srv.getAccount(kp.publicKey());
 
@@ -146,13 +144,10 @@ export async function sorobanRequest(
     .build();
 
   const result = await sendTx(tx);
-  // Return value is SCV_U64 — the contract-assigned request ID
-  // xdr Uint64 is represented as a Long object — convert via toString first
   let contractId = 0;
   try {
-    const rv = (result as any).returnValue as xdr.ScVal;
+    const rv = result.returnValue as xdr.ScVal;
     const u64val = rv.u64();
-    // xdr Long objects have a .toNumber() or .toString() method
     contractId = typeof (u64val as any).toNumber === "function"
       ? (u64val as any).toNumber()
       : Number(BigInt((u64val as any).toString()));
@@ -166,12 +161,10 @@ export async function sorobanRequest(
 /**
  * Submit a fulfilled ECVRF proof to the Soroban contract.
  *
- * The contract performs 5 security checks:
- *   1. require_auth — verifies the oracle's Stellar signature
- *   2. Oracle address match — confirms caller is the registered oracle
- *   3. Double-fulfillment prevention
- *   4. Public key integrity — proof.public_key == stored oracle PK
- *   5. Alpha seed integrity — proof.alpha_seed == original request seed
+ * Security layers:
+ *   1. Transaction is signed by oracle keypair → satisfies require_auth()
+ *   2. proof.public_key is the oracle secp256k1 PK → contract checks it matches stored PK
+ *   3. Ed25519 signature over (gamma || c || s || beta) → verified on-chain
  */
 export async function sorobanFulfill(
   contractRequestId: number,
@@ -179,38 +172,38 @@ export async function sorobanFulfill(
   proof: EcvrfProof
 ): Promise<SorobanFulfillResult> {
   await ensureFunded();
-  const kp  = getOracleKP();
+  const kp = getOracleKP();
   const srv = getServer();
   const account = await srv.getAccount(kp.publicKey());
 
-  // Build the oracle address ScVal for access control
-  const oracleAddress = new Address(kp.publicKey());
-  const oracleAddressScVal = oracleAddress.toScVal();
-
   // Build EcvrfProof struct matching the Soroban contract
-  const alphaBytes  = Buffer.from(alphaSeed, "utf-8");
+  const alphaBytes = Buffer.from(alphaSeed, "utf-8");
+
   // gammaPoint is stored as 65-byte uncompressed (04||x||y) — contract wants 33-byte compressed
-  // Compress manually: if y is even → 02||x, if y is odd → 03||x (no library needed)
+  // Compress manually: if y is even → 02||x, if y is odd → 03||x
   const gammaHex = proof.gammaPoint;
   let gammaBytes: Buffer;
   if (gammaHex.startsWith("04") && gammaHex.length === 130) {
     const raw = Buffer.from(gammaHex.slice(2), "hex"); // 64 bytes: x||y
-    const x   = raw.subarray(0, 32);
-    const yLastByte = raw[63]; // last byte of y
+    const x = raw.subarray(0, 32);
+    const yLastByte = raw[63];
     const prefix = (yLastByte & 1) === 0 ? 0x02 : 0x03;
     gammaBytes = Buffer.concat([Buffer.from([prefix]), x]); // 33 bytes
   } else {
-    gammaBytes = Buffer.from(gammaHex, "hex"); // already compact
+    gammaBytes = Buffer.from(gammaHex, "hex");
   }
-  // challenge is 16 bytes (first half of 32-byte hash)
-  const cBytes      = Buffer.from(proof.challengeScalar, "hex").subarray(0, 16);
-  const sBytes      = Buffer.from(proof.responseScalar,  "hex");  // 32 bytes
-  const betaBytes   = Buffer.from(proof.randomOutput,    "hex");  // 32 bytes
-  const pkBytes     = Buffer.from(proof.publicKey,       "hex");  // 33 bytes compressed
 
-  // Soroban contracttype EcvrfProof fields (in declaration order from lib.rs):
-  //   alpha_seed, gamma_point, c_scalar, s_scalar, beta_output, public_key
-  // Note: Soroban sorts map keys alphabetically when matching to struct fields
+  const cBytes = Buffer.from(proof.challengeScalar, "hex").subarray(0, 16); // 16 bytes
+  const sBytes = Buffer.from(proof.responseScalar, "hex");  // 32 bytes
+  const betaBytes = Buffer.from(proof.randomOutput, "hex");  // 32 bytes
+  const pkBytes = Buffer.from(proof.publicKey, "hex");  // 33 bytes compressed
+
+  // Ed25519 signature: sign (gamma_compressed || c || s || beta) with oracle Stellar keypair
+  // This is the same message the contract reconstructs and verifies
+  const proofMessage = Buffer.concat([gammaBytes, cBytes, sBytes, betaBytes]);
+  const ed25519Signature = kp.sign(proofMessage); // 64 bytes
+
+  // Soroban contract type EcvrfProof fields (alphabetical order for Soroban map encoding)
   const proofMap = xdr.ScVal.scvMap([
     new xdr.ScMapEntry({
       key: xdr.ScVal.scvSymbol("alpha_seed"),
@@ -238,16 +231,18 @@ export async function sorobanFulfill(
     }),
   ]);
 
-  // Updated contract signature: fulfill(oracle: Address, request_id: u64, proof: EcvrfProof)
+  // Ed25519 signature as BytesN<64>
+  const signatureScVal = nativeToScVal(Buffer.from(ed25519Signature), { type: "bytes" });
+
   const tx = new TransactionBuilder(account, { fee: FEE, networkPassphrase: NETWORK })
     .addOperation(
       Operation.invokeContractFunction({
         contract: VRF_CONTRACT_ADDRESS,
         function: "fulfill",
         args: [
-          oracleAddressScVal,
           nativeToScVal(contractRequestId, { type: "u64" }),
           proofMap,
+          signatureScVal,
         ],
       })
     )
