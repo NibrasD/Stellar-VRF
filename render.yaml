@@ -17,7 +17,7 @@ services:
   # ── Frontend: Static Site ──────────────────────────────────────────────────
   - type: static
     name: soroban-vrf-frontend
-    buildCommand: pnpm install && pnpm --filter @workspace/soroban-vrf... run build
+    buildCommand: pnpm install && pnpm --filter @workspace/soroban-vrf... run build && cp artifacts/soroban-vrf/dist/public/index.html artifacts/soroban-vrf/dist/public/404.html
     staticPublishPath: artifacts/soroban-vrf/dist/public
     routes:
       - type: rewrite
