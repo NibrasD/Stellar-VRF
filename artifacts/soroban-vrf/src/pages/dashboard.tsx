@@ -86,12 +86,12 @@ export default function Dashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Why drand solves the NebulaVRF problem */}
+          {/* Why drand*/}
           <div className="flex items-start gap-3 rounded-lg border border-primary/15 bg-primary/5 px-4 py-3">
             <ShieldCheck className="w-4 h-4 text-primary mt-0.5 shrink-0" />
             <p className="text-[11px] text-muted-foreground leading-relaxed">
               <span className="text-foreground font-medium">Why drand?</span>{" "}
-              Commit-reveal schemes (like NebulaVRF) let the operator pre-choose the seed and manipulate outcomes.
+              Commit-reveal schemes let the operator pre-choose the seed and manipulate outcomes.
               drand's <span className="text-primary">threshold BLS signature</span> requires a quorum of independent nodes (Cloudflare, EPFL, Protocol Labs…)
               — no single party controls the output, making it impossible for our oracle to bias the VRF result.
               Use the <span className="text-primary">suggestedAlphaSeed</span> below as your alpha input when creating a request.
