@@ -10,7 +10,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        sync: false # User must set this in the Render dashboard
+        sync: false
       - key: PORT
         value: 8080
 
@@ -19,7 +19,7 @@ services:
     name: soroban-vrf-frontend
     env: node
     buildCommand: pnpm install && pnpm --filter @workspace/soroban-vrf... run build
-    startCommand: npx serve -s artifacts/soroban-vrf/dist/public -p 10000
+    startCommand: npx serve -s artifacts/soroban-vrf/dist/public -p 10000 --single
     envVars:
       - key: VITE_API_URL
         sync: false
