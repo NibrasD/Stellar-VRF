@@ -92,7 +92,8 @@ jobs:
 
       - name: Assert required integration secrets
         run: |
-          test -n "${{ secrets.VRF_PRIVATE_KEY_HEX }}" || (echo "::error::Missing VRF_PRIVATE_KEY_HEX" && exit 1)
+          # Accept either a raw VRF private key or an AWS Secrets Manager ARN
+          test -n "${{ secrets.VRF_PRIVATE_KEY_HEX }}" || test -n "${{ secrets.KMS_AWS_VRF_SECRET_ARN }}" || (echo "::error::Missing VRF_PRIVATE_KEY_HEX or KMS_AWS_VRF_SECRET_ARN" && exit 1)
           test -n "${{ secrets.ORACLE_STELLAR_SEED }}" || (echo "::error::Missing ORACLE_STELLAR_SEED" && exit 1)
           test -n "${{ secrets.SOROBAN_URL }}" || (echo "::error::Missing SOROBAN_URL" && exit 1)
           test -n "${{ secrets.SOROBAN_NETWORK }}" || (echo "::error::Missing SOROBAN_NETWORK" && exit 1)
@@ -107,13 +108,19 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Configure AWS credentials (OIDC)
-        if: ${{ env.AWS_ROLE_ARN != '' }}
+        if: ${{ secrets.AWS_ROLE_ARN != '' }}
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Load VRF key from Secrets Manager (if configured)
+        if: ${{ secrets.KMS_AWS_VRF_SECRET_ARN != '' && secrets.AWS_ROLE_ARN != '' }}
+        run: |
+          VRF_HEX=$(aws secretsmanager get-secret-value --secret-id "${{ secrets.KMS_AWS_VRF_SECRET_ARN }}" --region "${{ secrets.AWS_REGION }}" --query SecretString --output text)
+          echo "VRF_PRIVATE_KEY_HEX=$VRF_HEX" >> $GITHUB_ENV
 
       - name: Run always-on Soroban integration tests
         env:
