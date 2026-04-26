@@ -68,3 +68,19 @@ logs
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Local build caches and heavy local files (added by automation)
+# Rust/Cargo targets
+soroban-contract/target/
+**/target/
+
+# Terraform local state/cache
+infra/.terraform/
+infra/terraform.tfstate*
+*.tfstate
+
+# Local archives and accidental uploads
+Stellar-VRF.zip
+
+# Ensure node modules ignored (redundant if already present)
+node_modules/
