@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short,
-    Address, Bytes, BytesN, Env, String,
+    Address, Bytes, BytesN, Env,
 };
 
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
