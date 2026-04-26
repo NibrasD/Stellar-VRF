@@ -32,6 +32,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Build Soroban contract (secure-onchain profile)
         run: cargo build --manifest-path soroban-contract/Cargo.toml --target wasm32-unknown-unknown --release
