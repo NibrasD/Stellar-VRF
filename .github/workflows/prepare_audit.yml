@@ -1,0 +1,27 @@
+name: Prepare Audit Package
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Enable corepack and pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+      - name: Install (root)
+        run: pnpm install --frozen-lockfile
+      - name: Prepare audit package
+        run: node scripts/prepare_audit.mjs
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit_package
+          path: audit_package
