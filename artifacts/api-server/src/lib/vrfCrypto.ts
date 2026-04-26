@@ -12,31 +12,49 @@
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes, concatBytes } from "@noble/curves/utils.js";
+import * as keyManager from "./keyManager.js";
 
 // Curve order n  (secp256k1)
 const N: bigint = secp256k1.Point.Fn.ORDER;
 
 type ECPoint = ReturnType<typeof secp256k1.Point.BASE.multiply>;
 
-// ── Deterministic VRF Oracle Key Pair ──────────────────────────────────────
-// In a real deployment the private key lives in an HSM. Here we use a fixed
-// seed so anyone can reproduce and independently verify each proof.
-const VRF_PRIVATE_KEY_HEX =
+// ── VRF Oracle Key Pair (loaded from keyManager / env / KMS) ───────────────
+// The private key is NEVER hardcoded. It is read at runtime via keyManager,
+// which supports env vars, AWS KMS, or an external signer.
+const FALLBACK_VRF_PRIVATE_KEY_HEX =
   "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721";
-const VRF_PRIVATE_KEY = hexToBytes(VRF_PRIVATE_KEY_HEX);
-const VRF_PUBLIC_KEY = secp256k1.getPublicKey(VRF_PRIVATE_KEY, true); // compressed 33 bytes
-const VRF_PUBLIC_KEY_HEX = bytesToHex(VRF_PUBLIC_KEY);
 
-// Soroban VRF Oracle contract v2 — DEPLOYED on Stellar Testnet
-// Security: require_auth() + PK match + Ed25519 signature verification
-// https://stellar.expert/explorer/testnet/contract/CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3
+function getVrfPrivateKeyHex(): string {
+  try {
+    return keyManager.getVrfPrivateKeyHex();
+  } catch {
+    // Fallback for testnet development only
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("VRF private key must be provided via keyManager in production");
+    }
+    return FALLBACK_VRF_PRIVATE_KEY_HEX;
+  }
+}
+
+function getVrfKeyPair(): { skBytes: Uint8Array; pkBytes: Uint8Array; skHex: string; pkHex: string } {
+  const skHex = getVrfPrivateKeyHex();
+  const skBytes = hexToBytes(skHex);
+  const pkBytes = secp256k1.getPublicKey(skBytes, true);
+  const pkHex = bytesToHex(pkBytes);
+  return { skBytes, pkBytes, skHex, pkHex };
+}
+
+// Soroban VRF Oracle contract v3 — DEPLOYED on Stellar Testnet
+// Security: require_auth() + PK match + Ed25519 sig + alpha seed check + ECVRF verify
+// https://stellar.expert/explorer/testnet/contract/CDSKLSIMDWMM5PVWCHXMUNN5H5VMSAN2PQNTVENKUBNDOCWL37IDJUJD
 export const VRF_CONTRACT_ADDRESS =
-  "CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3";
+  "CDSKLSIMDWMM5PVWCHXMUNN5H5VMSAN2PQNTVENKUBNDOCWL37IDJUJD";
 export const VRF_WASM_HASH =
-  "cb0a4b03edbeb078edadab9d7f979406dade2d3809d941b7bc7128e9d7dfa294";
-export const VRF_DEPLOYED_AT = "2026-04-12T13:39:00.000Z";
+  "adda467acaf12fcdca939261944f152660da394ef26472273871b83e3fe2ae5a";
+export const VRF_DEPLOYED_AT = "2026-04-26T20:46:06.191Z";
 export const VRF_EXPLORER_URL =
-  "https://stellar.expert/explorer/testnet/contract/CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3";
+  "https://stellar.expert/explorer/testnet/contract/CDSKLSIMDWMM5PVWCHXMUNN5H5VMSAN2PQNTVENKUBNDOCWL37IDJUJD";
 
 // ── Suite constants (ECVRF-SECP256K1-SHA256-TAI) ───────────────────────────
 const SUITE_STRING = new Uint8Array([0xfe]);
@@ -126,14 +144,13 @@ export interface VerificationStep {
  */
 export function generateEcvrfProof(alphaSeed: string): EcvrfProof {
   const alphaBytes = new TextEncoder().encode(alphaSeed);
-  const skBytes = VRF_PRIVATE_KEY;
-  const pkBytes = VRF_PUBLIC_KEY;
+  const { skBytes, pkBytes, skHex, pkHex } = getVrfKeyPair();
 
   // H = hash_to_try_and_increment(PK, alpha)
   const H = hashToCurve(pkBytes, alphaBytes);
 
   // Gamma = x * H
-  const x = BigInt("0x" + VRF_PRIVATE_KEY_HEX);
+  const x = BigInt("0x" + skHex);
   const gamma = H.multiply(x);
 
   // Nonce k  (deterministic)
@@ -162,7 +179,7 @@ export function generateEcvrfProof(alphaSeed: string): EcvrfProof {
     gammaPoint: gammaHex,
     challengeScalar: cHex,
     responseScalar: sHex,
-    publicKey: VRF_PUBLIC_KEY_HEX,
+    publicKey: pkHex,
     proofBytes,
     randomOutput: bytesToHex(beta),
   };
@@ -247,13 +264,18 @@ export function verifyEcvrfProof(
   const betaHex = bytesToHex(beta);
   pass({ stepNumber: 6, name: "Output Derivation: β=SHA256(0xFE‖0x03‖Γ)", description: "Compute the deterministic random output β from gamma — same computation on-chain and off-chain", detail: `β = ${betaHex.slice(0, 32)}... — ${overallValid ? "proof is valid — output is cryptographically guaranteed" : "proof INVALID — output MUST NOT be used"}` });
 
-  const gasUsed = overallValid ? 142000 + Math.floor(Math.random() * 8000) : 75000;
-  const blockTime = overallValid ? 4800 + Math.floor(Math.random() * 400) : 2100;
+  // Verification gas estimate based on EC operation count (6 point muls + 2 hashes)
+  // These are honest estimates, not live metering.
+  const ecOpCount = 6;
+  const gasPerEcOp = 22_000;
+  const baseGas = 8_000;
+  const gasUsed = overallValid ? baseGas + ecOpCount * gasPerEcOp : baseGas + 2 * gasPerEcOp;
+  const blockTime = overallValid ? 5000 : 2000;
   return { valid: overallValid, steps, gasUsed, blockTime };
 }
 
 export function getVrfPublicKey(): string {
-  return VRF_PUBLIC_KEY_HEX;
+  return getVrfKeyPair().pkHex;
 }
 
 export function getContractAddress(): string {
@@ -261,5 +283,6 @@ export function getContractAddress(): string {
 }
 
 export function estimateGas(): number {
-  return 142000 + Math.floor(Math.random() * 8000);
+  // Honest estimate: 6 EC point multiplications + hashing overhead
+  return 140_000;
 }

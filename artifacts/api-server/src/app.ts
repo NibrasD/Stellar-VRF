@@ -3,6 +3,11 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { rateLimit } from "./middlewares/rateLimit";
+import { register, initMetrics } from "./lib/monitoring";
+
+// Initialize Prometheus default metrics collection
+initMetrics();
 
 const app: Express = express();
 
@@ -29,6 +34,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Rate limiting on mutation endpoints
+app.use("/api/vrf-requests", rateLimit({ max: 30, windowMs: 60_000 }));
+app.use("/api/vrf-proofs", rateLimit({ max: 20, windowMs: 60_000 }));
+
 app.get("/", (_req, res) => {
   res.send(`
     <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #0f172a; color: #38bdf8; text-align: center; padding: 20px;">
@@ -43,6 +52,17 @@ app.get("/", (_req, res) => {
   `);
 });
 
+// Prometheus metrics endpoint
+app.get("/metrics", async (_req, res) => {
+  try {
+    res.set("Content-Type", register.contentType);
+    res.end(await register.metrics());
+  } catch (e) {
+    res.status(500).end(String(e));
+  }
+});
+
 app.use("/api", router);
 
 export default app;
+

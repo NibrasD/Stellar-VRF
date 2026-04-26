@@ -1,4 +1,8 @@
 #![no_std]
+mod ecvrf;
+#[cfg(test)]
+mod test;
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short,
     Address, Bytes, BytesN, Env,
@@ -142,6 +146,36 @@ impl VRFOracleContract {
         message.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
         env.crypto().ed25519_verify(&oracle_ed25519, &message, &signature);
 
+        // ── 6. Alpha seed integrity: proof.alpha_seed must match stored seed ──
+        let stored_seed: Bytes = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RequestSeed(request_id))
+            .unwrap();
+        if proof.alpha_seed != stored_seed {
+            panic!("alpha seed mismatch");
+        }
+
+        // ── 7. On-chain ECVRF cryptographic verification (feature-gated) ──
+        #[cfg(feature = "ecvrf")]
+        {
+            let gamma_arr = proof.gamma_point.to_array();
+            let c_arr = proof.c_scalar.to_array();
+            let s_arr = proof.s_scalar.to_array();
+            let pk_arr = proof.public_key.to_array();
+            match ecvrf::onchain::verify_ecvrf(
+                &proof.alpha_seed,
+                &gamma_arr,
+                &c_arr,
+                &s_arr,
+                &pk_arr,
+            ) {
+                Ok(true) => { /* proof is valid */ }
+                Ok(false) => panic!("ECVRF proof verification failed: challenge mismatch"),
+                Err(e) => panic!("ECVRF proof verification error: {}", e),
+            }
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::Proof(request_id), &proof.clone());
@@ -206,5 +240,43 @@ impl VRFOracleContract {
             );
         }
         fulfilled
+    }
+
+    /// Derive a deterministic random u64 from a fulfilled proof.
+    /// Consumer contracts call this to get randomness scoped by `context`.
+    /// The same (request_id, context) always returns the same value.
+    pub fn derive_random(env: Env, request_id: u64, context: Bytes) -> u64 {
+        let fulfilled: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilled(request_id))
+            .unwrap_or(false);
+        if !fulfilled {
+            panic!("request not yet fulfilled");
+        }
+
+        let proof: EcvrfProof = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proof(request_id))
+            .unwrap();
+
+        // Deterministic: SHA256(beta_output || context) → first 8 bytes → u64
+        let mut input = Bytes::new(&env);
+        input.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
+        input.append(&context);
+        let hash = env.crypto().sha256(&input);
+        let hash_arr = hash.to_array();
+
+        let mut buf = [0u8; 8];
+        buf[0] = hash_arr[0];
+        buf[1] = hash_arr[1];
+        buf[2] = hash_arr[2];
+        buf[3] = hash_arr[3];
+        buf[4] = hash_arr[4];
+        buf[5] = hash_arr[5];
+        buf[6] = hash_arr[6];
+        buf[7] = hash_arr[7];
+        u64::from_be_bytes(buf)
     }
 }

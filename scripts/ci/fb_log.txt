@@ -1,0 +1,81 @@
+﻿WARNING: git-filter-branch has a glut of gotchas generating mangled history
+	 rewrites.  Hit Ctrl-C before proceeding to abort, then use an
+	 alternative filtering tool such as 'git filter-repo'
+	 (https://github.com/newren/git-filter-repo/) instead.  See the
+	 filter-branch manual page for more details; to squelch this warning,
+	 set FILTER_BRANCH_SQUELCH_WARNING=1.
+Proceeding with filter-branch...
+
+
+Rewrite 4d26b956573503dfb5fbdceb3452eaec6daf5727 (1/52) (0 seconds passed, remaining 0 predicted)    
+Rewrite d552f1378d115112929a8ab0516eeeea51281931 (2/52) (1 seconds passed, remaining 25 predicted)    
+Rewrite 3a94ea8f05320db5b5fe607c08b388d320aaed32 (2/52) (1 seconds passed, remaining 25 predicted)    
+Rewrite cba1baca152d1f6e44fc7466f6027b3014db353f (2/52) (1 seconds passed, remaining 25 predicted)    
+Rewrite cb62dfe4d5d8b5a864f9329d44501c6a032f7368 (5/52) (3 seconds passed, remaining 28 predicted)    
+Rewrite 25bf40ee47f4dd8126f62e69952cb5186db19a2d (5/52) (3 seconds passed, remaining 28 predicted)    
+Rewrite 480fbf1ac1a4eb56ea97e618269c60f109a8b962 (7/52) (5 seconds passed, remaining 32 predicted)    
+Rewrite cf6e0db9eca4d9eb554286e4bc8dd37435681969 (7/52) (5 seconds passed, remaining 32 predicted)    
+Rewrite 48580d5247c8ca01389ef171e1946fc754059a16 (9/52) (7 seconds passed, remaining 33 predicted)    
+Rewrite 765c98ac7588312c4158757bcb04872bd5ffb2e5 (9/52) (7 seconds passed, remaining 33 predicted)    
+Rewrite 3e323545db82efafdee7acdb0335465f34e72c26 (11/52) (9 seconds passed, remaining 33 predicted)    
+Rewrite b60a4954d5c4d2f215dad6b17dc053ddd6dc3a55 (11/52) (9 seconds passed, remaining 33 predicted)    
+Rewrite 4c4ea31bb8687219f421ca87c6b0878c1e6560ff (13/52) (10 seconds passed, remaining 30 predicted)    
+Rewrite f7de4af2cfe761d07d2b6cd8ea641699fde60e67 (13/52) (10 seconds passed, remaining 30 predicted)    
+Rewrite 8f29e83ceaca0e48cd0aa9b3e4bca5f990433e16 (15/52) (12 seconds passed, remaining 29 predicted)    
+Rewrite d29fde2f442b794f443f64fd5811c276f771fbae (15/52) (12 seconds passed, remaining 29 predicted)    
+Rewrite dadca71b209b3fbff8a88a881316148f5c5747a1 (17/52) (14 seconds passed, remaining 28 predicted)    
+Rewrite 74a9df314b5ed84cfb9ab127473faaec12e40014 (17/52) (14 seconds passed, remaining 28 predicted)    
+Rewrite 26cdd98f912a73c682b65391fb2456c3accb3ccb (19/52) (16 seconds passed, remaining 27 predicted)    
+Rewrite c6a417b517f03aaea14664ae4fbe9627b3f5c838 (19/52) (16 seconds passed, remaining 27 predicted)    
+Rewrite 9458cbb899499912b4e1a5418f299836896a627e (21/52) (17 seconds passed, remaining 25 predicted)    
+Rewrite 052b962817ec6c31fc0d4a288898de3681b23b85 (21/52) (17 seconds passed, remaining 25 predicted)    
+Rewrite fc6f38e5472d8fe5540435b9588649916ed2fcf1 (23/52) (18 seconds passed, remaining 22 predicted)    
+Rewrite a7ab2d5b89fdf9e81caf0444d39301bdfed8bd4d (23/52) (18 seconds passed, remaining 22 predicted)    
+Rewrite ccb5be9eb5b1a1f8a5f262046e2c4404ab3772d4 (25/52) (19 seconds passed, remaining 20 predicted)    
+Rewrite e1f84280deacd9fdf32a20b4d936ec89aba4998f (25/52) (19 seconds passed, remaining 20 predicted)    
+Rewrite e19e8a9e6b72122df279cc3e3becde1ec6a24b3c (27/52) (21 seconds passed, remaining 19 predicted)    
+Rewrite 4a2b4f103dd2d2359ba7a57ba84d09a855f375c2 (27/52) (21 seconds passed, remaining 19 predicted)    
+Rewrite 311afc3eb6753be3cb8d3667c3114010efe95909 (29/52) (22 seconds passed, remaining 17 predicted)    
+Rewrite 7de1b4c0590935bc39d354a544b4450152078171 (29/52) (22 seconds passed, remaining 17 predicted)    
+Rewrite bd40327f4a3cc628366b2e09c1140b8942dcffb5 (31/52) (23 seconds passed, remaining 15 predicted)    
+Rewrite 79a9a08edba6e2799ea76ceb13fbdc17b3697ab6 (31/52) (23 seconds passed, remaining 15 predicted)    
+Rewrite 6ebe57a981be2c8982dbde558257928fe3077881 (33/52) (24 seconds passed, remaining 13 predicted)    
+Rewrite 88b94b710cb9d1f7ac1857d999e067d38b8db489 (33/52) (24 seconds passed, remaining 13 predicted)    
+Rewrite b0f21bf92bba961f9329199231eaba390e4e3323 (35/52) (25 seconds passed, remaining 12 predicted)    
+Rewrite b0eff02a3af9c7128b7b9a61379b9a2fe76ac402 (35/52) (25 seconds passed, remaining 12 predicted)    
+Rewrite c4dd99f7dd360647d8eea0182fdf4ca148121c55 (37/52) (26 seconds passed, remaining 10 predicted)    
+Rewrite 569916f95ad07eac3a804be7affc39ba2de27b78 (37/52) (26 seconds passed, remaining 10 predicted)    
+Rewrite 7d3322dbeda80996681b889b2c357028f42ca484 (39/52) (27 seconds passed, remaining 9 predicted)    
+Rewrite 841a5fc0b5cff160fcad248be75495361b941e39 (39/52) (27 seconds passed, remaining 9 predicted)    
+Rewrite 338e0e340757b416c08f2d82b264501caebeb774 (41/52) (28 seconds passed, remaining 7 predicted)    
+Rewrite fc11812c1f97aab7c47a1d84dd7c3006a82cfc44 (41/52) (28 seconds passed, remaining 7 predicted)    
+Rewrite 69624c63d8aeb95ed14274ac5c2dc6724b0d35d8 (43/52) (29 seconds passed, remaining 6 predicted)    
+Rewrite f075bec6fd6e842cdc48d1c49cf9f24dabd28527 (43/52) (29 seconds passed, remaining 6 predicted)    
+Rewrite 6e4cf07dc12ae106db0b51017abc6258880a332f (45/52) (30 seconds passed, remaining 4 predicted)    
+Rewrite 45456c8ac704f0112167dcf05e55b2032be71a64 (45/52) (30 seconds passed, remaining 4 predicted)    
+Rewrite 67c226f102e6a7dcdf98c1716b8e30028d795275 (47/52) (31 seconds passed, remaining 3 predicted)    
+Rewrite bc74f34dffd2eee48a1d6f8bfd180873ebe5b882 (47/52) (31 seconds passed, remaining 3 predicted)    
+Rewrite c996d74e9c7d9e73206bf9c9ad2f50b39c93a118 (49/52) (32 seconds passed, remaining 1 predicted)    
+Rewrite ca236db39722f01bc7d5f181776b86f916af0886 (49/52) (32 seconds passed, remaining 1 predicted)    rm 'Stellar-VRF.zip'
+
+Rewrite 9023e1924e56df122d8f4001fe5d0a2a98db7cb0 (51/52) (33 seconds passed, remaining 0 predicted)    
+Rewrite 4d25f38aa16dcb827f9626fb3715b1183e49cb93 (51/52) (33 seconds passed, remaining 0 predicted)    
+Ref 'refs/heads/ci/add-permissions' was rewritten
+Ref 'refs/heads/ci/add-workflows' was rewritten
+Ref 'refs/heads/ci/fix-run-integration-if' was rewritten
+Ref 'refs/heads/ci/load-vrf-secret' was rewritten
+Ref 'refs/heads/main' was rewritten
+Ref 'refs/remotes/origin/main' was rewritten
+Ref 'refs/remotes/origin/ci/add-permissions' was rewritten
+Ref 'refs/remotes/origin/ci/add-workflows' was rewritten
+Ref 'refs/remotes/origin/ci/fix-workflow' was rewritten
+Ref 'refs/remotes/origin/ci/load-vrf-secret' was rewritten
+git : WARNING: Ref 'refs/remotes/origin/main' is unchanged
+At line:1 char:170
++ ... lyContinue; git filter-branch --force --index-filter "git rm --cached ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING: Ref 'r...n' is unchanged 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Ref 'refs/stash' was rewritten

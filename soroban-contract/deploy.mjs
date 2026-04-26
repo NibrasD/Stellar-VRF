@@ -14,7 +14,7 @@
 //   node soroban-contract/deploy.mjs
 
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,7 +23,7 @@ const SDK_INDEX = path.resolve(
   __dirname,
   "../node_modules/.pnpm/@stellar+stellar-sdk@15.0.1/node_modules/@stellar/stellar-sdk/lib/index.js"
 );
-const stellar = await import(SDK_INDEX);
+const stellar = await import(pathToFileURL(SDK_INDEX).href);
 
 const {
   Keypair,
@@ -116,7 +116,7 @@ async function main() {
 
   // 1. Deployer keypair
   const deployerKP = Keypair.random();
-  console.log(`\n═══ Soroban VRF Oracle — Testnet Deployment (v2: auth + ed25519) ═══`);
+  console.log(`\n═══ Soroban VRF Oracle — Testnet Deployment (v3: auth + ed25519 + ecvrf) ═══`);
   console.log(`Deployer:      ${deployerKP.publicKey()}`);
   console.log(`Oracle PK:     ${ORACLE_PK_HEX}`);
   console.log(`Oracle Addr:   ${ORACLE_ADDRESS}`);
@@ -225,6 +225,8 @@ async function main() {
       "require_auth() — only oracle address can call fulfill()",
       "PK match — proof.public_key must equal stored oracle secp256k1 PK",
       "Ed25519 signature — proof data signed by oracle Ed25519 key, verified on-chain",
+      "Alpha seed integrity — proof.alpha_seed must match stored request seed",
+      "On-chain ECVRF verification — full cryptographic VRF proof check (feature-gated)",
     ],
   };
   writeFileSync(OUT_PATH, JSON.stringify(result, null, 2));
@@ -232,7 +234,7 @@ async function main() {
   console.log(`\n  Deployment complete!`);
   console.log(`   Contract:  ${contractAddress}`);
   console.log(`   Explorer:  ${result.explorerUrl}`);
-  console.log(`   Security:  require_auth + PK match + Ed25519 sig verify`);
+  console.log(`   Security:  require_auth + PK match + Ed25519 sig + alpha seed check + ECVRF verify`);
   console.log(`   Saved to:  ${OUT_PATH}`);
   return result;
 }
