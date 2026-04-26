@@ -129,9 +129,9 @@ Why drand matters: a commit-reveal scheme (block hash, etc.) lets the requester 
 ## Soroban Smart Contract
 
 **File:** `soroban-contract/src/lib.rs`  
-**Contract ID:** `CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72`
+**Contract ID:** `CDSKLSIMDWMM5PVWCHXMUNN5H5VMSAN2PQNTVENKUBNDOCWL37IDJUJD`
 
-Written in Rust with `soroban-sdk v20.5`, compiled to `wasm32-unknown-unknown` (6.8 KB WASM). `#![no_std]` — no heap allocator, no OS dependencies.
+Written in Rust with `soroban-sdk v20.0.0`, compiled to `wasm32-unknown-unknown` (42.5 KB WASM with ECVRF verification). `#![no_std]` — no heap allocator, no OS dependencies.
 
 ### Data Structures
 
@@ -159,13 +159,15 @@ Storage uses `Persistent` storage keyed on `DataKey::Request(u64)` and `DataKey:
 
 ### Security Model
 
-The `fulfill()` function enforces five on-chain security checks:
+The `fulfill()` function enforces seven on-chain security checks:
 
 1. **Access Control** — `oracle.require_auth()` verifies the Stellar Ed25519 signature, ensuring only the registered oracle can submit proofs.
-2. **Oracle Address Match** — The caller’s address must equal the `OracleAddr` stored at init time.
+2. **Oracle Address Match** — The caller's address must equal the `OracleAddr` stored at init time.
 3. **Double-Fulfillment Prevention** — A request can only be fulfilled once.
 4. **Public Key Integrity** — `proof.public_key` must match the stored oracle public key. Prevents key-substitution attacks.
-5. **Alpha Seed Integrity** — `proof.alpha_seed` must match the original request seed stored on-chain. Prevents oracle from swapping the seed post-request.
+5. **Ed25519 Proof Signature** — The proof data is signed by the oracle's Ed25519 key and verified on-chain via `env.crypto().ed25519_verify()`.
+6. **Alpha Seed Integrity** — `proof.alpha_seed` must match the original request seed stored on-chain. Prevents oracle from swapping the seed post-request.
+7. **On-Chain ECVRF Verification** — Full secp256k1 EC arithmetic (via `k256` crate) verifies the VRF proof cryptographically: `hashToCurve → U'=s·G−c·PK → V'=s·H−c·Γ → c'==c`. Feature-gated under `ecvrf`.
 
 ### Contract Functions
 
@@ -314,7 +316,9 @@ The dashboard auto-refreshes drand every 3s and Horizon every 10s. The drand "Ve
 | `@stellar/stellar-sdk` | 15.x | Soroban RPC, transaction building, XDR encoding |
 | `drizzle-orm` | 0.x | Type-safe SQL queries |
 | `fastify` | 4.x | HTTP server |
-| `soroban-sdk` | 20.5 | Rust contract SDK |
+| `soroban-sdk` | 20.0.0 | Rust contract SDK |
+| `k256` | 0.13 | secp256k1 EC arithmetic for on-chain ECVRF verification |
+| `sha2` | 0.10 | SHA-256 for on-chain hash-to-curve and challenge recomputation |
 
 ---
 
@@ -322,8 +326,9 @@ The dashboard auto-refreshes drand every 3s and Horizon every 10s. The drand "Ve
 
 The current deployment is testnet-only. Moving to Mainnet requires:
 
-1. **Oracle private key** — move out of source code into an HSM or KMS. The public key stored on-chain never changes after `init()`.
+1. **Oracle private key** — move out of source code into an HSM or KMS. The `keyManager` module already supports AWS KMS, env vars, and remote signer delegation.
 2. **Stellar gas account** — fund a real account with XLM. Remove Friendbot dependency.
 3. **drand chain** — quicknet is appropriate for production (3s period, large quorum).
 4. **Contract redeployment** — upload WASM to Mainnet, call `init()` with the production oracle address and PK.
-5. **drand beacon verification** — add local BLS12-381 signature verification of drand beacons to eliminate trust in the API endpoint.
+5. **drand beacon verification** — local `sha256(sig)==randomness` verification is implemented; upgrade to full BLS12-381 pairing verification for maximum security.
+6. **Rate limiting** — in-memory rate limiter is active; for multi-instance deployments, swap to Redis-backed rate limiting.

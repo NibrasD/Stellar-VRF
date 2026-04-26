@@ -22,19 +22,16 @@ import {
 } from "@stellar/stellar-sdk";
 import { VRF_CONTRACT_ADDRESS } from "./vrfCrypto.js";
 import type { EcvrfProof } from "./vrfCrypto.js";
+import * as keyManager from "./keyManager.js";
 
 const SOROBAN_URL = "https://soroban-testnet.stellar.org";
 const FRIENDBOT = "https://friendbot.stellar.org";
 const NETWORK = Networks.TESTNET;
 const FEE = "1000000"; // 0.1 XLM max
 
-// Fixed oracle Stellar keypair — funded from Friendbot on first use
-// This is a Stellar Ed25519 key for:
-//   - paying gas (source account)
-//   - require_auth() access control (only this address can call fulfill)
-//   - Ed25519 signing of proof data (verified on-chain)
-// GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI
-const ORACLE_STELLAR_SEED =
+// Testnet fallback — only used when keyManager has no ORACLE_STELLAR_SEED configured.
+// In production, the oracle key MUST come from KMS / env / remote signer.
+const FALLBACK_ORACLE_SEED =
   "SCOYJ5ZYDYBAM7FPRHL4PTFYNSE62AAL7LREU676VWAUSP75CCJUW7QO";
 
 let oracleKP: Keypair;
@@ -50,7 +47,15 @@ function getServer(): SorobanRpc.Server {
 
 function getOracleKP(): Keypair {
   if (!oracleKP) {
-    oracleKP = Keypair.fromSecret(ORACLE_STELLAR_SEED);
+    try {
+      const seed = keyManager.getOracleStellarSeed();
+      oracleKP = Keypair.fromSecret(seed);
+    } catch {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("Oracle Stellar seed must be provided via keyManager in production");
+      }
+      oracleKP = Keypair.fromSecret(FALLBACK_ORACLE_SEED);
+    }
   }
   return oracleKP;
 }
