@@ -2,6 +2,7 @@
 // This module is compiled only when the Cargo feature `ecvrf` is enabled.
 
 #[cfg(feature = "ecvrf")]
+#[allow(non_snake_case)]
 pub mod onchain {
     use soroban_sdk::Bytes;
     use sha2::{Digest, Sha256};

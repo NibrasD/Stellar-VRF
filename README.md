@@ -20,15 +20,15 @@ Traditional on-chain randomness is easy to manipulate — a miner or validator w
 
 | Component | Value |
 |---|---|
-| Contract | `CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72` |
+| Contract | `CDSKLSIMDWMM5PVWCHXMUNN5H5VMSAN2PQNTVENKUBNDOCWL37IDJUJD` |
 | Network | Stellar Testnet |
-| WASM hash | `219802f8218cea5cfb5d89fcf4cd81e8cc6eb140b474a362d31e5661c0c2b55e` |
+| WASM hash | `adda467acaf12fcdca939261944f152660da394ef26472273871b83e3fe2ae5a` |
 | Oracle public key | `032c8c31fc9f990c6b55e3865a184a4ce50e09481f2eaeb3e60ec1cea13a6ae645` |
 | drand chain | quicknet · 3s period · BLS12-381 G2 |
-| Deployed | 2026-04-10 |
+| Deployed | 2026-04-26 |
 
 Explorer links:
-- Contract: https://stellar.expert/explorer/testnet/contract/CBCFEQBSOQK6SHB7QW4SPQPJ7NUDV34AYYDBVWIQ3CZRV7OUA7CBSF72
+- Contract: https://stellar.expert/explorer/testnet/contract/CDSKLSIMDWMM5PVWCHXMUNN5H5VMSAN2PQNTVENKUBNDOCWL37IDJUJD
 - Oracle gas account: https://stellar.expert/explorer/testnet/account/GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI
 
 ---
