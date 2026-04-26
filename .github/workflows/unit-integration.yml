@@ -40,7 +40,7 @@ jobs:
   integration-tests:
     needs: unit-tests
     runs-on: ubuntu-latest
-    if: ${{ env.RUN_INTEGRATION == '1' }}
+    if: ${{ secrets.RUN_INTEGRATION == '1' }}
     env:
       RUN_INTEGRATION: ${{ secrets.RUN_INTEGRATION }}
     services:
