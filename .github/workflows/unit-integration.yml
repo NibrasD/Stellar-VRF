@@ -33,7 +33,9 @@ jobs:
   integration-tests:
     needs: unit-tests
     runs-on: ubuntu-latest
-    if: ${{ secrets.RUN_INTEGRATION == '1' }}
+    if: ${{ env.RUN_INTEGRATION == '1' }}
+    env:
+      RUN_INTEGRATION: ${{ secrets.RUN_INTEGRATION }}
     services:
       postgres:
         image: postgres:15
