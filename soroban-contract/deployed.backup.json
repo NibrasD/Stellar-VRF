@@ -1,0 +1,19 @@
+{
+  "contractAddress": "CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3",
+  "wasmHash": "cb0a4b03edbeb078edadab9d7f979406dade2d3809d941b7bc7128e9d7dfa294",
+  "deployerPublicKey": "GAOHSSZGOPZ5K2EDJEV6CPS76MVQ3YAR4CCILOZX3N3XDITQRAFHP3XW",
+  "oraclePublicKeyHex": "032c8c31fc9f990c6b55e3865a184a4ce50e09481f2eaeb3e60ec1cea13a6ae645",
+  "oracleStellarAddress": "GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI",
+  "oracleEd25519Hex": "22f63c29e9f9ba37075a05cf325888cc5e65aaa6279c0f15b765a9d1d1030398",
+  "network": "testnet",
+  "sorobanRpcUrl": "https://soroban-testnet.stellar.org",
+  "deployedAt": "2026-04-12T14:51:49.378Z",
+  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CDCCS572SSTPLWT75MGOG4JKUUFXV7MCJ2DQ6X63NEEKS4GNEWGQGSW3",
+  "securityFeatures": [
+    "require_auth() — only oracle address can call fulfill()",
+    "PK match — proof.public_key must equal stored oracle secp256k1 PK",
+    "Ed25519 signature — proof data signed by oracle Ed25519 key, verified on-chain",
+    "On-chain ECVRF verification enabled (default Cargo feature)"
+  ],
+  "contractVerificationMode": "secure-onchain-ecvrf"
+}
