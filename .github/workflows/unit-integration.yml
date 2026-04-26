@@ -19,9 +19,6 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -36,6 +33,7 @@ jobs:
   integration-tests:
     needs: unit-tests
     runs-on: ubuntu-latest
+    if: ${{ secrets.RUN_INTEGRATION == '1' }}
     services:
       postgres:
         image: postgres:15
@@ -57,9 +55,6 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -74,7 +69,6 @@ jobs:
           PGPASSWORD: vrf_pass
 
       - name: Run integration tests
-        if: ${{ secrets.RUN_INTEGRATION == '1' }}
         run: pnpm --filter @workspace/api-server run test:integration
         env:
           DATABASE_URL: postgresql://vrf_user:vrf_pass@postgres:5432/vrf_db
