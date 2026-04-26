@@ -48,7 +48,9 @@ jobs:
         run: pnpm --filter @workspace/api-server test --run
 
       - name: Run property tests (api-server) [optional]
-        if: ${{ secrets.RUN_PROPERTY_TESTS == '1' }}
+        if: ${{ env.RUN_PROPERTY_TESTS == '1' }}
+        env:
+          RUN_PROPERTY_TESTS: ${{ secrets.RUN_PROPERTY_TESTS }}
         run: pnpm --filter @workspace/api-server run test:property
 
       - name: Dependency audit (json)
@@ -96,7 +98,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        if: ${{ env.AWS_ROLE_ARN != '' }}
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
