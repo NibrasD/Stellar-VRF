@@ -13,6 +13,7 @@
   "dependencies": {
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
+    "@opentelemetry/api": "^1.9.1",
     "@stellar/stellar-sdk": "^15.0.1",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",

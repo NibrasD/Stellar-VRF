@@ -163,6 +163,9 @@ importers:
       '@noble/hashes':
         specifier: ^2.0.1
         version: 2.0.1
+      '@opentelemetry/api':
+        specifier: ^1.9.1
+        version: 1.9.1
       '@stellar/stellar-sdk':
         specifier: ^15.0.1
         version: 15.0.1
