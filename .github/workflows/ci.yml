@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build api-server
+        run: pnpm --filter @workspace/api-server run build
+
+      - name: Run unit tests
+        run: pnpm --filter @workspace/api-server run test
+        env:
+          CI: 'true'
+
+  integration-tests:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RUN_INTEGRATION == '1' }}
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: vrf_user
+          POSTGRES_PASSWORD: vrf_pass
+          POSTGRES_DB: vrf_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Wait for Postgres
+        run: |
+          echo "Waiting for Postgres..."
+          for i in `seq 1 30`; do
+            pg_isready -h postgres -p 5432 -U vrf_user && exit 0 || sleep 1
+          done
+          echo "Postgres did not become available" && exit 1
+        env:
+          PGPASSWORD: vrf_pass
+
+      - name: Run integration tests
+        run: pnpm --filter @workspace/api-server run test:integration
+        env:
+          DATABASE_URL: postgresql://vrf_user:vrf_pass@postgres:5432/vrf_db
+          RUN_INTEGRATION: '1'
+          VRF_PRIVATE_KEY_HEX: ${{ secrets.VRF_PRIVATE_KEY_HEX }}
+          ORACLE_VRF_PRIVATE_KEYS: ${{ secrets.ORACLE_VRF_PRIVATE_KEYS }}
+          ORACLE_STELLAR_SEEDS: ${{ secrets.ORACLE_STELLAR_SEEDS }}
+          ORACLE_STELLAR_SEED: ${{ secrets.ORACLE_STELLAR_SEED }}
+          SOROBAN_URL: ${{ secrets.SOROBAN_URL }}
+          SOROBAN_NETWORK: ${{ secrets.SOROBAN_NETWORK }}
+          FRIEND_BOT_URL: ${{ secrets.FRIEND_BOT_URL }}
+          # KMS / Secrets Manager integration (optional)
+          KMS_PROVIDER: ${{ secrets.KMS_PROVIDER }}
+          KMS_AWS_KEY_ID: ${{ secrets.KMS_AWS_KEY_ID }}
+          KMS_AWS_VRF_SECRET_ARN: ${{ secrets.KMS_AWS_VRF_SECRET_ARN }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable corepack and pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Soroban contract (secure-onchain profile)
+        run: cargo build --manifest-path soroban-contract/Cargo.toml --target wasm32-unknown-unknown --release
+
+      - name: Enforce contract size gate
+        run: |
+          WASM="soroban-contract/target/wasm32-unknown-unknown/release/soroban_vrf_oracle.wasm"
+          SIZE=$(stat -c%s "$WASM")
+          MAX=250000
+          echo "WASM size: $SIZE bytes (max: $MAX)"
+          if [ "$SIZE" -gt "$MAX" ]; then
+            echo "::error::Contract size regression: $SIZE > $MAX"
+            exit 1
+          fi
+
+      - name: Run unit tests (api-server)
+        run: pnpm --filter @workspace/api-server test --run
+
+      - name: Run property tests (api-server) [optional]
+        if: ${{ secrets.RUN_PROPERTY_TESTS == '1' }}
+        run: pnpm --filter @workspace/api-server run test:property
+
+      - name: Dependency audit (json)
+        run: |
+          pnpm audit --json > audit.json || true
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit
+          path: audit.json
+
+  onchain-integration:
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ github.event_name != 'pull_request' }}
+    environment: integration
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable corepack and pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Assert required integration secrets
+        run: |
+          test -n "${{ secrets.VRF_PRIVATE_KEY_HEX }}" || (echo "::error::Missing VRF_PRIVATE_KEY_HEX" && exit 1)
+          test -n "${{ secrets.ORACLE_STELLAR_SEED }}" || (echo "::error::Missing ORACLE_STELLAR_SEED" && exit 1)
+          test -n "${{ secrets.SOROBAN_URL }}" || (echo "::error::Missing SOROBAN_URL" && exit 1)
+          test -n "${{ secrets.SOROBAN_NETWORK }}" || (echo "::error::Missing SOROBAN_NETWORK" && exit 1)
+          test -n "${{ secrets.DRAND_REQUIRED }}" || (echo "::error::Missing DRAND_REQUIRED" && exit 1)
+          test -n "${{ secrets.REQUIRE_REMOTE_SIGNER }}" || (echo "::error::Missing REQUIRE_REMOTE_SIGNER" && exit 1)
+          test -n "${{ secrets.ORACLE_SIGNER_URL }}" || (echo "::error::Missing ORACLE_SIGNER_URL" && exit 1)
+          # If using AWS KMS via OIDC, ensure role and region provided
+          test -n "${{ secrets.AWS_ROLE_ARN }}" || (echo "::warning::AWS_ROLE_ARN not set - skipping OIDC configuration" )
+          test -n "${{ secrets.AWS_REGION }}" || (echo "::warning::AWS_REGION not set - default region may be used" )
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ secrets.AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run always-on Soroban integration tests
+        env:
+          RUN_INTEGRATION: "1"
+          VRF_PRIVATE_KEY_HEX: ${{ secrets.VRF_PRIVATE_KEY_HEX }}
+          ORACLE_STELLAR_SEED: ${{ secrets.ORACLE_STELLAR_SEED }}
+          SOROBAN_URL: ${{ secrets.SOROBAN_URL }}
+          SOROBAN_NETWORK: ${{ secrets.SOROBAN_NETWORK }}
+          DRAND_REQUIRED: ${{ secrets.DRAND_REQUIRED }}
+          REQUIRE_REMOTE_SIGNER: ${{ secrets.REQUIRE_REMOTE_SIGNER }}
+          ORACLE_SIGNER_URL: ${{ secrets.ORACLE_SIGNER_URL }}
+          # KMS / Secrets Manager configuration for production signing
+          KMS_PROVIDER: ${{ secrets.KMS_PROVIDER }}
+          KMS_AWS_KEY_ID: ${{ secrets.KMS_AWS_KEY_ID }}
+          KMS_AWS_VRF_SECRET_ARN: ${{ secrets.KMS_AWS_VRF_SECRET_ARN }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: pnpm --filter @workspace/api-server run test:integration
