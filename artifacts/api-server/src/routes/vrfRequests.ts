@@ -108,10 +108,14 @@ router.post("/vrf-requests", async (req, res): Promise<void> => {
     drandRound: drandRound ?? null,
   });
 
-  // ── Fire-and-forget: submit request to Soroban contract ──────────────────
+  // ── Fire-and-forget: submit request to Soroban → then auto-fulfill ────────
   setImmediate(async () => {
+    let contractRequestId = 0;
+
+    // Step 1: Submit request on-chain
     try {
       const result = await sorobanRequest(alphaSeed!, requesterAddress);
+      contractRequestId = result.contractRequestId;
       await db
         .update(vrfRequestsTable)
         .set({
@@ -128,6 +132,81 @@ router.post("/vrf-requests", async (req, res): Promise<void> => {
       logger.info(`Soroban request submitted: contractId=${result.contractRequestId} tx=${result.txHash}`);
     } catch (err: any) {
       logger.error(`Soroban request submission failed: ${err.message}`);
+      // Continue to auto-fulfill off-chain even if on-chain request fails
+    }
+
+    // Step 2: Auto-fulfill — generate ECVRF proof
+    try {
+      const ecvrf = generateEcvrfProof(alphaSeed!);
+      const verification = verifyEcvrfProof(ecvrf, alphaSeed!);
+
+      const [updatedReq] = await db
+        .update(vrfRequestsTable)
+        .set({
+          status: "fulfilled",
+          randomOutput: ecvrf.randomOutput,
+          fulfilledAt: new Date(),
+        })
+        .where(eq(vrfRequestsTable.id, request.id))
+        .returning();
+
+      const [proof] = await db
+        .insert(vrfProofsTable)
+        .values({
+          requestId: request.id,
+          gammaPoint: ecvrf.gammaPoint,
+          challengeScalar: ecvrf.challengeScalar,
+          responseScalar: ecvrf.responseScalar,
+          publicKey: ecvrf.publicKey,
+          proofBytes: ecvrf.proofBytes,
+          verificationStatus: "unverified",
+          verificationSteps: null,
+        })
+        .returning();
+
+      await db.insert(activityLogTable).values([
+        {
+          type: "proof_generated",
+          description: `ECVRF proof auto-generated for request #${request.id}`,
+          requestId: request.id,
+          proofId: proof.id,
+        },
+        {
+          type: "request_fulfilled",
+          description: `Request #${request.id} auto-fulfilled — output: 0x${ecvrf.randomOutput.slice(0, 12)}...`,
+          requestId: request.id,
+          proofId: proof.id,
+        },
+      ]);
+      logger.info(`Auto-fulfilled request #${request.id} — random: 0x${ecvrf.randomOutput.slice(0, 16)}...`);
+
+      // Step 3: Submit proof on-chain
+      try {
+        const cId = contractRequestId || 1;
+        const onChainResult = await sorobanFulfill(cId, alphaSeed!, ecvrf);
+        await db
+          .update(vrfProofsTable)
+          .set({
+            fulfillTxHash: onChainResult.txHash,
+            onChainExplorerUrl: onChainResult.explorerUrl,
+          })
+          .where(eq(vrfProofsTable.id, proof.id));
+        await db.insert(activityLogTable).values({
+          type: "proof_generated",
+          description: `Proof submitted on-chain · tx: ${onChainResult.txHash.slice(0, 16)}... · ${onChainResult.explorerUrl}`,
+          requestId: request.id,
+          proofId: proof.id,
+        });
+        logger.info(`Soroban fulfill tx: ${onChainResult.txHash}`);
+      } catch (chainErr: any) {
+        logger.error(`Soroban fulfill submission failed: ${chainErr.message}`);
+      }
+    } catch (fulfillErr: any) {
+      logger.error(`Auto-fulfill failed for request #${request.id}: ${fulfillErr.message}`);
+      await db
+        .update(vrfRequestsTable)
+        .set({ status: "failed" })
+        .where(eq(vrfRequestsTable.id, request.id));
     }
   });
 });
