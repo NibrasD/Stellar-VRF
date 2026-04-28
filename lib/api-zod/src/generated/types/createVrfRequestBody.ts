@@ -7,8 +7,10 @@
  */
 
 export interface CreateVrfRequestBody {
-  /** Input seed for randomness generation */
-  alphaSeed: string;
-  /** Soroban contract address of the requester */
-  requesterAddress: string;
+  /** Input seed for randomness generation. If omitted, the server auto-fetches drand. */
+  alphaSeed?: string;
+  /** Soroban contract address of the requester. If omitted, the oracle address is used. */
+  requesterAddress?: string;
+  /** Optional application context (e.g. 'nft:mint:rare'). Mixed into the alpha seed. */
+  context?: string;
 }

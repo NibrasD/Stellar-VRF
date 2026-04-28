@@ -53,10 +53,12 @@ export const ListVrfRequestsResponse = zod.array(ListVrfRequestsResponseItem);
  * @summary Submit a new VRF request
  */
 export const CreateVrfRequestBody = zod.object({
-  alphaSeed: zod.string().describe("Input seed for randomness generation"),
+  alphaSeed: zod.string().optional().describe("Input seed for randomness generation. If omitted, the server automatically fetches a fresh drand beacon as the alpha seed."),
   requesterAddress: zod
     .string()
-    .describe("Soroban contract address of the requester"),
+    .optional()
+    .describe("Soroban contract address of the requester. If omitted, the oracle address is used."),
+  context: zod.string().optional().describe("Optional application context string (e.g. 'nft:mint:rare'). Mixed into the drand-derived alpha seed for domain separation."),
 });
 
 /**
