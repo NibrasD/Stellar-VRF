@@ -55,11 +55,39 @@ router.post("/vrf-requests", async (req, res): Promise<void> => {
   const contractAddress = getContractAddress();
   const gasEstimate = estimateGas();
 
+  // ── Auto-fetch drand entropy if alphaSeed is not provided ─────────────────
+  let alphaSeed = parsed.data.alphaSeed;
+  let drandRound: number | undefined;
+
+  if (!alphaSeed) {
+    try {
+      const { fetchLatestBeacon, buildDrandAlphaSeed } = await import("../lib/drand.js");
+      const latest = await fetchLatestBeacon("quicknet");
+      drandRound = latest.beacon.round;
+
+      // Mix in user context if provided for domain separation
+      const context = parsed.data.context || "vrf-request";
+      alphaSeed = buildDrandAlphaSeed(latest.beacon, latest.chain.hash, context);
+
+      logger.info(`Auto-fetched drand round ${drandRound} → alphaSeed: ${alphaSeed.slice(0, 40)}...`);
+    } catch (err: any) {
+      logger.error(`Failed to fetch drand beacon: ${err.message}`);
+      res.status(502).json({ error: `Failed to fetch drand entropy: ${err.message}` });
+      return;
+    }
+  } else if (parsed.data.context) {
+    // If both alphaSeed and context provided, append context
+    alphaSeed = `${alphaSeed}:${parsed.data.context}`;
+  }
+
+  // ── Default requester to oracle address ──────────────────────────────────
+  const requesterAddress = parsed.data.requesterAddress || "oracle-auto";
+
   const [request] = await db
     .insert(vrfRequestsTable)
     .values({
-      alphaSeed: parsed.data.alphaSeed,
-      requesterAddress: parsed.data.requesterAddress,
+      alphaSeed,
+      requesterAddress,
       status: "pending",
       contractAddress,
       gasEstimate,
@@ -68,7 +96,7 @@ router.post("/vrf-requests", async (req, res): Promise<void> => {
 
   await db.insert(activityLogTable).values({
     type: "request_created",
-    description: `New VRF request from ${parsed.data.requesterAddress.slice(0, 12)}... with seed ${parsed.data.alphaSeed.slice(0, 16)}`,
+    description: `New VRF request${drandRound ? ` (drand round #${drandRound})` : ""} with seed ${alphaSeed.slice(0, 40)}...`,
     requestId: request.id,
     proofId: null,
   });
@@ -77,12 +105,13 @@ router.post("/vrf-requests", async (req, res): Promise<void> => {
     ...request,
     createdAt: request.createdAt.toISOString(),
     fulfilledAt: null,
+    drandRound: drandRound ?? null,
   });
 
   // ── Fire-and-forget: submit request to Soroban contract ──────────────────
   setImmediate(async () => {
     try {
-      const result = await sorobanRequest(parsed.data.alphaSeed, parsed.data.requesterAddress);
+      const result = await sorobanRequest(alphaSeed!, requesterAddress);
       await db
         .update(vrfRequestsTable)
         .set({

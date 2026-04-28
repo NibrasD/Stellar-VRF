@@ -99,10 +99,12 @@ export interface VrfRequestDetail {
 }
 
 export interface CreateVrfRequestBody {
-  /** Input seed for randomness generation */
-  alphaSeed: string;
-  /** Soroban contract address of the requester */
-  requesterAddress: string;
+  /** Input seed for randomness generation. If omitted, the server automatically fetches a fresh drand beacon. */
+  alphaSeed?: string;
+  /** Soroban contract address of the requester. If omitted, the oracle address is used. */
+  requesterAddress?: string;
+  /** Optional application context string (e.g. 'nft:mint:rare'). Mixed into the alpha seed for domain separation. */
+  context?: string;
 }
 
 export interface VerificationStep {
