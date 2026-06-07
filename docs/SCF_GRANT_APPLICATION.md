@@ -100,7 +100,7 @@ Run 1,000+ randomness requests through the full pipeline (request → drand fetc
 **Milestone: Security Audit Remediation & Mainnet Launch**
 
 **[Deliverable 3.1] Audit Remediation & Mainnet Deployment**
-Submit code for the SCF-provided security audit. Remediate all critical/high findings. Deploy the optimized, audited WASM contract to Stellar Mainnet. Initialize with production oracle keys stored in an isolated signing service (HSM or equivalent). Fund the oracle gas account and configure production drand endpoints.
+Submit code for the SCF-provided security audit. Remediate all critical/high findings. Deploy the optimized, audited WASM contract to Stellar Mainnet. Initialize with production oracle keys stored in an isolated signing environment. Fund the oracle gas account and configure production drand endpoints.
 - **Measurement:** Zero high/critical audit findings remaining. Contract deployed and operational on Mainnet. First 10 real external randomness requests fulfilled successfully with on-chain proof verification.
 - **Budget:** $8,000
 
