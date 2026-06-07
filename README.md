@@ -20,7 +20,7 @@ Soroban-VRF is a production-grade VRF oracle for Stellar. It combines three inde
 |---|---|
 | **ECVRF** (RFC 9381, secp256k1) | Produces a proof `(Γ, c, s)` alongside output `β`. Anyone can verify `β` was derived deterministically — the oracle has zero degrees of freedom over the result. |
 | **drand** (League of Entropy) | Supplies unpredictable entropy via BLS12-381 threshold signatures (quicknet, 3s period). No single operator controls the beacon. |
-| **Soroban Smart Contract** | Stores proofs on-chain, performs **full ECVRF cryptographic verification in WASM**, and enforces 10 security checks before accepting any proof. |
+| **Soroban Smart Contract** | Stores proofs on-chain, performs **full ECVRF cryptographic verification in WASM**, and enforces 9 security checks before accepting any proof. |
 
 ### Key Achievement: On-Chain Verification
 
@@ -58,10 +58,10 @@ Unlike most VRF implementations that rely on off-chain verification, Soroban-VRF
 ┌────────────────────▼──────────────────────────────┐
 │  VRF Oracle Contract (Rust, WASM, #![no_std])     │
 │  ┌──────────────────────────────────────────────┐ │
-│  │ 10 Security Checks:                          │ │
+│  │ 9 Security Checks:                           │ │
 │  │  • require_auth  • PK match  • Ed25519 sig   │ │
 │  │  • seed match    • ECVRF verify (on-chain!)  │ │
-│  │  • drand round   • ctr_hint  • BLS sig hash  │ │
+│  │  • drand round   • ctr_hint                  │ │
 │  └──────────────────────────────────────────────┘ │
 └──────┬─────────────────────────────────────┬──────┘
        │                                     │
@@ -110,8 +110,8 @@ docs/                       # Supporting documentation
 
 ### 1. Request
 ```
-User → contract.request(alpha_seed, requester)
-     → Stores seed, computes required drand round, returns request_id
+User → contract.request(context, requester)
+     → Stores context, computes required drand round, returns request_id
 ```
 
 ### 2. Fulfill (Oracle)
@@ -123,17 +123,16 @@ Oracle fetches drand round → builds alpha → generates ECVRF proof:
   proof = (Γ, c, s, ctr_hint)
 ```
 
-### 3. On-Chain Verification (10 checks)
+### 3. On-Chain Verification (9 checks)
 ```
 contract.fulfill(request_id, proof, signature)
   ✓ Access control (require_auth)
   ✓ Request exists & not yet fulfilled
   ✓ Public key matches stored oracle PK
   ✓ Ed25519 signature authenticates proof data
-  ✓ Alpha seed matches stored seed
+  ✓ Alpha seed exactly matches constructed hash(context ‖ timestamp ‖ round ‖ drand_randomness)
   ✓ Full ECVRF cryptographic verification (on-chain!)
   ✓ drand round matches contract-computed round
-  ✓ drand signature hash matches randomness
   ✓ ctr_hint produces valid curve point
 ```
 
@@ -196,7 +195,7 @@ node deploy.mjs   # deploys WASM and writes deployed.json
 
 ## Security Model
 
-The contract enforces 10 security checks before accepting any proof. The system is designed to be secure against:
+The contract enforces 9 security checks before accepting any proof. The system is designed to be secure against:
 
 | Threat | Mitigation | Status |
 |---|---|---|
@@ -206,7 +205,7 @@ The contract enforces 10 security checks before accepting any proof. The system 
 | Double fulfillment | `Fulfilled` flag | ✅ Implemented |
 | Nonce k grinding | Mathematically impossible (RFC 9381 §3.1) | ✅ By design |
 | Oracle front-running | Commit-reveal with deterministic drand round | ✅ Designed |
-| Oracle censorship | Timeout + escrow slashing (stake ≥ 5× max payout) | ✅ Designed |
+| Oracle censorship | Timeout + refund + HA relay infrastructure | ⚠️ Mitigated |
 | drand round grinding | Contract deterministically computes required round | ✅ Designed |
 
 > **Full technical details:** See [`docs/`](docs/) and the [Technical Architecture Document](TECH_ARCH.md).
@@ -218,8 +217,9 @@ The contract enforces 10 security checks before accepting any proof. The system 
 | Function | Access | Description |
 |---|---|---|
 | `init(oracle_pk, oracle_address, oracle_ed25519_pk)` | Public (once) | Initialize oracle identity |
-| `request(alpha_seed, requester) → u64` | Auth(requester) | Record a new randomness request |
-| `fulfill(request_id, proof, signature)` | Auth(oracle) | Submit ECVRF proof; 10 security checks |
+| `request(context, requester) → u64` | Auth(requester) | Record a new randomness request |
+| `fulfill(request_id, proof, signature)` | Auth(oracle) | Submit ECVRF proof; 9 security checks |
+| `timeout_refund(request_id)` | Auth(requester) | Claim refund after deadline expires |
 | `derive_random(request_id, context) → u64` | Public | Deterministic randomness from fulfilled proof |
 | `get_proof(request_id) → EcvrfProof` | Public | Read stored proof |
 | `is_fulfilled(request_id) → bool` | Public | Check fulfillment status |
