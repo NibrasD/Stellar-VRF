@@ -19,7 +19,7 @@ The contract dictates exactly which drand beacon round must be used, computed de
 - **Impact on project:** Secures our project against manipulation claims. By cryptographically guaranteeing that neither the oracle nor the user can predict the outcome, we eliminate the front-running vulnerabilities that have plagued competing VRFs, protecting our reputation and driving enterprise adoption.
 
 **3. Censorship Mitigations & Capital Safety**
-The MVP uses a single-operator architecture. Censorship is mitigated through fulfillment deadlines with automatic refunds and redundant relay infrastructure. Full cryptographic censorship resistance requires Threshold VRF / DKG and is a post-mainnet milestone.
+The MVP uses a single-operator architecture. Censorship is mitigated through fulfillment deadlines with verifiable on-chain refund claims and redundant relay infrastructure. Full cryptographic censorship resistance requires Threshold VRF / DKG and is a post-mainnet milestone.
 - **Stellar usage:** Leverages Soroban's deterministic `ledger_sequence` for immutable deadline enforcement and on-chain request state (fulfilled/expired) for transparent, publicly queryable performance data.
 - **Impact on project:** Builds trust through honesty. By transparently acknowledging the known limitation of single-operator systems (shared by Chainlink VRF v1 and all single-key oracles) and providing verifiable uptime metrics, we establish credibility with sophisticated users who value engineering maturity over overclaiming.
 
@@ -105,13 +105,13 @@ Submit code for the SCF-provided security audit. Remediate all critical/high fin
 - **Budget:** $8,000
 
 **[Deliverable 3.2] Production Oracle Infrastructure**
-Deploy 3+ geographically distributed relay nodes with automated monitoring, alerting, and failover. Implement key management best practices: VRF key (secp256k1) in HSM, Stellar key (Ed25519) via remote signer, both isolated from application runtime.
+Deploy 3+ geographically distributed relay nodes with automated monitoring, alerting, and failover. Implement key management best practices: Ed25519 transaction signing managed via a dedicated remote signing service, and the secp256k1 VRF key managed in an isolated signing environment that is operationally separated from internet-facing relay nodes.
 - **Measurement:** 99.5%+ uptime over a 2-week monitoring period. Automated alerts trigger within 60 seconds of any fulfillment failure. Relay failover completes within one ledger close (~6 seconds).
 - **Budget:** $10,000
 
-**[Deliverable 3.3] Professional User Testing & Integration Support**
-Onboard 3+ Stellar ecosystem dApps as early adopters. Provide hands-on integration support, collect feedback, and iterate on the SDK and documentation based on real developer experience.
-- **Measurement:** 3+ independent dApps successfully integrated and making real randomness requests on Mainnet. Developer feedback documented and incorporated into SDK v1.1.
+**[Deliverable 3.3] Reusable Consumer Contract Library (On-Chain SDK)**
+Develop and deploy a pre-audited, reusable Soroban smart contract library (e.g., VRFConsumer) that other dApps can simply import into their Rust projects. This library abstracts the complexity of calling `request()`, handling the callback, and verifying the proof, reducing dApp integration to just a few lines of code.
+- **Measurement:** Reusable crate/contract published on-chain. Internal testing proves a new dApp can integrate and receive verified randomness using the library in under 30 minutes of engineering work.
 - **Budget:** $7,000
 
 **[Deliverable 3.4] Research Publication & Open-Source Handoff**
