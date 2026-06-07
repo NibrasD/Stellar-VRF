@@ -22,6 +22,7 @@ pub struct EcvrfProof {
     pub s_scalar:    BytesN<32>,
     pub beta_output: BytesN<32>,
     pub public_key:  BytesN<33>,
+    pub ctr_hint:    u32,          // hashToCurve counter hint (0-255)
 }
 
 #[contracttype]
@@ -163,12 +164,14 @@ impl VRFOracleContract {
             let c_arr = proof.c_scalar.to_array();
             let s_arr = proof.s_scalar.to_array();
             let pk_arr = proof.public_key.to_array();
+            let ctr = proof.ctr_hint as u8;
             match ecvrf::onchain::verify_ecvrf(
                 &proof.alpha_seed,
                 &gamma_arr,
                 &c_arr,
                 &s_arr,
                 &pk_arr,
+                ctr,
             ) {
                 Ok(true) => { /* proof is valid */ }
                 Ok(false) => panic!("ECVRF proof verification failed: challenge mismatch"),
