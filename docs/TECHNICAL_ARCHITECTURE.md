@@ -60,7 +60,7 @@ The VRF output β depends **only** on Γ, and Γ = x·H(α) is uniquely determin
 
 This is the "Full Uniqueness" property (RFC 9381 §3.1): for any fixed public key and input, there is exactly one valid output β — regardless of nonce choice.
 
-> **Implication:** The oracle cannot produce different outputs for the same input. It has zero degrees of freedom over β.
+> **Implication:** The oracle cannot produce different outputs for the same input. Assuming RFC 9381-compliant hashToCurve and proof verification, the oracle has zero degrees of freedom over β.
 
 ### 2.3 Proof Verification (6 steps, on-chain and off-chain)
 
@@ -108,6 +108,8 @@ alpha = SHA256(context ‖ ledger_timestamp ‖ required_drand_round ‖ drand_r
 ```
 
 The oracle service fetches and validates both `drand_signature` and `drand_randomness` from the drand API (full BLS verification off-chain). Only `drand_signature` is submitted on-chain as part of `EcvrfProof`. The contract derives `drand_randomness = sha256(drand_sig)` on-chain to reconstruct the full alpha seed, ensuring the oracle cannot substitute a fabricated entropy value.
+
+> **Note on Entropy Reconstruction:** For unchained quicknet beacons, the published randomness is itself derived directly from the BLS signature. The contract uses `sha256(drand_sig)` as the canonical entropy reconstruction to exactly match the drand specification.
 
 The on-chain SHA256 check ensures the oracle cannot fabricate drand data — the signature and randomness must be internally consistent. Full BLS pairing verification is not performed on-chain due to the computational cost of BLS12-381 in WASM.
 
@@ -187,7 +189,7 @@ pub struct EcvrfProof {
     pub public_key:    BytesN<33>,  // compressed oracle PK
     pub ctr_hint:      u8,          // hashToCurve loop counter (max 255, prevents DoS)
     pub drand_round:   u64,         // drand round used (prevents round grinding)
-    pub drand_sig:     BytesN<48>,  // BLS12-381 signature from drand beacon
+    pub drand_sig:     Bytes,       // BLS12-381 signature from drand (48 bytes for G1, or 96 bytes for G2)
 }
 ```
 
@@ -206,6 +208,8 @@ The contract enforces **9 security checks** before accepting a proof:
 | 7 | `ecvrf::verify_ecvrf(...)` | Full on-chain ECVRF cryptographic verification (see §12.1) |
 | 8 | `proof.drand_round == stored_required_round` | Prevents drand round grinding (see §4.2) |
 | 9 | `validate_ctr_hint(...)` | Ensures hashToCurve hint is valid, preventing infinite loop DoS |
+
+> **Binding Operator Identity to VRF Key:** During `init()`, the contract permanently stores `oracle_address` (Ed25519 identity), `oracle_ed25519_pk`, and `oracle_vrf_pk` (secp256k1). All fulfillments must be authorized by `oracle_address` and must contain proofs generated under `oracle_vrf_pk`. This creates a permanent on-chain binding between the operational signer and the VRF key.
 
 ### 6.3 Contract Functions
 
@@ -299,16 +303,14 @@ Consumer Contract                   VRF Oracle Contract              Oracle Serv
 
 | Threat | Mitigation | Status |
 |---|---|---|
-| Oracle produces wrong β | VRF Uniqueness (RFC 9381) — β is uniquely determined by (key, input) | ✅ Implemented |
-| Oracle swaps alpha seed | Alpha seed integrity check in `fulfill()` | ✅ Implemented |
-| Oracle uses wrong key | PK match check in `fulfill()` | ✅ Implemented |
-| Unauthorized fulfillment | `require_auth()` + Ed25519 signature verification | ✅ Implemented |
-| Double fulfillment | `Fulfilled` flag checked before proof accepted | ✅ Implemented |
-| Nonce k grinding | Mathematically impossible — β does not depend on k (RFC 9381 §3.1) | ✅ By design |
-| Oracle predicts β (front-running) | Commit-reveal with deterministic future drand round (§4) | ✅ Designed (Pending Implementation) |
-| Oracle grinds drand rounds | Contract deterministically computes required round — oracle has zero choice (§4.2) | ✅ Designed (Pending Implementation) |
-| Oracle withholds β (censorship) | Timeout + refund + HA relay infrastructure (§5); Threshold VRF on roadmap | ✅ Designed (Pending Implementation) |
-| User grinds input for favorable β | drand entropy in alpha prevents input control | ✅ Designed (Pending Implementation) |
+| Oracle produces wrong β | VRF Uniqueness (RFC 9381) | Implemented (Testnet) |
+| Oracle swaps alpha seed | Seed integrity check | Implemented (Testnet) |
+| Unauthorized fulfillment | `require_auth()` + Ed25519 | Implemented (Testnet) |
+| Double fulfillment | `Fulfilled` flag | Implemented (Testnet) |
+| Nonce k grinding | Mathematically impossible (RFC 9381 §3.1) | Implemented (Testnet) |
+| Oracle front-running | Commit-reveal with deterministic drand round | Planned for Tranche 1 |
+| Oracle censorship | Timeout + refund + HA relay infrastructure | Planned for Tranches 1 & 2 |
+| drand round grinding | Contract deterministically computes required round | Planned for Tranche 1 |
 
 ---
 
