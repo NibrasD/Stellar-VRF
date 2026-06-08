@@ -133,4 +133,4 @@ Finalize all repositories as fully open-source (MIT license). Publish the Gas Op
 | #3 | $30,000 (40%) | Dec 15, 2026 | **Mainnet launch** + Production ops |
 | **Total** | **$75,000** | **~6 months** | |
 
-> **Why $75K and not $150K:** The hardest engineering challenge — fitting full ECVRF verification inside Soroban's WASM instruction budget — is already solved and proven on Testnet (91.7M instructions, 0.014 XLM per verification). This de-risks the project significantly and allows us to focus the budget entirely on production hardening, economic security, and ecosystem integration.
+> **Why $75K and not $150K:** The hardest engineering challenge — fitting full ECVRF verification inside Soroban's WASM instruction budget — is already solved and proven on Testnet (91.7M instructions, 0.014 XLM per verification). This de-risks the project significantly and allows us to focus the budget entirely on production hardening, economic security, and ecosystem integration. Threshold VRF requires a separate cryptographic research and protocol-design effort beyond the scope of this grant and is therefore scheduled as a post-mainnet milestone.
