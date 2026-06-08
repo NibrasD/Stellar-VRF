@@ -18,7 +18,7 @@ Soroban-VRF is a production-grade VRF oracle for Stellar. It combines three inde
 
 | Component | Role |
 |---|---|
-| **ECVRF** (RFC 9381, secp256k1) | Produces a proof `(Γ, c, s)` alongside output `β`. Anyone can verify `β` was derived deterministically — the oracle has zero degrees of freedom over the result. |
+| **ECVRF** (RFC 9381, secp256k1) | Produces a proof `(Γ, c, s)` alongside output `β`. Anyone can verify `β` was derived deterministically — assuming RFC 9381-compliant hashToCurve and proof verification. |
 | **drand** (League of Entropy) | Supplies unpredictable entropy via BLS12-381 threshold signatures (quicknet, 3s period). No single operator controls the beacon. |
 | **Soroban Smart Contract** | Stores proofs on-chain, performs **full ECVRF cryptographic verification in WASM**, and enforces 9 security checks before accepting any proof. |
 
