@@ -1,0 +1,23 @@
+{
+  "name": "soroban-vrf-oracle-worker",
+  "version": "1.0.0",
+  "description": "Single-node oracle worker for the Soroban VRF Oracle — listens for request events, fetches drand beacons, generates BLS-VRF proofs, and submits fulfill transactions.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "keygen": "tsx src/keygen.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.8.0",
+    "@noble/hashes": "^1.7.0",
+    "@stellar/stellar-sdk": "^15.0.1",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}

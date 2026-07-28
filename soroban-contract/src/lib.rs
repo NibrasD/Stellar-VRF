@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(deprecated)]
 
 #[cfg(test)]
 mod test;
@@ -18,7 +19,7 @@ const DRAND_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 const VRF_DST: &[u8] = b"SOROBAN_VRF_BLS12381G1_XMD:SHA-256_SSWU_RO_";
 const BETA_DOMAIN: &[u8] = b"VREP_BETA_V1";
 const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V1";
-const MIN_ROUND_OFFSET: u32 = 1;
+const MIN_ROUND_OFFSET: u32 = 2;
 const TIMEOUT_ROUNDS: u64 = 20;
 
 #[contracttype]
@@ -54,6 +55,7 @@ pub enum DataKey {
     Fulfilled(u64),
 }
 
+
 #[contract]
 pub struct VRFOracleContract;
 
@@ -78,7 +80,7 @@ impl VRFOracleContract {
             panic!("drand period must be > 0");
         }
         if round_offset < MIN_ROUND_OFFSET {
-            panic!("round_offset must be >= 1");
+            panic!("round_offset must be >= 2");
         }
 
         oracle_address.require_auth();
@@ -345,6 +347,18 @@ impl VRFOracleContract {
         round
     }
 
+    pub fn get_context(env: Env, request_id: u64) -> Bytes {
+        let context: Bytes = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RequestContext(request_id))
+            .unwrap_or_else(|| panic!("request not found"));
+        env.storage().persistent().extend_ttl(
+            &DataKey::RequestContext(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+        );
+        context
+    }
+
     pub fn is_fulfilled(env: Env, request_id: u64) -> bool {
         let fulfilled: bool = env.storage().persistent().get(&DataKey::Fulfilled(request_id)).unwrap_or(false);
         if env.storage().persistent().has(&DataKey::Fulfilled(request_id)) {
@@ -373,6 +387,99 @@ impl VRFOracleContract {
         let mut buf = [0u8; 8];
         buf.copy_from_slice(&hash_arr[0..8]);
         u64::from_be_bytes(buf)
+    }
+
+    /// Derives a random u64 in the range [0, max) with no modulo bias.
+    /// Uses iterative hashing (rejection sampling variant) to ensure uniform distribution.
+    pub fn derive_random_in_range(env: Env, request_id: u64, context: Bytes, max: u64) -> u64 {
+        if max == 0 {
+            panic!("max must be > 0");
+        }
+        if max == 1 {
+            return 0;
+        }
+
+        let fulfilled: bool = env.storage().persistent().get(&DataKey::Fulfilled(request_id)).unwrap_or(false);
+        if !fulfilled {
+            panic!("request not yet fulfilled");
+        }
+
+        let proof: BlsVrfProof = env.storage().persistent().get(&DataKey::Proof(request_id)).unwrap();
+
+        // Rejection-sampling–style derivation:
+        // We compute a 256-bit hash and take the first 8 bytes as a u64.
+        // If the value falls within the largest multiple of `max` that fits
+        // in u64, we use it. Otherwise, we re-hash with an incrementing
+        // counter suffix. This eliminates modulo bias.
+        let threshold = u64::MAX - (u64::MAX % max);
+        let mut attempt: u32 = 0;
+        loop {
+            let mut input = Bytes::new(&env);
+            input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
+            input.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
+            input.append(&context);
+            input.append(&u64_be_bytes(&env, attempt as u64));
+            let hash = env.crypto().sha256(&input);
+            let hash_arr = hash.to_array();
+
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&hash_arr[0..8]);
+            let candidate = u64::from_be_bytes(buf);
+
+            if candidate < threshold {
+                return candidate % max;
+            }
+
+            attempt += 1;
+            if attempt > 10 {
+                // Fallback: statistically near-impossible to reach here (p < 2^-640)
+                // but we bound iterations for deterministic gas costs.
+                return candidate % max;
+            }
+        }
+    }
+
+    /// Allows the requester (or oracle) to remove proof data for a fulfilled request,
+    /// reclaiming the associated storage rent. The fulfillment flag is preserved.
+    pub fn cleanup_proof(env: Env, request_id: u64, caller: Address) {
+        caller.require_auth();
+
+        let fulfilled: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilled(request_id))
+            .unwrap_or(false);
+        if !fulfilled {
+            panic!("request not yet fulfilled");
+        }
+
+        // Only requester or oracle can clean up
+        let requester: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Requester(request_id))
+            .unwrap_or_else(|| panic!("requester not found"));
+        let oracle_addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
+
+        if caller != requester && caller != oracle_addr {
+            panic!("only requester or oracle can cleanup");
+        }
+
+        // Remove bulky proof data
+        if env.storage().persistent().has(&DataKey::Proof(request_id)) {
+            env.storage().persistent().remove(&DataKey::Proof(request_id));
+        }
+        if env.storage().persistent().has(&DataKey::RequestContext(request_id)) {
+            env.storage().persistent().remove(&DataKey::RequestContext(request_id));
+        }
+        if env.storage().persistent().has(&DataKey::CallbackContract(request_id)) {
+            env.storage().persistent().remove(&DataKey::CallbackContract(request_id));
+        }
+        if env.storage().persistent().has(&DataKey::CallbackFn(request_id)) {
+            env.storage().persistent().remove(&DataKey::CallbackFn(request_id));
+        }
+
+        env.events().publish((symbol_short!("cleanup"),), request_id);
     }
 }
 

@@ -1,0 +1,24 @@
+{
+  "name": "stellar-vrf",
+  "version": "1.0.0",
+  "description": "**Cryptographically provable, tamper-proof randomness for Soroban smart contracts.**",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NibrasD/Stellar-VRF.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/NibrasD/Stellar-VRF/issues"
+  },
+  "homepage": "https://github.com/NibrasD/Stellar-VRF#readme",
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.0.1"
+  }
+}

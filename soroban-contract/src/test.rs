@@ -18,7 +18,7 @@ fn setup() -> (
 ) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register_contract(None, VRFOracleContract);
+    let contract_id = env.register(VRFOracleContract, ());
     let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
@@ -166,11 +166,11 @@ fn test_timeout_rounds_constant() {
 }
 
 #[test]
-#[should_panic(expected = "round_offset must be >= 1")]
+#[should_panic(expected = "round_offset must be >= 2")]
 fn test_init_rejects_zero_round_offset() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register_contract(None, VRFOracleContract);
+    let contract_id = env.register(VRFOracleContract, ());
     let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
@@ -190,3 +190,30 @@ fn test_init_rejects_zero_round_offset() {
         &0u32,
     );
 }
+
+#[test]
+#[should_panic(expected = "round_offset must be >= 2")]
+fn test_init_rejects_round_offset_one() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
+    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
+    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+
+    client.init(
+        &oracle_pk,
+        &oracle_addr,
+        &oracle_ed25519,
+        &drand_pk,
+        &g2_generator,
+        &1_692_803_367u64,
+        &3u32,
+        &1u32, // Should fail: round_offset must be >= 2
+    );
+}
+
