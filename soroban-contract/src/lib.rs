@@ -56,6 +56,10 @@ pub enum DataKey {
     /// Transient re-entrancy guard: set true while callback is in-flight.
     /// Prevents a malicious callback from re-entering fulfill().
     Fulfilling(u64),
+    /// SAC token address used for per-request fees.
+    FeeToken,
+    /// Fee amount (i128) charged per VRF request.
+    FeeAmount,
 }
 
 
@@ -64,6 +68,12 @@ pub struct VRFOracleContract;
 
 #[contractimpl]
 impl VRFOracleContract {
+    /// Initialize the VRF Oracle contract.
+    ///
+    /// # Parameters
+    /// - `fee_token`: SAC token address used to charge per-request fees.
+    /// - `fee_amount`: Amount of `fee_token` charged per VRF request (transferred
+    ///   from requester to oracle). Set to 0 for fee-free operation.
     #[allow(clippy::too_many_arguments)]
     pub fn init(
         env: Env,
@@ -75,6 +85,8 @@ impl VRFOracleContract {
         drand_genesis_time: u64,
         drand_period: u32,
         round_offset: u32,
+        fee_token: Address,
+        fee_amount: i128,
     ) {
         if env.storage().instance().has(&DataKey::OraclePK) {
             panic!("already initialized");
@@ -84,6 +96,9 @@ impl VRFOracleContract {
         }
         if round_offset < MIN_ROUND_OFFSET {
             panic!("round_offset must be >= 2");
+        }
+        if fee_amount < 0 {
+            panic!("fee_amount must be >= 0");
         }
 
         oracle_address.require_auth();
@@ -96,6 +111,8 @@ impl VRFOracleContract {
         env.storage().instance().set(&DataKey::DrandPeriod, &drand_period);
         env.storage().instance().set(&DataKey::RoundOffset, &round_offset);
         env.storage().instance().set(&DataKey::Counter, &0u64);
+        env.storage().instance().set(&DataKey::FeeToken, &fee_token);
+        env.storage().instance().set(&DataKey::FeeAmount, &fee_amount);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         env.events().publish((symbol_short!("init"),), oracle_pk);
@@ -786,6 +803,20 @@ fn request_internal(
     callback_fn: Option<Symbol>,
 ) -> u64 {
     requester.require_auth();
+
+    // Charge per-request fee via SAC token transfer (requester → oracle).
+    let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
+    if fee_amount > 0 {
+        let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
+        let oracle_addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
+        // SAC token transfer: invoke the token contract's `transfer` function.
+        let transfer_fn = Symbol::new(env, "transfer");
+        let mut args = Vec::<Val>::new(env);
+        args.push_back(requester.clone().into_val(env));
+        args.push_back(oracle_addr.into_val(env));
+        args.push_back(fee_amount.into_val(env));
+        env.invoke_contract::<Val>(&fee_token, &transfer_fn, args);
+    }
 
     let counter: u64 = env
         .storage()

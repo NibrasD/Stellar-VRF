@@ -51,6 +51,10 @@ const G2_GENERATOR_HEX =
 const DRAND_GENESIS_TIME = 1692803367;
 const DRAND_PERIOD = 3;
 const ROUND_OFFSET = 2;
+// Fee: use native XLM SAC on testnet, amount = 0 (fee-free for now; can be updated later)
+// Native XLM SAC contract on Testnet:
+const FEE_TOKEN_ADDRESS = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+const FEE_AMOUNT = 0; // i128 — set to 0 for fee-free operation
 
 // Oracle Stellar Ed25519 keypair (pays gas + signs proofs)
 const ORACLE_STELLAR_SEED = "SCOYJ5ZYDYBAM7FPRHL4PTFYNSE62AAL7LREU676VWAUSP75CCJUW7QO";
@@ -205,6 +209,8 @@ async function main() {
   const roundOffsetScVal = nativeToScVal(ROUND_OFFSET, {
     type: "u32",
   });
+  const feeTokenScVal = new Address(FEE_TOKEN_ADDRESS).toScVal();
+  const feeAmountScVal = nativeToScVal(BigInt(FEE_AMOUNT), { type: "i128" });
 
   const initTx = new TransactionBuilder(account, {
     fee: "1000000",
@@ -223,6 +229,8 @@ async function main() {
           drandGenesisScVal,
           drandPeriodScVal,
           roundOffsetScVal,
+          feeTokenScVal,
+          feeAmountScVal,
         ],
       })
     )

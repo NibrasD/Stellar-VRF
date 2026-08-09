@@ -26,6 +26,8 @@ fn setup() -> (
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
     let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
     let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    // fee_token = a dummy address; fee_amount = 0 (fee-free for unit tests)
+    let fee_token = Address::generate(&env);
 
     client.init(
         &oracle_pk,
@@ -36,6 +38,8 @@ fn setup() -> (
         &1_692_803_367u64,
         &3u32,
         &2u32,
+        &fee_token,
+        &0i128,
     );
 
     (
@@ -181,6 +185,7 @@ fn test_init_rejects_zero_round_offset() {
     let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
     let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
 
+    let fee_token = Address::generate(&env);
     client.init(
         &oracle_pk,
         &oracle_addr,
@@ -190,6 +195,8 @@ fn test_init_rejects_zero_round_offset() {
         &1_692_803_367u64,
         &3u32,
         &0u32,
+        &fee_token,
+        &0i128,
     );
 }
 
@@ -207,6 +214,7 @@ fn test_init_rejects_round_offset_one() {
     let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
     let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
 
+    let fee_token = Address::generate(&env);
     client.init(
         &oracle_pk,
         &oracle_addr,
@@ -216,6 +224,8 @@ fn test_init_rejects_round_offset_one() {
         &1_692_803_367u64,
         &3u32,
         &1u32, // Should fail: round_offset must be >= 2
+        &fee_token,
+        &0i128,
     );
 }
 
