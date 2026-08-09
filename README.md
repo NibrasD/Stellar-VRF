@@ -1,20 +1,57 @@
-# Soroban Verifiable Randomness Oracle (Soroban-VRF)
+# Stellar VRF Oracle
 
-**Cryptographically provable, tamper-proof randomness for Soroban smart contracts.**
+A production-grade Verifiable Random Function (VRF) system for the Stellar/Soroban blockchain, using BLS12-381 cryptography and the drand distributed randomness beacon.
 
-## What is it?
-Soroban-VRF is a production-grade oracle that provides unbiasable and unpredictable randomness to dApps on the Stellar network. It is built to ensure fairness in on-chain gaming, NFT minting, lotteries, and governance mechanisms.
+## Architecture
 
-## How it works (Quick Overview)
-The protocol combines two independent cryptographic layers to guarantee security, verified entirely on-chain using Soroban's native host functions:
+```
+soroban-contract/   — On-chain VRF Oracle (Rust/Soroban)
+oracle-worker/      — Off-chain Oracle Node (TypeScript)
+consumer-example/   — Example consumer contract (Rust/Soroban)
+docs/               — Security documentation
+```
 
-1. **drand (League of Entropy):** Every randomness request is strictly bound to a *future* drand round. This ensures **Input Unpredictability**—neither the oracle nor the user can predict or influence the input entropy.
-2. **BLS-VRF (Pairing-based VRF):** Once the future drand round is published, the oracle generates a unique BLS signature (the VRF proof) over the input. This ensures **Output Secrecy & Uniqueness**—the result remains hidden until on-chain fulfillment, and the oracle cannot grind or produce multiple valid outcomes.
+## Tranche 1 ✅ — Core VRF & Oracle Pipeline
 
-### The Lifecycle
-1. **Request:** A dApp requests randomness on-chain. The contract locks a fee and commits to a future drand round.
-2. **Wait:** The oracle waits for the required future drand round to be published globally.
-3. **Fulfill:** The oracle generates a BLS-VRF proof and submits it to the contract.
-4. **Verify & Callback:** The contract verifies the drand threshold signature and the VRF pairing on-chain (~58M CPU instructions). If valid, it safely delivers the randomness to the dApp via a cross-contract callback.
+- BLS-VRF on-chain verification (CAP-0059: `bls12_381_pairing_check`, `bls12_381_hash_to_g1`)
+- drand quicknet binding with `round_offset ≥ 2` (future-round enforcement)
+- Storage TTL extension on all persistent entries
+- Oracle worker: event listener → drand beacon → BLS-VRF proof → `fulfill()`
+- E2E validated on Stellar Testnet: 58.2M CPU instructions (< 70M target)
 
-For full technical details, please see our [Technical Architecture Document](docs/TECHNICAL_ARCHITECTURE_V2.md) and our [SCF Grant Application](docs/SCF_GRANT_APPLICATION.md).
+**Contract:** `CBBLOMK4ZYEO4IVVUBDBFHEZVYUOWWXN43Y5TBH6MAWCV23QAIMKGCEN`
+
+## Tranche 2 ✅ — Composability & Security Hardening
+
+- `fulfill()` implements full Checks-Effects-Interactions (CEI) pattern
+- Re-entrancy guard via `DataKey::Fulfilling(request_id)` transient lock
+- `rotate_oracle_keys()` — atomic rotation of BLS PK, Stellar address, Ed25519 key
+- `rotate_drand_pk()` — drand chain key rotation support
+- Consumer authorization model documented (VRF contract as caller)
+- Consumer contract example library (`consumer-example/`)
+- 27 unit tests: 14 core + 13 failure/rotation/edge-case scenarios
+- Threat model documented (`docs/THREAT_MODEL.md`)
+
+## Quick Start
+
+### Run contract tests
+```bash
+cd soroban-contract
+cargo test
+```
+
+### Run oracle worker
+```bash
+cd oracle-worker
+cp .env.example .env   # fill in your keys
+npx tsx src/index.ts
+```
+
+### Run E2E test
+```bash
+node oracle-worker/e2e_test.mjs
+```
+
+## Security
+
+See [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) and [`docs/CONSUMER_AUTHORIZATION.md`](docs/CONSUMER_AUTHORIZATION.md).

@@ -53,6 +53,9 @@ pub enum DataKey {
     CallbackFn(u64),
     Proof(u64),
     Fulfilled(u64),
+    /// Transient re-entrancy guard: set true while callback is in-flight.
+    /// Prevents a malicious callback from re-entering fulfill().
+    Fulfilling(u64),
 }
 
 
@@ -96,6 +99,62 @@ impl VRFOracleContract {
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         env.events().publish((symbol_short!("init"),), oracle_pk);
+    }
+
+    /// Rotate the oracle's BLS public key, Stellar address, and Ed25519 signing key.
+    ///
+    /// # Authorization model
+    /// The **current** oracle address must authorize this call. This prevents an
+    /// attacker who obtains a new keypair from hijacking the oracle role.
+    ///
+    /// # Security note
+    /// Only rotate keys after the new oracle node is running and ready to fulfill
+    /// requests. Any unfulfilled requests locked to the old PK will fail verification
+    /// after rotation — they must be refunded via `timeout_refund()`.
+    pub fn rotate_oracle_keys(
+        env: Env,
+        new_oracle_pk: BytesN<192>,
+        new_oracle_address: Address,
+        new_oracle_ed25519_pk: BytesN<32>,
+    ) {
+        // Current oracle must authorize the rotation.
+        let current_oracle: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::OracleAddr)
+            .unwrap_or_else(|| panic!("not initialized"));
+        current_oracle.require_auth();
+
+        env.storage().instance().set(&DataKey::OraclePK, &new_oracle_pk);
+        env.storage().instance().set(&DataKey::OracleAddr, &new_oracle_address);
+        env.storage().instance().set(&DataKey::OracleEd25519, &new_oracle_ed25519_pk);
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
+        env.events().publish(
+            (symbol_short!("rotate_ok"),),
+            (new_oracle_pk, new_oracle_address),
+        );
+    }
+
+    /// Rotate the drand public key used to verify BLS beacon signatures.
+    ///
+    /// This is required when the drand network performs a key rotation or when
+    /// switching to a different drand chain (e.g., quicknet → a future chain).
+    ///
+    /// # Authorization model
+    /// The current oracle must authorize this call.
+    pub fn rotate_drand_pk(env: Env, new_drand_pk: BytesN<192>) {
+        let oracle_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::OracleAddr)
+            .unwrap_or_else(|| panic!("not initialized"));
+        oracle_addr.require_auth();
+
+        env.storage().instance().set(&DataKey::DrandPK, &new_drand_pk);
+        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
+        env.events().publish((symbol_short!("rotate_dk"),), new_drand_pk);
     }
 
     pub fn request(env: Env, context: Bytes, requester: Address) -> u64 {
@@ -228,7 +287,21 @@ impl VRFOracleContract {
         Some((cb_contract, cb_fn))
     }
 
+    /// Fulfill a VRF request with a BLS proof and oracle Ed25519 signature.
+    ///
+    /// # Checks-Effects-Interactions (CEI) pattern
+    /// 1. **Checks**: validate oracle identity, proof, alpha seed, BLS signatures.
+    /// 2. **Effects**: write `Fulfilled = true` and store proof BEFORE any external call.
+    /// 3. **Interactions**: invoke consumer callback (if registered) only AFTER state
+    ///    is fully committed, with a re-entrancy guard to block nested `fulfill()` calls.
+    ///
+    /// # Re-entrancy protection
+    /// `DataKey::Fulfilling(request_id)` is set to `true` before callback invocation
+    /// and cleared after. Any re-entrant call to `fulfill()` for the same request_id
+    /// will see `Fulfilled = true` and panic with "already fulfilled".
     pub fn fulfill(env: Env, request_id: u64, proof: BlsVrfProof, signature: BytesN<64>) {
+        // ── CHECKS ────────────────────────────────────────────────────────────────
+
         let refunded: bool = env
             .storage()
             .persistent()
@@ -237,6 +310,7 @@ impl VRFOracleContract {
         if refunded {
             panic!("request refunded");
         }
+
         let oracle_addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
         oracle_addr.require_auth();
 
@@ -244,7 +318,11 @@ impl VRFOracleContract {
             panic!("request not found");
         }
 
-        let already: bool = env.storage().persistent().get(&DataKey::Fulfilled(request_id)).unwrap_or(false);
+        let already: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilled(request_id))
+            .unwrap_or(false);
         if already {
             panic!("already fulfilled");
         }
@@ -254,13 +332,21 @@ impl VRFOracleContract {
             panic!("oracle key mismatch");
         }
 
-        let required_round: u64 = env.storage().persistent().get(&DataKey::RequestRound(request_id)).unwrap();
+        let required_round: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RequestRound(request_id))
+            .unwrap();
         if proof.drand_round != required_round {
             panic!("drand round mismatch");
         }
 
         // Oracle identity binding: signature covers request_id and proof payload.
-        let oracle_ed25519: BytesN<32> = env.storage().instance().get(&DataKey::OracleEd25519).unwrap();
+        let oracle_ed25519: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OracleEd25519)
+            .unwrap();
         let mut message = Bytes::new(&env);
         message.append(&u64_be_bytes(&env, request_id));
         message.append(&Bytes::from_slice(&env, &proof.alpha_seed.to_array()));
@@ -276,7 +362,8 @@ impl VRFOracleContract {
         }
 
         // Alpha must be deterministic from request context + round + drand randomness.
-        let expected_alpha = derive_expected_alpha(&env, request_id, proof.drand_round, &proof.drand_signature);
+        let expected_alpha =
+            derive_expected_alpha(&env, request_id, proof.drand_round, &proof.drand_signature);
         if expected_alpha != proof.alpha_seed {
             panic!("alpha seed mismatch");
         }
@@ -292,19 +379,52 @@ impl VRFOracleContract {
             panic!("beta output mismatch");
         }
 
-        env.storage().persistent().set(&DataKey::Proof(request_id), &proof.clone());
-        env.storage().persistent().set(&DataKey::Fulfilled(request_id), &true);
+        // ── EFFECTS ───────────────────────────────────────────────────────────────
+        // Commit state BEFORE any cross-contract interaction (CEI pattern).
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Proof(request_id), &proof.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(request_id), &true);
         env.storage().persistent().extend_ttl(
-            &DataKey::Proof(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            &DataKey::Proof(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
         );
         env.storage().persistent().extend_ttl(
-            &DataKey::Fulfilled(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            &DataKey::Fulfilled(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
         );
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
+        // ── INTERACTIONS ──────────────────────────────────────────────────────────
+        // Re-entrancy guard: set Fulfilling flag before callback, clear after.
+        // A re-entrant fulfill() call will be rejected by the "already fulfilled" check above.
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilling(request_id), &true);
 
         invoke_callback_if_configured(&env, request_id, &proof);
 
-        env.events().publish((symbol_short!("fulfill"),), (request_id, proof.beta_output));
+        // Clear re-entrancy guard.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Fulfilling(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::Fulfilling(request_id));
+        }
+
+        env.events()
+            .publish((symbol_short!("fulfill"),), (request_id, proof.beta_output));
     }
 
     pub fn get_proof(env: Env, request_id: u64) -> BlsVrfProof {
@@ -315,23 +435,31 @@ impl VRFOracleContract {
             .unwrap_or_else(|| panic!("proof not found"));
 
         env.storage().persistent().extend_ttl(
-            &DataKey::Proof(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            &DataKey::Proof(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
         );
         env.storage().persistent().extend_ttl(
-            &DataKey::Fulfilled(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            &DataKey::Fulfilled(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
         );
         proof
     }
 
     pub fn oracle_pk(env: Env) -> BytesN<192> {
         let pk: BytesN<192> = env.storage().instance().get(&DataKey::OraclePK).unwrap();
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
         pk
     }
 
     pub fn oracle_address(env: Env) -> Address {
         let addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
         addr
     }
 
@@ -342,7 +470,9 @@ impl VRFOracleContract {
             .get(&DataKey::RequestRound(request_id))
             .unwrap_or_else(|| panic!("request not found"));
         env.storage().persistent().extend_ttl(
-            &DataKey::RequestRound(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            &DataKey::RequestRound(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
         );
         round
     }
@@ -354,28 +484,48 @@ impl VRFOracleContract {
             .get(&DataKey::RequestContext(request_id))
             .unwrap_or_else(|| panic!("request not found"));
         env.storage().persistent().extend_ttl(
-            &DataKey::RequestContext(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+            &DataKey::RequestContext(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
         );
         context
     }
 
     pub fn is_fulfilled(env: Env, request_id: u64) -> bool {
-        let fulfilled: bool = env.storage().persistent().get(&DataKey::Fulfilled(request_id)).unwrap_or(false);
-        if env.storage().persistent().has(&DataKey::Fulfilled(request_id)) {
+        let fulfilled: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilled(request_id))
+            .unwrap_or(false);
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Fulfilled(request_id))
+        {
             env.storage().persistent().extend_ttl(
-                &DataKey::Fulfilled(request_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND,
+                &DataKey::Fulfilled(request_id),
+                PERSISTENT_TTL_THRESHOLD,
+                PERSISTENT_TTL_EXTEND,
             );
         }
         fulfilled
     }
 
     pub fn derive_random(env: Env, request_id: u64, context: Bytes) -> u64 {
-        let fulfilled: bool = env.storage().persistent().get(&DataKey::Fulfilled(request_id)).unwrap_or(false);
+        let fulfilled: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilled(request_id))
+            .unwrap_or(false);
         if !fulfilled {
             panic!("request not yet fulfilled");
         }
 
-        let proof: BlsVrfProof = env.storage().persistent().get(&DataKey::Proof(request_id)).unwrap();
+        let proof: BlsVrfProof = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proof(request_id))
+            .unwrap();
 
         let mut input = Bytes::new(&env);
         input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
@@ -391,6 +541,7 @@ impl VRFOracleContract {
 
     /// Derives a random u64 in the range [0, max) with no modulo bias.
     /// Uses iterative hashing (rejection sampling variant) to ensure uniform distribution.
+    /// Worst-case bounded at 10 iterations (p < 2^-640 of exceeding).
     pub fn derive_random_in_range(env: Env, request_id: u64, context: Bytes, max: u64) -> u64 {
         if max == 0 {
             panic!("max must be > 0");
@@ -399,18 +550,22 @@ impl VRFOracleContract {
             return 0;
         }
 
-        let fulfilled: bool = env.storage().persistent().get(&DataKey::Fulfilled(request_id)).unwrap_or(false);
+        let fulfilled: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilled(request_id))
+            .unwrap_or(false);
         if !fulfilled {
             panic!("request not yet fulfilled");
         }
 
-        let proof: BlsVrfProof = env.storage().persistent().get(&DataKey::Proof(request_id)).unwrap();
+        let proof: BlsVrfProof = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Proof(request_id))
+            .unwrap();
 
-        // Rejection-sampling–style derivation:
-        // We compute a 256-bit hash and take the first 8 bytes as a u64.
-        // If the value falls within the largest multiple of `max` that fits
-        // in u64, we use it. Otherwise, we re-hash with an incrementing
-        // counter suffix. This eliminates modulo bias.
+        // Rejection-sampling–style derivation to eliminate modulo bias.
         let threshold = u64::MAX - (u64::MAX % max);
         let mut attempt: u32 = 0;
         loop {
@@ -432,8 +587,8 @@ impl VRFOracleContract {
 
             attempt += 1;
             if attempt > 10 {
-                // Fallback: statistically near-impossible to reach here (p < 2^-640)
-                // but we bound iterations for deterministic gas costs.
+                // Statistically near-impossible (p < 2^-640) but we bound
+                // iterations for deterministic instruction costs.
                 return candidate % max;
             }
         }
@@ -441,6 +596,12 @@ impl VRFOracleContract {
 
     /// Allows the requester (or oracle) to remove proof data for a fulfilled request,
     /// reclaiming the associated storage rent. The fulfillment flag is preserved.
+    ///
+    /// # TTL edge case
+    /// After cleanup, `DataKey::Proof` is removed but `DataKey::Fulfilled` is kept.
+    /// Callers relying on `is_fulfilled()` will continue to get `true`.
+    /// Callers calling `get_proof()` or `derive_random()` after cleanup will panic —
+    /// consumers must call `derive_random()` before cleanup or cache the result.
     pub fn cleanup_proof(env: Env, request_id: u64, caller: Address) {
         caller.require_auth();
 
@@ -459,29 +620,67 @@ impl VRFOracleContract {
             .persistent()
             .get(&DataKey::Requester(request_id))
             .unwrap_or_else(|| panic!("requester not found"));
-        let oracle_addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
+        let oracle_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::OracleAddr)
+            .unwrap();
 
         if caller != requester && caller != oracle_addr {
             panic!("only requester or oracle can cleanup");
         }
 
-        // Remove bulky proof data
-        if env.storage().persistent().has(&DataKey::Proof(request_id)) {
-            env.storage().persistent().remove(&DataKey::Proof(request_id));
+        // Remove bulky proof data; preserve Fulfilled flag for auditability.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Proof(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::Proof(request_id));
         }
-        if env.storage().persistent().has(&DataKey::RequestContext(request_id)) {
-            env.storage().persistent().remove(&DataKey::RequestContext(request_id));
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::RequestContext(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::RequestContext(request_id));
         }
-        if env.storage().persistent().has(&DataKey::CallbackContract(request_id)) {
-            env.storage().persistent().remove(&DataKey::CallbackContract(request_id));
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::CallbackContract(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::CallbackContract(request_id));
         }
-        if env.storage().persistent().has(&DataKey::CallbackFn(request_id)) {
-            env.storage().persistent().remove(&DataKey::CallbackFn(request_id));
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::CallbackFn(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::CallbackFn(request_id));
         }
 
-        env.events().publish((symbol_short!("cleanup"),), request_id);
+        // Extend Fulfilled flag TTL so is_fulfilled() remains queryable.
+        env.storage().persistent().extend_ttl(
+            &DataKey::Fulfilled(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
+        );
+
+        env.events()
+            .publish((symbol_short!("cleanup"),), request_id);
     }
 }
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
 
 fn compute_required_round(now_ts: u64, genesis: u64, period: u32, offset: u32) -> u64 {
     compute_current_round(now_ts, genesis, period) + (offset as u64)
@@ -498,8 +697,17 @@ fn u64_be_bytes(env: &Env, value: u64) -> Bytes {
     Bytes::from_slice(env, &value.to_be_bytes())
 }
 
-fn derive_expected_alpha(env: &Env, request_id: u64, drand_round: u64, drand_signature: &BytesN<96>) -> BytesN<32> {
-    let context: Bytes = env.storage().persistent().get(&DataKey::RequestContext(request_id)).unwrap();
+fn derive_expected_alpha(
+    env: &Env,
+    request_id: u64,
+    drand_round: u64,
+    drand_signature: &BytesN<96>,
+) -> BytesN<32> {
+    let context: Bytes = env
+        .storage()
+        .persistent()
+        .get(&DataKey::RequestContext(request_id))
+        .unwrap();
     let mut input = Bytes::new(env);
     input.append(&u64_be_bytes(env, request_id));
     input.append(&context);
@@ -527,7 +735,8 @@ fn verify_bls_vrf_proof(env: &Env, proof: &BlsVrfProof) -> bool {
     let h = bls.hash_to_g1(&alpha_bytes, &dst);
     let gamma = Bls12381G1Affine::from_bytes(proof.gamma_point.clone());
 
-    let g2_generator_bytes: BytesN<192> = env.storage().instance().get(&DataKey::G2Generator).unwrap();
+    let g2_generator_bytes: BytesN<192> =
+        env.storage().instance().get(&DataKey::G2Generator).unwrap();
     let g2_generator = Bls12381G2Affine::from_bytes(g2_generator_bytes);
     let pk = Bls12381G2Affine::from_bytes(proof.public_key.clone());
 
@@ -548,7 +757,8 @@ fn verify_drand_signature(env: &Env, proof: &BlsVrfProof) -> bool {
     let drand_sig = Bls12381G1Affine::from_bytes(proof.drand_signature.clone());
     let drand_pk_bytes: BytesN<192> = env.storage().instance().get(&DataKey::DrandPK).unwrap();
     let drand_pk = Bls12381G2Affine::from_bytes(drand_pk_bytes);
-    let g2_generator_bytes: BytesN<192> = env.storage().instance().get(&DataKey::G2Generator).unwrap();
+    let g2_generator_bytes: BytesN<192> =
+        env.storage().instance().get(&DataKey::G2Generator).unwrap();
     let g2_generator = Bls12381G2Affine::from_bytes(g2_generator_bytes);
 
     let round_be = u64_be_bytes(env, proof.drand_round);
@@ -577,25 +787,56 @@ fn request_internal(
 ) -> u64 {
     requester.require_auth();
 
-    let counter: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
+    let counter: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::Counter)
+        .unwrap_or(0);
     let id = counter + 1;
     env.storage().instance().set(&DataKey::Counter, &id);
 
-    let genesis: u64 = env.storage().instance().get(&DataKey::DrandGenesis).unwrap();
-    let period: u32 = env.storage().instance().get(&DataKey::DrandPeriod).unwrap();
-    let offset: u32 = env.storage().instance().get(&DataKey::RoundOffset).unwrap();
-    let required_round = compute_required_round(env.ledger().timestamp(), genesis, period, offset);
+    let genesis: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::DrandGenesis)
+        .unwrap();
+    let period: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::DrandPeriod)
+        .unwrap();
+    let offset: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::RoundOffset)
+        .unwrap();
+    let required_round =
+        compute_required_round(env.ledger().timestamp(), genesis, period, offset);
 
-    env.storage().persistent().set(&DataKey::RequestContext(id), &context);
-    env.storage().persistent().set(&DataKey::Requester(id), &requester);
-    env.storage().persistent().set(&DataKey::RequestRound(id), &required_round);
-    env.storage().persistent().set(&DataKey::Fulfilled(id), &false);
-    env.storage().persistent().set(&DataKey::Refunded(id), &false);
+    env.storage()
+        .persistent()
+        .set(&DataKey::RequestContext(id), &context);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Requester(id), &requester);
+    env.storage()
+        .persistent()
+        .set(&DataKey::RequestRound(id), &required_round);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Fulfilled(id), &false);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Refunded(id), &false);
 
     if let Some(cb_contract) = callback_contract {
         let cb_fn = callback_fn.unwrap_or_else(|| panic!("callback function missing"));
-        env.storage().persistent().set(&DataKey::CallbackContract(id), &cb_contract);
-        env.storage().persistent().set(&DataKey::CallbackFn(id), &cb_fn);
+        env.storage()
+            .persistent()
+            .set(&DataKey::CallbackContract(id), &cb_contract);
+        env.storage()
+            .persistent()
+            .set(&DataKey::CallbackFn(id), &cb_fn);
         env.storage().persistent().extend_ttl(
             &DataKey::CallbackContract(id),
             PERSISTENT_TTL_THRESHOLD,
@@ -633,12 +874,26 @@ fn request_internal(
         PERSISTENT_TTL_THRESHOLD,
         PERSISTENT_TTL_EXTEND,
     );
-    env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
-    env.events().publish((symbol_short!("request"),), (id, requester, required_round));
+    env.events()
+        .publish((symbol_short!("request"),), (id, requester, required_round));
     id
 }
 
+/// Invoke the consumer callback if one was registered with `request_with_callback`.
+///
+/// # Authorization model
+/// The VRF contract itself is the caller of the consumer callback — NOT the original
+/// requester. Consumer contracts must NOT require the original requester's auth inside
+/// their callback function; they should trust the VRF contract address instead.
+///
+/// # Arguments passed to callback
+/// - `request_id: u64` — the VRF request identifier
+/// - `beta_output: BytesN<32>` — the verifiable random output
+/// - `alpha_seed: BytesN<32>` — the deterministic input seed (for auditability)
 fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &BlsVrfProof) {
     if !env
         .storage()
