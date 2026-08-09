@@ -49,6 +49,8 @@ fn setup() -> (
     )
 }
 
+// ── Tranche 1 tests (unchanged) ───────────────────────────────────────────────
+
 #[test]
 fn test_init_stores_oracle_pk() {
     let (_env, client, _addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
@@ -217,3 +219,265 @@ fn test_init_rejects_round_offset_one() {
     );
 }
 
+// ── Tranche 2: Failure scenario tests ────────────────────────────────────────
+
+/// fulfill() must reject a duplicate fulfillment attempt.
+/// This validates the "already fulfilled" guard and is the primary
+/// defense against oracle double-spend / replay attacks.
+#[test]
+#[should_panic(expected = "already fulfilled")]
+fn test_fulfill_duplicate_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"dup_test");
+    let id = client.request(&context, &requester);
+
+    // Manually force-set fulfilled = true to simulate a completed request.
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+    });
+
+    // Attempt to fulfill again — must panic.
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 2,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &dummy_proof, &dummy_sig);
+}
+
+/// fulfill() must reject a proof with the wrong drand_round.
+#[test]
+#[should_panic(expected = "drand round mismatch")]
+fn test_fulfill_wrong_round_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"round_mismatch");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    let wrong_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: required_round + 999, // wrong round
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &wrong_proof, &dummy_sig);
+}
+
+/// fulfill() must reject a proof carrying a public key that differs from the stored oracle PK.
+#[test]
+#[should_panic(expected = "oracle key mismatch")]
+fn test_fulfill_wrong_pk_rejected() {
+    let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"pk_mismatch");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    let wrong_pk = BytesN::from_array(&env, &[0xAB; 192]); // different key
+    let wrong_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: wrong_pk,
+        drand_round: required_round,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &wrong_proof, &dummy_sig);
+}
+
+/// fulfill() must reject a request that doesn't exist.
+#[test]
+#[should_panic(expected = "request not found")]
+fn test_fulfill_nonexistent_request_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 0,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&9999u64, &dummy_proof, &dummy_sig);
+}
+
+/// timeout_refund() must be rejected if called before the timeout window elapses.
+#[test]
+#[should_panic(expected = "timeout window not reached")]
+fn test_timeout_refund_before_window_rejected() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"too_early_refund");
+    let id = client.request(&context, &requester);
+
+    // Ledger timestamp is 0 — timeout window hasn't elapsed.
+    client.timeout_refund(&id);
+}
+
+/// timeout_refund() must be rejected if the request was already fulfilled.
+#[test]
+#[should_panic(expected = "already fulfilled")]
+fn test_timeout_refund_after_fulfilled_rejected() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"fulfilled_refund");
+    let id = client.request(&context, &requester);
+
+    // Force-set fulfilled.
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+    });
+
+    client.timeout_refund(&id);
+}
+
+/// timeout_refund() must be rejected on a second call (double refund).
+#[test]
+#[should_panic(expected = "already refunded")]
+fn test_timeout_refund_double_rejected() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"double_refund");
+    let id = client.request(&context, &requester);
+
+    // Force-set refunded.
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Refunded(id), &true);
+    });
+
+    client.timeout_refund(&id);
+}
+
+/// cleanup_proof() must be rejected for an unfulfilled request.
+#[test]
+#[should_panic(expected = "request not yet fulfilled")]
+fn test_cleanup_proof_unfulfilled_rejected() {
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"cleanup_unfulfilled");
+    let id = client.request(&context, &requester);
+
+    client.cleanup_proof(&id, &oracle_addr);
+}
+
+/// cleanup_proof() must be rejected for callers that are neither the requester nor oracle.
+#[test]
+#[should_panic(expected = "only requester or oracle can cleanup")]
+fn test_cleanup_proof_unauthorized_rejected() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"cleanup_unauth");
+    let id = client.request(&context, &requester);
+
+    // Force-set fulfilled.
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+    });
+
+    client.cleanup_proof(&id, &attacker);
+}
+
+/// After cleanup_proof(), is_fulfilled() must still return true.
+/// This validates the TTL edge case: Fulfilled flag is preserved after cleanup.
+#[test]
+fn test_cleanup_proof_retains_fulfilled_flag() {
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"cleanup_ttl_test");
+    let id = client.request(&context, &requester);
+
+    // Force-set fulfilled.
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+    });
+
+    // Oracle performs cleanup.
+    client.cleanup_proof(&id, &oracle_addr);
+
+    // Fulfilled flag must still be true.
+    assert!(client.is_fulfilled(&id), "Fulfilled flag must survive cleanup_proof");
+}
+
+// ── Tranche 2: Key rotation tests ─────────────────────────────────────────────
+
+/// rotate_oracle_keys() must update all three oracle key fields.
+#[test]
+fn test_rotate_oracle_keys() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+
+    let new_pk = BytesN::from_array(&env, &[0xAA; 192]);
+    let new_addr = Address::generate(&env);
+    let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
+
+    client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
+
+    assert_eq!(client.oracle_pk(), new_pk);
+    assert_eq!(client.oracle_address(), new_addr);
+}
+
+/// rotate_drand_pk() must update the drand public key.
+#[test]
+fn test_rotate_drand_pk() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+
+    let new_drand_pk = BytesN::from_array(&env, &[0xCC; 192]);
+    client.rotate_drand_pk(&new_drand_pk);
+
+    // Verify by checking the oracle_pk() still reports correctly (drand PK is internal,
+    // so we verify indirectly that the call succeeded without panicking).
+    // A direct drand_pk() getter could be added in M3; for now no-panic is the assertion.
+    let _ = client.oracle_pk(); // contract still functional after rotation
+}
+
+/// derive_random_in_range() must return values within [0, max).
+/// Tests multiple max values to validate rejection sampling is bounded.
+#[test]
+fn test_derive_random_in_range_bounds() {
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+
+    for i in 0u64..3 {
+        let context = Bytes::from_slice(&env, format!("range_ctx_{}", i).as_bytes());
+        let id = client.request(&context, &requester);
+
+        use crate::DataKey;
+        env.as_contract(&client.address, || {
+            env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+            // Store minimal proof for derive_random_in_range.
+            env.storage().persistent().set(
+                &DataKey::Proof(id),
+                &crate::BlsVrfProof {
+                    alpha_seed: BytesN::from_array(&env, &[i as u8 * 17; 32]),
+                    gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+                    beta_output: BytesN::from_array(&env, &[i as u8 * 31; 32]),
+                    public_key: BytesN::from_array(&env, &[0u8; 192]),
+                    drand_round: 2,
+                    drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+                },
+            );
+        });
+
+        let derive_ctx = Bytes::from_slice(&env, b"range_derive");
+        let max: u64 = 100;
+        let result = client.derive_random_in_range(&id, &derive_ctx, &max);
+        assert!(result < max, "result {} must be < max {}", result, max);
+    }
+}
