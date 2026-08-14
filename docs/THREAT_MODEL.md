@@ -1,123 +1,111 @@
-# Stellar VRF — Threat Model
+# Threat Model
 
-## Overview
+This document covers the security assumptions and known risks for the Stellar VRF Oracle
+as deployed on testnet (Tranche 2). It is meant to be a living document — we'll update it
+as the protocol matures toward mainnet.
 
-The Soroban VRF Oracle provides verifiable randomness for on-chain applications on the
-Stellar network. This document describes the trust assumptions, known risks, and
-mitigations in place for the Tranche 2 (Testnet) milestone.
-
----
-
-## System Components
+## Architecture
 
 ```
-┌──────────────┐    request_with_callback()    ┌─────────────────────┐
-│   Consumer   │ ─────────────────────────────▶│  VRF Oracle Contract │
-│   Contract   │                               │  (Soroban/on-chain)  │
-└──────────────┘                               └─────────┬────────────┘
-                                                         │ fulfill(proof, sig)
-                                                         │
-                                               ┌─────────▼────────────┐
-                                               │   Oracle Worker Node  │
-                                               │   (off-chain, TS)     │
-                                               └─────────┬────────────┘
-                                                         │ getPublicRandomness()
-                                                         │
-                                               ┌─────────▼────────────┐
-                                               │   drand Network       │
-                                               │   (distributed BLS)   │
-                                               └──────────────────────┘
+Consumer Contract  ──request()──▶  VRF Oracle Contract  ◀──fulfill()──  Oracle Worker (off-chain)
+                                         │                                      │
+                                         │                             drand quicknet (BLS beacon)
+                                         │
+                                   on_vrf() callback
 ```
 
----
+The system has three principals: the consumer (any Soroban contract), the VRF oracle contract
+(on-chain), and a single oracle worker node that listens for events and submits proofs.
 
-## Trust Boundaries
+## Trust assumptions
 
-### 1. Single-Oracle Trust Boundary (Liveness vs. Bias)
+**drand quicknet.** We rely on the drand distributed randomness beacon for unpredictability.
+The quicknet chain uses a BLS threshold scheme across a geographically distributed committee.
+Historical uptime is >99.9%. If the chain rotates its group key, the oracle admin must call
+`rotate_drand_pk()` to update the on-chain verification key.
 
-| Property | Status | Details |
-|---|---|---|
-| **Bias resistance** | ✅ Cryptographic | Oracle cannot bias output: gamma is computed off-chain using the oracle's BLS SK, and verified on-chain via pairing check. Changing gamma would fail verification. |
-| **Liveness** | ⚠️ Single point of failure | If the oracle node goes offline, requests time out after `TIMEOUT_ROUNDS` (20 drand rounds ≈ 60 seconds). Requester can reclaim via `timeout_refund()`. |
-| **Frontrunning** | ✅ Mitigated | `round_offset ≥ 2` binds each request to a future drand round. The beacon is not yet published when the request is created, preventing pre-image knowledge. |
-| **Replay** | ✅ Prevented | `request_id` is unique and monotonically incremented. `alpha_seed` is deterministically derived from `request_id + context + drand_round + sha256(drand_sig)`. |
+**Single oracle.** This is the most important trust boundary to understand. The current design
+uses one oracle node. This means:
 
-### 2. drand Network Assumptions
+- *Bias resistance is cryptographic.* The oracle cannot choose which VRF output to produce —
+  it must use its BLS secret key on a deterministic input. The pairing check on-chain enforces
+  this. There is no way to "try different outputs" because the VRF is deterministic for a given
+  key and input.
 
-The system trusts the drand quicknet BLS threshold signature chain for the following properties:
+- *Liveness is NOT guaranteed.* If the oracle goes down, requests won't get fulfilled. We handle
+  this with a timeout mechanism: after `TIMEOUT_ROUNDS` (20 drand rounds, ~60s), the requester
+  can call `timeout_refund()` to mark the request as refunded. This is an acceptable trade-off
+  for testnet. A multi-oracle threshold scheme is planned for mainnet.
 
-- **Unpredictability**: Future round outputs are unpredictable before the round timestamp.
-- **Unbiasability**: drand uses a distributed BLS threshold scheme. No single node can bias the output.
-- **Availability**: drand has operated at >99.9% uptime historically. Even if drand is briefly unavailable, the oracle worker will wait and retry for the correct round.
+- *Censorship is possible.* The oracle could refuse to fulfill specific requests. Again, the
+  timeout protects the requester from being stuck forever. A decentralized oracle committee
+  would eliminate this risk.
 
-**Risk**: If the drand network is compromised or the chain key is rotated unexpectedly, the oracle owner must call `rotate_drand_pk()` to update the on-chain verification key.
+**`round_offset >= 2`.** Every request is bound to a drand round that hasn't happened yet
+(at least 2 rounds in the future). This prevents the oracle from knowing the beacon value
+at request time, which would allow frontrunning.
 
-### 3. Oracle Key Compromise
+## Attack surface
 
-| Scenario | Impact | Mitigation |
-|---|---|---|
-| Oracle BLS SK leaked | Attacker can forge VRF proofs, biasing output | `rotate_oracle_keys()` allows immediate key rotation without redeployment |
-| Oracle Ed25519 SK leaked | Attacker can craft valid `signature` parameter | `rotate_oracle_keys()` rotates all three key fields atomically |
-| Oracle Stellar address compromised | Attacker controls `oracle_addr.require_auth()` | `rotate_oracle_keys()` — current oracle must sign rotation |
+### Replay / duplicate fulfillment
 
-> **Note on rotation**: After key rotation, any unfulfilled requests locked to the old oracle PK will fail `fulfill()` verification (oracle key mismatch). These must be timeout-refunded by their requesters. This is an acceptable trade-off for security hardening.
+The `Fulfilled(request_id)` flag is set in storage *before* any callback is invoked (CEI pattern).
+A second `fulfill()` call for the same request will hit the "already fulfilled" check and revert.
+We test this explicitly in `test_fulfill_duplicate_rejected`.
 
----
+### Callback re-entrancy
 
-## Attack Scenarios & Mitigations
+A malicious consumer contract could try to call back into `fulfill()` from its `on_vrf` callback.
+This is blocked by two mechanisms:
 
-### A. Duplicate Fulfillment (Replay Attack)
-- **Attack**: Oracle submits `fulfill()` twice for the same request.
-- **Mitigation**: `DataKey::Fulfilled(request_id)` is checked and set atomically in the
-  **Effects** phase (before callback). Second call panics with `"already fulfilled"`.
+1. The `Fulfilled` flag is already set (Effects before Interactions), so re-entering `fulfill()`
+   would fail the "already fulfilled" check.
+2. We additionally set a transient `Fulfilling(request_id)` key as a belt-and-suspenders guard,
+   which is cleared after the callback returns.
 
-### B. Malicious Callback Re-entrancy
-- **Attack**: Consumer callback calls `fulfill()` again for the same or different request.
-- **Mitigation**: `DataKey::Fulfilling(request_id)` is set before the callback. Any
-  re-entrant `fulfill()` call will see `Fulfilled = true` and panic. This is the CEI
-  (Checks-Effects-Interactions) pattern.
+### Signature forgery
 
-### C. Invalid Signature Forgery
-- **Attack**: Malicious fulfiller tries to forge an Ed25519 or BLS signature.
-- **Mitigation**: On-chain `ed25519_verify()` and `bls12_381_pairing_check()` host functions
-  provide cryptographic guarantees. Forgery is computationally infeasible.
+Both the Ed25519 oracle signature and the BLS pairing check are verified using Soroban host
+functions (`ed25519_verify`, `bls12_381_pairing_check`). These are native implementations —
+forging either would require breaking the underlying cryptographic primitives.
 
-### D. Alpha Seed Manipulation
-- **Attack**: Oracle provides a crafted `alpha_seed` to bias the VRF output.
-- **Mitigation**: `alpha_seed` is re-derived on-chain from `request_id + context + drand_round + sha256(drand_sig)` and compared to the proof. Any manipulation fails.
+### Alpha seed manipulation
 
-### E. Timeout Griefing
-- **Attack**: Requester calls `timeout_refund()` prematurely to invalidate a valid request.
-- **Mitigation**: `timeout_refund()` checks `current_round > required_round + TIMEOUT_ROUNDS`. Ledger timestamp is consensus-determined and cannot be manipulated by the requester.
+The alpha seed is re-derived on-chain from `(request_id, context, drand_round, sha256(drand_sig))`.
+The oracle submits its claimed alpha in the proof struct, but the contract independently computes
+the expected value and compares. If they don't match, the transaction reverts.
 
-### F. Double Refund
-- **Attack**: Requester calls `timeout_refund()` twice.
-- **Mitigation**: `DataKey::Refunded(request_id)` is checked; second call panics with `"already refunded"`.
+### Timeout griefing
 
-### G. Storage Expiration During Fulfillment Window
-- **Attack**: Persistent storage entries expire before the oracle can fulfill.
-- **Mitigation**: `request_internal()` extends TTL for all entries by `PERSISTENT_TTL_EXTEND` (518,400 ledgers ≈ 30 days). `fulfill()` extends again on completion.
+A requester cannot call `timeout_refund()` early — the contract checks that the current drand round
+exceeds `required_round + TIMEOUT_ROUNDS`. The ledger timestamp is consensus-determined, so a single
+user can't manipulate it.
 
----
+### Key compromise
 
-## Out of Scope (Deferred to Mainnet / Tranche 3)
+If the oracle's BLS or Ed25519 key is compromised, the admin can call `rotate_oracle_keys()` to
+atomically replace all three key fields (BLS PK, Stellar address, Ed25519 PK). The current oracle
+must authorize the rotation — an attacker who only has the BLS key but not the Stellar account
+cannot rotate keys.
 
-| Item | Reason |
-|---|---|
-| Multi-oracle threshold scheme | Architecture change; not needed for testnet validation |
-| Fee payment / SAC token transfer | Payment rail design is separate work item |
-| drand chain migration automation | Operational concern, handled by `rotate_drand_pk()` |
-| Consumer contract formal verification | Future audit scope |
+After rotation, any pending requests that were locked to the old oracle PK will fail verification
+when the (now-compromised) attacker tries to fulfill them. Requesters should call `timeout_refund()`
+for these.
 
----
+### Storage expiration
 
-## Summary Risk Rating
+Persistent storage entries could theoretically expire before the oracle fulfills. We mitigate this
+by extending TTL on all request-related entries at creation time (`PERSISTENT_TTL_EXTEND` = 518,400
+ledgers, ~30 days). `fulfill()` extends again on completion.
 
-| Risk | Likelihood | Impact | Residual Risk |
-|---|---|---|---|
-| Oracle liveness failure | Low | Medium | Acceptable (timeout exists) |
-| Oracle key compromise | Very Low | High | Mitigated (rotation support) |
-| drand network failure | Very Low | Medium | Acceptable (retry + timeout) |
-| Cryptographic break (BLS/Ed25519) | Negligible | Critical | N/A |
-| Re-entrancy via callback | Low | High | Mitigated (CEI + Fulfilling guard) |
-| Modulo bias in derive_random | N/A | Medium | Eliminated (rejection sampling) |
+`cleanup_proof()` is a separate concern: it removes the bulky proof data to save on rent, but
+explicitly preserves the `Fulfilled` flag so that `is_fulfilled()` queries continue to work.
+
+## Known limitations (deferred to mainnet)
+
+- **Single oracle** — planned to be replaced with a threshold committee.
+- **No on-chain fee enforcement** — the `fee_amount` parameter exists in `init()` and the transfer
+  path is implemented, but we deploy with `fee_amount = 0` on testnet. Fee economics require
+  separate design work.
+- **No formal verification** — the contract has 26 unit tests and has been manually reviewed,
+  but has not undergone a formal audit. This is expected before mainnet deployment.
