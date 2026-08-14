@@ -1,121 +1,85 @@
-# Consumer Authorization Model
+# Consumer Authorization
 
-## Overview
+This doc explains how authorization works when your contract receives a VRF callback,
+and what you need to do to handle it safely.
 
-When a consumer contract calls `request_with_callback()`, it registers itself to receive
-a callback from the VRF contract after the oracle fulfills the randomness request.
+## How callbacks work
 
-This document explains the **authorization model** for that callback and how to write
-a safe consumer contract.
-
----
-
-## Who is the Caller?
-
-When `on_vrf(request_id, beta_output, alpha_seed)` is invoked on your consumer contract,
-the **caller is the VRF Oracle Contract**, not the original user who initiated the request.
+When you call `request_with_callback()`, you're telling the VRF contract: "after the oracle
+fulfills my request, call `on_vrf()` on my contract." The important thing to understand is
+that the VRF contract itself is the one making that call — not the oracle, and not the user
+who originally sent the request.
 
 ```
-User/App ──request_with_callback()──▶ VRF Contract
+User  ───request_with_callback()───▶  VRF Contract
                                            │
-Oracle ──fulfill()──▶ VRF Contract         │
-                           │               │
-                           └──on_vrf()────▶ Consumer Contract
-                                           (caller = VRF Contract)
+Oracle  ───fulfill()───▶  VRF Contract     │
+                               │           │
+                               └─on_vrf()─▶  Your Contract
+                                              (caller = VRF contract)
 ```
 
-This is by design:
-- The oracle worker does not know about individual consumer contracts.
-- The VRF contract is the authoritative source that a request was validly fulfilled.
-- Requiring the oracle to auth the callback would create tight coupling and increase attack surface.
+This matters because it determines how you should authorize the callback.
 
----
+## Authorizing the callback
 
-## How to Authorize Callbacks Correctly
-
-### ✅ Correct Pattern
-
-Store the VRF contract address at initialization and call `require_auth()` on it inside the callback:
+The right approach is to store the VRF contract's address when you initialize your consumer
+contract, then check it inside the callback:
 
 ```rust
 pub fn on_vrf(env: Env, request_id: u64, beta_output: BytesN<32>, alpha_seed: BytesN<32>) {
-    // The VRF contract must be the caller.
     let vrf_contract: Address = env.storage().instance()
         .get(&ConsumerKey::VrfContract).unwrap();
-    vrf_contract.require_auth(); // ← This is the correct authorization check
+    vrf_contract.require_auth();
 
-    // Now safe to use beta_output as randomness.
-    // ...
+    // beta_output is your random value — use it here
 }
 ```
 
-### ❌ Incorrect Pattern — Do NOT do this
+A common mistake is to try `require_auth()` on the original user or the oracle. Neither of
+those are the caller in this context, so it will always fail. Another mistake is to skip auth
+entirely — that means anyone could call `on_vrf()` with fake randomness and your contract
+would accept it.
+
+## Making callbacks idempotent
+
+Your callback should be safe to call more than once for the same `request_id`. The simplest
+way is to check whether you've already processed it:
 
 ```rust
-pub fn on_vrf(env: Env, request_id: u64, ...) {
-    // WRONG: requiring the original user's auth will ALWAYS fail
-    // because the VRF contract is the caller, not the user.
-    original_user.require_auth(); // ← This will panic every time
+let key = ConsumerKey::RandomResult(request_id);
+if env.storage().persistent().has(&key) {
+    return; // already handled
 }
+// ... process the result, then store it
+env.storage().persistent().set(&key, &beta_output);
 ```
 
-### ❌ Also Incorrect — No auth check
+In practice the VRF contract's own re-entrancy guard makes double-invocation very unlikely,
+but defensive programming is cheap insurance.
+
+## Validating request ownership
+
+If your callback function name is something generic like `on_vrf`, there's a theoretical risk
+that someone calls it with a `request_id` that belongs to a different consumer. Guard against
+this by tracking which request IDs your contract actually created:
 
 ```rust
-pub fn on_vrf(env: Env, request_id: u64, beta_output: BytesN<32>, ...) {
-    // WRONG: anyone can call this function and inject fake randomness
-    env.storage().set(&key, &beta_output); // ← Vulnerable
+let pending_key = ConsumerKey::PendingRequest(request_id);
+if !env.storage().persistent().has(&pending_key) {
+    panic!("not our request");
 }
 ```
 
----
+## Quick reference
 
-## Idempotency Requirement
+- **Auth the VRF contract**, not the user or oracle. The VRF contract is the caller.
+- **Use `beta_output`** as your random value. `alpha_seed` is the deterministic input —
+  it's included for transparency but isn't random.
+- **Don't assume timing.** The oracle might fulfill within seconds or it might take a minute.
+  Your callback should work regardless.
+- **Call `derive_random()` during the callback** if you need additional derived values.
+  After `cleanup_proof()` is called, the raw proof data is gone.
 
-Your callback MUST be idempotent — calling it twice with the same `request_id` should
-be safe. Add a guard:
-
-```rust
-if env.storage().persistent().has(&ConsumerKey::RandomResult(request_id)) {
-    panic!("already processed"); // or just return silently
-}
-```
-
-This protects against edge cases where the VRF contract's re-entrancy guard is cleared
-and a malicious contract attempts a second invocation.
-
----
-
-## Validating request_id Ownership
-
-Your contract should track which `request_id` values it initiated and reject callbacks
-for unknown IDs:
-
-```rust
-if !env.storage().persistent().has(&ConsumerKey::PendingRequest(request_id)) {
-    panic!("unknown request_id");
-}
-```
-
-This prevents an attacker from calling `on_vrf` with a `request_id` from a different
-consumer contract that happens to share your callback function name.
-
----
-
-## Summary Checklist for Consumer Contracts
-
-| Requirement | Implementation |
-|---|---|
-| ✅ Auth the VRF contract, not the user | `vrf_contract.require_auth()` inside callback |
-| ✅ Idempotency guard | Check if `RandomResult(request_id)` already exists |
-| ✅ Ownership validation | Check `PendingRequest(request_id)` was set by your contract |
-| ✅ Use `beta_output` for randomness, not `alpha_seed` | `alpha_seed` is deterministic input; `beta_output` is the random output |
-| ✅ Do not make assumptions about callback timing | The oracle may fulfill seconds or minutes after request |
-| ✅ Handle the case where cleanup_proof was called | If you need the proof later, call `derive_random()` during the callback |
-
----
-
-## Reference Implementation
-
-See [`consumer-example/src/lib.rs`](../consumer-example/src/lib.rs) for a complete
-working example that implements a dice-roll game using VRF randomness.
+For a working example, see [`consumer-example/src/lib.rs`](../consumer-example/src/lib.rs) —
+it implements a simple dice game that demonstrates all of the above.
