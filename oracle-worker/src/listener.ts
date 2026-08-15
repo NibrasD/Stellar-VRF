@@ -164,7 +164,7 @@ export async function fetchRequestContext(
       Operation.invokeContractFunction({
         contract: CONTRACT_ADDRESS,
         function: "get_context",
-        args: [nativeToScVal(Number(requestId), { type: "u64" })],
+        args: [xdr.ScVal.scvU64(new xdr.Uint64(requestId.toString()))],
       })
     )
     .setTimeout(30)
@@ -207,7 +207,7 @@ export async function isRequestFulfilled(
         Operation.invokeContractFunction({
           contract: CONTRACT_ADDRESS,
           function: "is_fulfilled",
-          args: [nativeToScVal(Number(requestId), { type: "u64" })],
+          args: [xdr.ScVal.scvU64(new xdr.Uint64(requestId.toString()))],
         })
       )
       .setTimeout(30)
