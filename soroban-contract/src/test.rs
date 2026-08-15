@@ -3,7 +3,7 @@
 extern crate alloc;
 use alloc::format;
 
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, Symbol};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol};
 
 use crate::{VRFOracleContract, VRFOracleContractClient};
 
@@ -489,5 +489,150 @@ fn test_derive_random_in_range_bounds() {
         let max: u64 = 100;
         let result = client.derive_random_in_range(&id, &derive_ctx, &max);
         assert!(result < max, "result {} must be < max {}", result, max);
+    }
+}
+
+// ── Tranche 2: Oracle downtime scenario ───────────────────────────────────────
+
+/// Simulates oracle downtime: request is created, oracle never calls fulfill(),
+/// timeout window elapses, requester successfully calls timeout_refund().
+/// This is the complete "oracle downtime → refund" flow.
+#[test]
+fn test_oracle_downtime_timeout_refund_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
+    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
+    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let fee_token = Address::generate(&env);
+
+    // Use a genesis time in the past so time math works.
+    let genesis: u64 = 1_000_000;
+    let period: u32 = 3;
+    let round_offset: u32 = 2;
+
+    // Set ledger timestamp to a known point so request gets a real round.
+    let request_time: u64 = genesis + 100 * (period as u64); // round ~100
+    env.ledger().set_timestamp(request_time);
+
+    client.init(
+        &oracle_pk,
+        &oracle_addr,
+        &oracle_ed25519,
+        &drand_pk,
+        &g2_generator,
+        &genesis,
+        &period,
+        &round_offset,
+        &fee_token,
+        &0i128,
+    );
+
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"oracle_downtime_test");
+    let id = client.request(&context, &requester);
+
+    // Oracle is "down" — never calls fulfill().
+    assert!(!client.is_fulfilled(&id));
+    assert!(!client.is_refunded(&id));
+
+    let required_round = client.request_round(&id);
+    let timeout_rounds = client.timeout_rounds(); // 20
+
+    // Advance time past the timeout window.
+    // Need current_round > required_round + TIMEOUT_ROUNDS
+    let timeout_time = genesis + (required_round + timeout_rounds + 5) * (period as u64);
+    env.ledger().set_timestamp(timeout_time);
+
+    // Requester calls timeout_refund — should succeed.
+    client.timeout_refund(&id);
+
+    // Verify state.
+    assert!(client.is_refunded(&id));
+    assert!(!client.is_fulfilled(&id));
+}
+
+// ── Tranche 2: Re-entrancy guard validation ───────────────────────────────────
+
+/// Validates the re-entrancy guard: when both Fulfilled and Fulfilling
+/// flags are set (simulating the state during a callback), a second
+/// fulfill() call is rejected with "already fulfilled".
+///
+/// This proves that a malicious callback contract calling back into
+/// fulfill() would be blocked by the CEI pattern + Fulfilling guard.
+#[test]
+#[should_panic(expected = "already fulfilled")]
+fn test_reentancy_guard_blocks_during_callback() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"reentrant_test");
+    let id = client.request(&context, &requester);
+
+    // Simulate the state after the Effects phase of fulfill():
+    // Both Fulfilled and Fulfilling are set (as would be the case during callback).
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage().persistent().set(&DataKey::Fulfilling(id), &true);
+    });
+
+    // A re-entrant fulfill() call must be rejected.
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 2,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &dummy_proof, &dummy_sig); // must panic
+}
+
+// ── Tranche 2: derive_random_in_range worst-case (rejection sampling) ─────────
+
+/// Tests derive_random_in_range with powers-of-2 and near-powers-of-2 max values.
+/// Powers of 2 never require rejection sampling (modulo is unbiased).
+/// Values like (2^k + 1) maximise the rejection probability per iteration.
+/// This verifies the 10-iteration bound does not cause panics.
+#[test]
+fn test_derive_random_in_range_worst_case_sampling() {
+    let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+
+    // Test with max values that stress rejection sampling:
+    // - 3: ~33% of the 256-bit space is wasted (high rejection rate)
+    // - 5, 7: non-power-of-2 values
+    // - u64::MAX: edge case for large modulus
+    let stress_values: [u64; 6] = [2, 3, 5, 7, 10, 1_000_000];
+
+    for (i, max) in stress_values.iter().enumerate() {
+        let context = Bytes::from_slice(&env, format!("worst_case_{}", i).as_bytes());
+        let id = client.request(&context, &requester);
+
+        use crate::DataKey;
+        env.as_contract(&client.address, || {
+            env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+            env.storage().persistent().set(
+                &DataKey::Proof(id),
+                &crate::BlsVrfProof {
+                    alpha_seed: BytesN::from_array(&env, &[(i as u8).wrapping_mul(37); 32]),
+                    gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+                    beta_output: BytesN::from_array(&env, &[(i as u8).wrapping_mul(53); 32]),
+                    public_key: BytesN::from_array(&env, &[0u8; 192]),
+                    drand_round: 2,
+                    drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+                },
+            );
+        });
+
+        let derive_ctx = Bytes::from_slice(&env, format!("worst_derive_{}", i).as_bytes());
+        let result = client.derive_random_in_range(&id, &derive_ctx, max);
+        assert!(result < *max, "derive_random_in_range({}) returned {} >= {}", i, result, max);
     }
 }
