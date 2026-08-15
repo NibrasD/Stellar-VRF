@@ -30,7 +30,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, Symbol,
+    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol,
 };
 
 /// Storage keys for the consumer contract.
@@ -87,22 +87,19 @@ impl VrfConsumerContract {
             &env,
             &context_tag.to_array(),
         ));
-        context.append(&soroban_sdk::Bytes::from_slice(
-            &env,
-            &player.to_string().as_bytes(),
-        ));
 
         // Call the VRF contract to request randomness with a callback.
         // The VRF contract will call `on_vrf(request_id, beta, alpha)` on this contract.
+        let self_addr = env.current_contract_address();
         let request_id: u64 = env.invoke_contract(
             &vrf_contract,
             &Symbol::new(&env, "request_with_callback"),
             soroban_sdk::vec![
                 &env,
-                context.into(),
-                env.current_contract_address().into(),
-                env.current_contract_address().into(),
-                Symbol::new(&env, "on_vrf").into(),
+                context.into_val(&env),
+                self_addr.clone().into_val(&env),
+                self_addr.into_val(&env),
+                Symbol::new(&env, "on_vrf").into_val(&env),
             ],
         );
 
@@ -169,6 +166,7 @@ impl VrfConsumerContract {
             .persistent()
             .remove(&ConsumerKey::PendingRequest(request_id));
 
+        // Emit event for the dice roll result.
         env.events().publish(
             (soroban_sdk::symbol_short!("rolled"),),
             (request_id, roll),
