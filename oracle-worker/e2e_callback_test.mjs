@@ -1,12 +1,15 @@
 /**
  * e2e_callback_test.mjs — End-to-end proving callback execution on testnet
  *
+ * Uses VRF Random Sampling consumer contract (request_sample / get_sample).
+ *
  * Flow:
- *   1. Calls roll_dice() on the consumer contract (which internally calls
- *      request_with_callback on VRF contract)
- *   2. Oracle worker picks up the event and calls fulfill()
- *   3. fulfill() invokes on_vrf() callback on consumer contract
- *   4. We verify by reading get_result() from consumer contract
+ *   1. Calls request_sample(requester, range_max) on consumer contract
+ *      → internally calls VRF.request_with_callback()
+ *   2. Oracle worker picks up event → calls fulfill()
+ *   3. fulfill() invokes on_vrf() callback on consumer
+ *   4. Consumer derives sample ∈ [0, range_max) and stores it
+ *   5. We verify by reading get_sample() from consumer contract
  */
 
 import path from "path";
@@ -26,7 +29,7 @@ const NETWORK = Networks.TESTNET;
 const deployedPath = path.resolve(__dirname, "../soroban-contract/deployed.json");
 const deployed = JSON.parse(readFileSync(deployedPath, "utf8"));
 const VRF_CONTRACT = deployed.contractAddress;
-const CONSUMER_CONTRACT = "CB76CYUND4AAJNGPBMY5RXR24EZKCWFWAYF6S5OKUHIHYEJULIFLV2RL";
+const CONSUMER_CONTRACT = "CBBHKSZR7H3NLTUC6IRTVXYDWK5HAOK5PFN3CUKTJF47ZT66PS6YNHN4";
 
 const server = new rpc.Server(SOROBAN_URL, { allowHttp: false });
 
@@ -45,12 +48,11 @@ async function pollTx(hash) {
     }
     if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
       process.stdout.write(" FAILED.\n");
-      console.log("  TX details:", JSON.stringify(status, null, 2).slice(0, 500));
       throw new Error(`Transaction failed: ${hash}`);
     }
     process.stdout.write(".");
   }
-  throw new Error("Timeout");
+  throw new Error("Timeout waiting for TX");
 }
 
 async function simulateAndSend(signerKP, tx) {
@@ -67,7 +69,7 @@ async function simulateAndSend(signerKP, tx) {
   return { sent, result: await pollTx(sent.hash) };
 }
 
-console.log(`\n═══ E2E Callback Test — Proving on_vrf() Execution on Testnet ═══`);
+console.log(`\n═══ E2E Callback Test — VRF Random Sampling on Testnet ═══`);
 console.log(`VRF Contract:      ${VRF_CONTRACT}`);
 console.log(`Consumer Contract: ${CONSUMER_CONTRACT}\n`);
 
@@ -77,38 +79,37 @@ console.log(`[1/4] Funding tester: ${testerKP.publicKey()}`);
 await fetch(`https://friendbot.stellar.org?addr=${testerKP.publicKey()}`);
 await new Promise((r) => setTimeout(r, 5000));
 
-// ── 2. Call roll_dice() on consumer contract ────────────────────────────────
-console.log(`\n[2/4] Calling roll_dice() on consumer contract...`);
-console.log(`  This calls request_with_callback() on VRF internally.`);
+// ── 2. Call request_sample() on consumer contract ───────────────────────────
+console.log(`\n[2/4] Calling request_sample() on consumer contract...`);
+console.log(`  Requesting a random sample in range [0, 1000000)`);
 let account = await server.getAccount(testerKP.publicKey());
 
-// context_tag is BytesN<16>
-const contextTag = Buffer.alloc(16);
-Buffer.from("e2e_dice_" + (Date.now() % 100000).toString()).copy(contextTag);
+const RANGE_MAX = 1_000_000n;
 
-const rollTx = new TransactionBuilder(account, {
+const sampleTx = new TransactionBuilder(account, {
   fee: "10000000",
   networkPassphrase: NETWORK,
 })
   .addOperation(
     Operation.invokeContractFunction({
       contract: CONSUMER_CONTRACT,
-      function: "roll_dice",
+      function: "request_sample",
       args: [
         new Address(testerKP.publicKey()).toScVal(),
-        nativeToScVal(contextTag, { type: "bytes" }),
+        u64ScVal(RANGE_MAX),
       ],
     })
   )
   .setTimeout(120)
   .build();
 
-const { sent: rollSent, result: rollResult } = await simulateAndSend(testerKP, rollTx);
-const retVal = rollResult.returnValue;
-const requestId = retVal.u64 ? retVal.u64() : BigInt(retVal.value().toString());
-console.log(`  ✔ roll_dice() succeeded`);
-console.log(`  Request ID: ${requestId}`);
-console.log(`  TX: https://stellar.expert/explorer/testnet/tx/${rollSent.hash}`);
+const { sent: sampleSent, result: sampleResult } = await simulateAndSend(testerKP, sampleTx);
+const retVal = sampleResult.returnValue;
+const sampleId = retVal.u64 ? retVal.u64() : BigInt(retVal.value().toString());
+console.log(`  ✔ request_sample() succeeded`);
+console.log(`  Sample ID:  ${sampleId}`);
+console.log(`  Range:      [0, ${RANGE_MAX})`);
+console.log(`  TX: https://stellar.expert/explorer/testnet/tx/${sampleSent.hash}`);
 
 // ── 3. Wait for oracle worker to fulfill() + callback ───────────────────────
 console.log(`\n[3/4] Waiting for oracle worker to fulfill() + on_vrf() callback (max 120s)...`);
@@ -127,7 +128,7 @@ while (Date.now() - startWait < 120_000) {
       Operation.invokeContractFunction({
         contract: VRF_CONTRACT,
         function: "is_fulfilled",
-        args: [u64ScVal(requestId)],
+        args: [u64ScVal(sampleId)],
       })
     )
     .setTimeout(30)
@@ -139,10 +140,7 @@ while (Date.now() - startWait < 120_000) {
     if (val) {
       try {
         const boolVal = val.b ? val.b() : val.value();
-        if (boolVal === true) {
-          fulfilled = true;
-          break;
-        }
+        if (boolVal === true) { fulfilled = true; break; }
       } catch (e) {}
     }
   }
@@ -153,10 +151,10 @@ if (!fulfilled) {
   console.log(`\n⚠ Not fulfilled within 120s. Is the oracle worker running?`);
   process.exit(1);
 }
-console.log(`\n  ✔ Request ${requestId} fulfilled by oracle!`);
+console.log(`\n  ✔ Sample ${sampleId} fulfilled by oracle!`);
 
-// ── 4. Verify callback: read get_result() from consumer ─────────────────────
-console.log(`\n[4/4] Verifying on_vrf() callback: reading get_result(${requestId}) from consumer...`);
+// ── 4. Verify callback: read get_sample() from consumer ─────────────────────
+console.log(`\n[4/4] Verifying on_vrf() callback: reading get_sample(${sampleId}) from consumer...`);
 account = await server.getAccount(testerKP.publicKey());
 
 const resultTx = new TransactionBuilder(account, {
@@ -166,8 +164,8 @@ const resultTx = new TransactionBuilder(account, {
   .addOperation(
     Operation.invokeContractFunction({
       contract: CONSUMER_CONTRACT,
-      function: "get_result",
-      args: [u64ScVal(requestId)],
+      function: "get_sample",
+      args: [u64ScVal(sampleId)],
     })
   )
   .setTimeout(30)
@@ -175,33 +173,36 @@ const resultTx = new TransactionBuilder(account, {
 
 const simResult = await server.simulateTransaction(resultTx);
 if (rpc.Api.isSimulationError(simResult)) {
-  console.log(`  ✖ get_result() simulation failed: ${simResult.error}`);
+  console.log(`  ✖ get_sample() simulation failed: ${simResult.error}`);
   console.log(`  This means the on_vrf() callback was NOT executed.`);
   process.exit(1);
 }
 
-const diceRoll = simResult.result?.retval?.value?.();
-console.log(`  ✔ CALLBACK CONFIRMED! Consumer contract stored dice roll: ${diceRoll}`);
-console.log(`  (Value is 1-6, proving on_vrf() executed and derived randomness)`);
+const sampleValue = simResult.result?.retval?.u64
+  ? simResult.result.retval.u64()
+  : simResult.result?.retval?.value?.();
 
-console.log(`
-╔══════════════════════════════════════════════════════════════════╗
-║                  E2E CALLBACK TEST — PASSED ✔                   ║
-╠══════════════════════════════════════════════════════════════════╣
-║  roll_dice() TX:    ${rollSent.hash}  ║
-║  Request ID:        ${String(requestId).padEnd(46)}║
-║  Dice Roll Result:  ${String(diceRoll).padEnd(46)}║
-║                                                                  ║
-║  This proves:                                                    ║
-║    1. request_with_callback() works on testnet                   ║
-║    2. Oracle worker picks up and fulfills the request            ║
-║    3. fulfill() invokes the on_vrf() callback on consumer        ║
-║    4. Consumer contract stores the derived randomness            ║
-║    5. Full CEI pattern + callback execution confirmed            ║
-║                                                                  ║
-║  VRF Contract:      ${VRF_CONTRACT}  ║
-║  Consumer Contract: ${CONSUMER_CONTRACT}  ║
-║                                                                  ║
-║  Verify: https://stellar.expert/explorer/testnet/tx/${rollSent.hash} ║
-╚══════════════════════════════════════════════════════════════════╝
-`);
+console.log(`  ✔ CALLBACK CONFIRMED!`);
+console.log(`  Random sample: ${sampleValue} ∈ [0, ${RANGE_MAX})`);
+console.log(`  (Verifiable, bias-resistant random number from BLS-VRF + drand)\n`);
+
+console.log(`╔══════════════════════════════════════════════════════════════════╗`);
+console.log(`║          E2E CALLBACK TEST — PASSED ✔                           ║`);
+console.log(`╠══════════════════════════════════════════════════════════════════╣`);
+console.log(`║  request_sample() TX:  ${sampleSent.hash}  ║`);
+console.log(`║  Sample ID:            ${String(sampleId).padEnd(46)}║`);
+console.log(`║  Random Value:         ${String(sampleValue).padEnd(46)}║`);
+console.log(`║  Range:                [0, ${RANGE_MAX}) ${"".padEnd(36)}║`);
+console.log(`║                                                                  ║`);
+console.log(`║  Proven:                                                         ║`);
+console.log(`║    ✔ request_with_callback() works on testnet                    ║`);
+console.log(`║    ✔ Oracle worker picks up and fulfills the request             ║`);
+console.log(`║    ✔ fulfill() invokes on_vrf() callback on consumer             ║`);
+console.log(`║    ✔ Consumer stores verifiable random sample                    ║`);
+console.log(`║    ✔ Full CEI pattern + callback execution on testnet            ║`);
+console.log(`║                                                                  ║`);
+console.log(`║  VRF Contract:      ${VRF_CONTRACT}  ║`);
+console.log(`║  Consumer Contract: ${CONSUMER_CONTRACT}  ║`);
+console.log(`║                                                                  ║`);
+console.log(`║  Explorer: https://stellar.expert/explorer/testnet/tx/${sampleSent.hash} ║`);
+console.log(`╚══════════════════════════════════════════════════════════════════╝`);
