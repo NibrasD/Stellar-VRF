@@ -58,11 +58,16 @@ We test this explicitly in `test_fulfill_duplicate_rejected`.
 ### Callback re-entrancy
 
 A malicious consumer contract could try to call back into `fulfill()` from its `on_vrf` callback.
-This is blocked by two mechanisms:
+This is blocked by **three independent layers of defense**:
 
-1. The `Fulfilled` flag is already set (Effects before Interactions), so re-entering `fulfill()`
+1. **Soroban VM host-level guard.** The Soroban runtime itself prevents a contract from being
+   re-entered during its execution. Any cross-contract call that would re-enter the same
+   contract panics with `"Contract re-entry is not allowed"`. This was confirmed by our
+   cross-contract re-entrancy test using a `MaliciousConsumer` contract.
+2. **CEI pattern (application layer).** The `Fulfilled` flag is set *before* the callback is
+   invoked (Effects before Interactions), so even without the VM guard, re-entering `fulfill()`
    would fail the "already fulfilled" check.
-2. We additionally set a transient `Fulfilling(request_id)` key as a belt-and-suspenders guard,
+3. **Fulfilling transient key (belt-and-suspenders).** A transient `Fulfilling(request_id)` key
    which is cleared after the callback returns.
 
 ### Signature forgery
