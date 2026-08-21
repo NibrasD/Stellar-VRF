@@ -953,7 +953,7 @@ fn request_internal(
 /// - `request_id: u64` — the VRF request identifier
 /// - `beta_output: BytesN<32>` — the verifiable random output
 /// - `alpha_seed: BytesN<32>` — the deterministic input seed (for auditability)
-fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &BlsVrfProof) {
+pub(crate) fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &BlsVrfProof) {
     if !env
         .storage()
         .persistent()
