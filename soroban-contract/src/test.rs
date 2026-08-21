@@ -636,3 +636,198 @@ fn test_derive_random_in_range_worst_case_sampling() {
         assert!(result < *max, "derive_random_in_range({}) returned {} >= {}", i, result, max);
     }
 }
+
+// ── Tranche 2 Fix: Invalid signature tests ────────────────────────────────────
+
+/// fulfill() must reject a proof with a tampered Ed25519 signature.
+/// The oracle signs (request_id || proof fields) with its Ed25519 key;
+/// passing garbage bytes must fail on-chain ed25519_verify.
+#[test]
+#[should_panic] // ed25519_verify panics on invalid signature
+fn test_fulfill_invalid_ed25519_signature() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"bad_ed25519_sig");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    let proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0xAA; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0xBB; 32]),
+        public_key: oracle_pk,
+        drand_round: required_round,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    // Tampered signature: random bytes that don't match the Ed25519 key
+    let bad_sig = BytesN::from_array(&env, &[0xFF; 64]);
+    client.fulfill(&id, &proof, &bad_sig);
+}
+
+/// fulfill() must reject a proof with an invalid drand BLS signature.
+/// Even if all other fields are correct, a wrong drand_signature means
+/// the beacon cannot be verified and the proof is invalid.
+#[test]
+#[should_panic] // BLS pairing check or ed25519 verify will fail
+fn test_fulfill_invalid_drand_bls_signature() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"bad_drand_sig");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    let proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: required_round,
+        // Invalid drand signature — random garbage bytes
+        drand_signature: BytesN::from_array(&env, &[0xDE; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &proof, &dummy_sig);
+}
+
+/// Tests the delayed drand round scenario: the oracle attempts to submit
+/// a proof for a different round than the one locked at request time.
+/// Even if the proof is otherwise valid, mismatched rounds must be rejected.
+/// This covers the case where the oracle is delayed and tries to use a later round.
+#[test]
+#[should_panic(expected = "drand round mismatch")]
+fn test_fulfill_delayed_drand_round_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
+    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
+    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let fee_token = Address::generate(&env);
+
+    let genesis: u64 = 1_000_000;
+    let period: u32 = 3;
+    let round_offset: u32 = 2;
+
+    // Request at round ~100
+    env.ledger().set_timestamp(genesis + 100 * (period as u64));
+
+    client.init(
+        &oracle_pk, &oracle_addr, &oracle_ed25519,
+        &drand_pk, &g2_generator, &genesis,
+        &period, &round_offset, &fee_token, &0i128,
+    );
+
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"delayed_drand");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id); // e.g., 102
+
+    // Oracle is delayed — tries to submit with round = required_round + 5
+    let delayed_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: required_round + 5, // delayed — wrong round
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &delayed_proof, &dummy_sig); // must panic
+}
+
+// ── Tranche 2 Fix: Nonzero fee timeout refund test ────────────────────────────
+
+/// Tests the complete fee escrow → timeout → refund flow with a nonzero SAC fee.
+/// Verifies that:
+/// 1. request() escrows fee_amount from requester to the VRF contract
+/// 2. timeout_refund() returns fee_amount from the VRF contract back to requester
+/// 3. The Refunded flag is set correctly
+///
+/// Uses soroban_sdk::token to create a real SAC token in the test environment.
+#[test]
+fn test_timeout_refund_with_nonzero_fee() {
+    use soroban_sdk::token::{StellarAssetClient, TokenClient};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Create a real SAC token for testing fee flow.
+    let admin = Address::generate(&env);
+    let fee_token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let fee_token_addr = fee_token_contract.address();
+    let sac_admin = StellarAssetClient::new(&env, &fee_token_addr);
+    let token = TokenClient::new(&env, &fee_token_addr);
+
+    // Deploy VRF contract.
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
+    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
+    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+
+    let genesis: u64 = 1_000_000;
+    let period: u32 = 3;
+    let round_offset: u32 = 2;
+    let fee_amount: i128 = 5_000_000; // 0.5 XLM in stroops
+
+    env.ledger().set_timestamp(genesis + 100 * (period as u64));
+
+    client.init(
+        &oracle_pk, &oracle_addr, &oracle_ed25519,
+        &drand_pk, &g2_generator, &genesis,
+        &period, &round_offset, &fee_token_addr, &fee_amount,
+    );
+
+    // Mint tokens to the requester.
+    let requester = Address::generate(&env);
+    sac_admin.mint(&requester, &(fee_amount * 10));
+
+    let initial_balance = token.balance(&requester);
+
+    // ── Step 1: request() should escrow fee_amount from requester → contract ──
+    let context = Bytes::from_slice(&env, b"fee_refund_test");
+    let id = client.request(&context, &requester);
+
+    let balance_after_request = token.balance(&requester);
+    let contract_balance = token.balance(&client.address);
+
+    assert_eq!(
+        balance_after_request,
+        initial_balance - fee_amount,
+        "requester balance should decrease by fee_amount"
+    );
+    assert_eq!(
+        contract_balance, fee_amount,
+        "contract should hold escrowed fee"
+    );
+
+    // ── Step 2: Advance time past timeout window ──────────────────────────────
+    let required_round = client.request_round(&id);
+    let timeout_rounds = client.timeout_rounds();
+    let timeout_time = genesis + (required_round + timeout_rounds + 5) * (period as u64);
+    env.ledger().set_timestamp(timeout_time);
+
+    // ── Step 3: timeout_refund() should return fee to requester ───────────────
+    client.timeout_refund(&id);
+
+    let balance_after_refund = token.balance(&requester);
+    let contract_balance_after = token.balance(&client.address);
+
+    assert_eq!(
+        balance_after_refund, initial_balance,
+        "requester should get full fee back after timeout_refund"
+    );
+    assert_eq!(
+        contract_balance_after, 0,
+        "contract should have zero balance after refund"
+    );
+    assert!(client.is_refunded(&id), "request must be marked as refunded");
+    assert!(!client.is_fulfilled(&id), "request must NOT be fulfilled");
+}

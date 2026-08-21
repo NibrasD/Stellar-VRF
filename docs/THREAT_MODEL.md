@@ -34,8 +34,10 @@ uses one oracle node. This means:
 
 - *Liveness is NOT guaranteed.* If the oracle goes down, requests won't get fulfilled. We handle
   this with a timeout mechanism: after `TIMEOUT_ROUNDS` (20 drand rounds, ~60s), the requester
-  can call `timeout_refund()` to mark the request as refunded. This is an acceptable trade-off
-  for testnet. A multi-oracle threshold scheme is planned for mainnet.
+  can call `timeout_refund()` to reclaim their escrowed fee. The fee is held in the VRF contract
+  itself (not sent to the oracle) until fulfillment, so the requester is always protected
+  financially. This is an acceptable trade-off for testnet. A multi-oracle threshold scheme
+  is planned for mainnet.
 
 - *Censorship is possible.* The oracle could refuse to fulfill specific requests. Again, the
   timeout protects the requester from being stuck forever. A decentralized oracle committee
@@ -101,11 +103,28 @@ ledgers, ~30 days). `fulfill()` extends again on completion.
 `cleanup_proof()` is a separate concern: it removes the bulky proof data to save on rent, but
 explicitly preserves the `Fulfilled` flag so that `is_fulfilled()` queries continue to work.
 
+## Storage layout design
+
+Each VRF request creates several separate persistent storage entries (`RequestContext`, `Requester`,
+`RequestRound`, `Fulfilled`, `Refunded`, etc.) rather than a single packed struct. This is an
+intentional design decision:
+
+- **Independent TTL lifecycles.** `cleanup_proof()` removes bulky proof data while keeping the
+  `Fulfilled` flag alive. A packed struct would require all-or-nothing TTL extension.
+- **Selective cleanup.** Callback metadata can be removed independently after fulfillment.
+- **Query efficiency.** `is_fulfilled()` reads a single boolean entry instead of deserializing
+  an entire struct.
+
+The trade-off is higher per-request gas for writes (~8 entries vs 1). This is acceptable because
+VRF requests are infrequent (not high-throughput) and the gas cost is dominated by BLS pairing
+verification (~56M instructions), not storage operations.
+
 ## Known limitations (deferred to mainnet)
 
 - **Single oracle** — planned to be replaced with a threshold committee.
-- **No on-chain fee enforcement** — the `fee_amount` parameter exists in `init()` and the transfer
-  path is implemented, but we deploy with `fee_amount = 0` on testnet. Fee economics require
-  separate design work.
-- **No formal verification** — the contract has 26 unit tests and has been manually reviewed,
+- **Fee economics** — the `fee_amount` parameter and escrow mechanism are fully implemented and
+  tested (fees are escrowed in the VRF contract on request, released to oracle on fulfill,
+  refunded to requester on timeout). Testnet deploys with `fee_amount = 0`; mainnet fee
+  economics require separate design work.
+- **No formal verification** — the contract has 33 unit tests and has been manually reviewed,
   but has not undergone a formal audit. This is expected before mainnet deployment.

@@ -82,4 +82,4 @@ if !env.storage().persistent().has(&pending_key) {
   After `cleanup_proof()` is called, the raw proof data is gone.
 
 For a working example, see [`consumer-example/src/lib.rs`](../consumer-example/src/lib.rs) —
-it implements a simple dice game that demonstrates all of the above.
+it implements a random sampling contract that demonstrates all of the above.
