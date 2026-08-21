@@ -238,6 +238,20 @@ impl VRFOracleContract {
             PERSISTENT_TTL_THRESHOLD,
             PERSISTENT_TTL_EXTEND,
         );
+
+        // Refund escrowed fee back to requester.
+        let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
+        if fee_amount > 0 {
+            let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
+            let contract_addr = env.current_contract_address();
+            let transfer_fn = Symbol::new(&env, "transfer");
+            let mut args = Vec::<Val>::new(&env);
+            args.push_back(contract_addr.into_val(&env));
+            args.push_back(requester.clone().into_val(&env));
+            args.push_back(fee_amount.into_val(&env));
+            env.invoke_contract::<Val>(&fee_token, &transfer_fn, args);
+        }
+
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         env.events().publish((symbol_short!("timeout"),), (request_id, requester));
@@ -418,6 +432,19 @@ impl VRFOracleContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
+        // Release escrowed fee to oracle upon successful fulfillment.
+        let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
+        if fee_amount > 0 {
+            let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
+            let contract_addr = env.current_contract_address();
+            let transfer_fn = Symbol::new(&env, "transfer");
+            let mut args = Vec::<Val>::new(&env);
+            args.push_back(contract_addr.into_val(&env));
+            args.push_back(oracle_addr.clone().into_val(&env));
+            args.push_back(fee_amount.into_val(&env));
+            env.invoke_contract::<Val>(&fee_token, &transfer_fn, args);
+        }
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────────
         // Re-entrancy guard: set Fulfilling flag before callback, clear after.
@@ -804,16 +831,17 @@ fn request_internal(
 ) -> u64 {
     requester.require_auth();
 
-    // Charge per-request fee via SAC token transfer (requester → oracle).
+    // Charge per-request fee via SAC token transfer (requester → contract escrow).
+    // Fee is held in escrow until fulfill() (released to oracle) or timeout_refund() (returned to requester).
     let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
     if fee_amount > 0 {
         let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
-        let oracle_addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
-        // SAC token transfer: invoke the token contract's `transfer` function.
+        let contract_addr = env.current_contract_address();
+        // SAC token transfer: requester → VRF contract (escrow).
         let transfer_fn = Symbol::new(env, "transfer");
         let mut args = Vec::<Val>::new(env);
         args.push_back(requester.clone().into_val(env));
-        args.push_back(oracle_addr.into_val(env));
+        args.push_back(contract_addr.into_val(env));
         args.push_back(fee_amount.into_val(env));
         env.invoke_contract::<Val>(&fee_token, &transfer_fn, args);
     }
