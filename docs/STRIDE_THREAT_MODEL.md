@@ -148,9 +148,10 @@ bounded to 10 iterations for deterministic costs.
 accumulate but are never fulfilled.
 
 **Remediation (Denial_of_Service.1.R.1):** `timeout_refund()` allows the requester to
-reclaim their request after `TIMEOUT_ROUNDS` (20 drand rounds, ~60 seconds). This limits
-the impact to temporary unavailability. Long-term, a multi-oracle threshold scheme is
-planned for mainnet.
+reclaim their escrowed fee and mark the request as refunded after `TIMEOUT_ROUNDS`
+(20 drand rounds, ~60 seconds). The fee is held in the VRF contract itself (not sent
+to the oracle) until fulfillment, ensuring the requester is always financially protected.
+Long-term, a multi-oracle threshold scheme is planned for mainnet.
 
 ### Denial_of_Service.2 — Spam requests exhaust oracle gas budget
 
@@ -161,8 +162,10 @@ planned for mainnet.
 the oracle to spend gas on `fulfill()` for each one.
 
 **Remediation (Denial_of_Service.2.R.1):** The `fee_token` and `fee_amount` parameters
-in `init()` allow charging per-request fees via SAC token transfer. Currently set to 0
-for testnet; will be configured for mainnet to make spam economically costly.
+in `init()` charge per-request fees via SAC token transfer into escrow. The fee is held
+in the VRF contract and released to the oracle only upon successful fulfillment, or
+refunded to the requester on timeout. Currently set to 0 for testnet; will be configured
+for mainnet to make spam economically costly.
 
 ### Denial_of_Service.3 — Storage entries expire before oracle can fulfill
 
@@ -217,4 +220,4 @@ mark requests as refunded, denying the legitimate requester their refund.
 
 **Remediation (Elevation.3.R.1):** `timeout_refund()` calls `requester.require_auth()`
 where `requester` is the original address that created the request. Only the original
-requester can trigger the refund state transition.
+requester can trigger the refund and reclaim the escrowed fee.
