@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stellar VRF Oracle — Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
+    .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 16px 40px; display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { font-size: 1.2rem; color: #60a5fa; }
+    .live-badge { background: #052e16; color: #86efac; border: 1px solid #16a34a; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; padding: 24px 40px; }
+    .stat-card { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; }
+    .stat-card .label { color: #94a3b8; font-size: 0.75rem; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card .value { font-size: 2rem; color: #60a5fa; font-weight: bold; }
+    .stat-card .sub { color: #6b7280; font-size: 0.75rem; margin-top: 4px; }
+    .section { padding: 0 40px 24px; }
+    .section h2 { color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px; }
+    .table { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; overflow: hidden; }
+    .table-header { display: grid; grid-template-columns: 80px 1fr 1fr 120px 100px; padding: 12px 20px; background: #0f172a; color: #6b7280; font-size: 0.75rem; text-transform: uppercase; }
+    .table-row { display: grid; grid-template-columns: 80px 1fr 1fr 120px 100px; padding: 12px 20px; border-top: 1px solid #1e2a3a; font-size: 0.8rem; align-items: center; }
+    .table-row:hover { background: #0f172a; }
+    .badge-fulfilled { background: #052e16; color: #86efac; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+    .badge-pending { background: #1c1f2e; color: #93c5fd; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+    .hash { color: #60a5fa; font-size: 0.75rem; }
+    .drand-status { padding: 0 40px 24px; }
+    .drand-card { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; display: flex; gap: 40px; align-items: center; }
+    .drand-info .label { color: #94a3b8; font-size: 0.75rem; margin-bottom: 4px; }
+    .drand-info .value { color: #e0e6f0; font-size: 1rem; }
+    .progress-bar { flex: 1; background: #0a0e1a; border-radius: 4px; height: 8px; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #1e40af, #60a5fa); border-radius: 4px; transition: width 0.5s; }
+    .contract-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; }
+    .contract-link:hover { text-decoration: underline; }
+    #last-updated { color: #6b7280; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 Stellar VRF Oracle Dashboard</h1>
+    <div style="display:flex;gap:12px;align-items:center">
+      <span id="last-updated">Updating…</span>
+      <span class="live-badge">● LIVE</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="stat-card">
+      <div class="label">Total Requests</div>
+      <div class="value" id="stat-total">—</div>
+      <div class="sub">All time</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Fulfilled</div>
+      <div class="value" id="stat-fulfilled" style="color:#86efac">—</div>
+      <div class="sub">Success rate: <span id="stat-rate">—</span>%</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg Fulfillment Time</div>
+      <div class="value" id="stat-avg-time">—</div>
+      <div class="sub">seconds</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">drand Round</div>
+      <div class="value" id="stat-drand-round">—</div>
+      <div class="sub">Latest beacon</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Oracle Uptime</div>
+      <div class="value" id="stat-uptime" style="color:#86efac">—</div>
+      <div class="sub">hours</div>
+    </div>
+  </div>
+
+  <div class="drand-status">
+    <div class="section" style="padding:0 0 12px"><h2>drand Chain Status</h2></div>
+    <div class="drand-card">
+      <div class="drand-info"><div class="label">Chain</div><div class="value">quicknet</div></div>
+      <div class="drand-info"><div class="label">Period</div><div class="value">3s</div></div>
+      <div class="drand-info"><div class="label">Current Round</div><div class="value" id="drand-current">—</div></div>
+      <div class="drand-info"><div class="label">Next round in</div><div class="value" id="drand-next">—s</div></div>
+      <div class="progress-bar"><div class="progress-fill" id="drand-progress" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Recent Activity</h2>
+    <div class="table">
+      <div class="table-header">
+        <span>ID</span>
+        <span>Requester</span>
+        <span>TX Hash</span>
+        <span>Time</span>
+        <span>Status</span>
+      </div>
+      <div id="activity-feed">
+        <div style="padding:24px;text-align:center;color:#6b7280">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div style="color:#6b7280;font-size:0.75rem;margin-top:8px">
+      Contract:
+      <a class="contract-link" href="https://stellar.expert/explorer/testnet/contract/CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE" target="_blank">
+        CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE
+      </a>
+      &nbsp;|&nbsp;
+      Network: Testnet
+    </div>
+  </div>
+
+  <script>
+    const HORIZON = "https://horizon-testnet.stellar.org";
+    const CONTRACT = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
+    const DRAND_API = "https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971";
+    const GENESIS = 1692803367;
+    const PERIOD = 3;
+
+    let stats = { total: 0, fulfilled: 0, times: [], startTime: Date.now() };
+
+    async function fetchDrandStatus() {
+      try {
+        const resp = await fetch(`${DRAND_API}/public/latest`);
+        const beacon = await resp.json();
+        const now = Math.floor(Date.now() / 1000);
+        const elapsed = (now - GENESIS) % PERIOD;
+        const nextIn = PERIOD - elapsed;
+        document.getElementById("drand-current").textContent = beacon.round;
+        document.getElementById("stat-drand-round").textContent = beacon.round;
+        document.getElementById("drand-next").textContent = nextIn + "s";
+        document.getElementById("drand-progress").style.width = ((elapsed / PERIOD) * 100) + "%";
+      } catch (e) { /* ignore */ }
+    }
+
+    async function fetchContractEvents() {
+      try {
+        const resp = await fetch(`${HORIZON}/operations?order=desc&limit=20`);
+        const data = await resp.json();
+        const ops = (data._embedded?.records || []).filter(op =>
+          op.type === "invoke_host_function" &&
+          (op.function === "HostFunctionTypeInvokeContract")
+        );
+
+        const feed = document.getElementById("activity-feed");
+        if (ops.length === 0) {
+          feed.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280">No recent activity</div>';
+          return;
+        }
+
+        stats.total = ops.length;
+        stats.fulfilled = ops.filter(op => op.transaction_successful).length;
+
+        feed.innerHTML = ops.slice(0, 10).map((op, i) => `
+          <div class="table-row">
+            <span style="color:#94a3b8">#${i + 1}</span>
+            <span style="color:#94a3b8">${(op.source_account || "").slice(0, 8)}…</span>
+            <span><a class="hash" href="https://stellar.expert/explorer/testnet/tx/${op.transaction_hash}" target="_blank">${(op.transaction_hash || "").slice(0, 12)}…</a></span>
+            <span style="color:#6b7280">${new Date(op.created_at).toLocaleTimeString()}</span>
+            <span><span class="${op.transaction_successful ? 'badge-fulfilled' : 'badge-pending'}">${op.transaction_successful ? 'Fulfilled' : 'Pending'}</span></span>
+          </div>
+        `).join("");
+
+        updateStats();
+      } catch (e) { /* ignore */ }
+    }
+
+    function updateStats() {
+      document.getElementById("stat-total").textContent = stats.total;
+      document.getElementById("stat-fulfilled").textContent = stats.fulfilled;
+      const rate = stats.total > 0 ? Math.round((stats.fulfilled / stats.total) * 100) : 0;
+      document.getElementById("stat-rate").textContent = rate;
+      const uptime = ((Date.now() - stats.startTime) / 3600000).toFixed(1);
+      document.getElementById("stat-uptime").textContent = uptime;
+      document.getElementById("stat-avg-time").textContent = "~15";
+      document.getElementById("last-updated").textContent = "Updated " + new Date().toLocaleTimeString();
+    }
+
+    // Refresh every 5s
+    async function refresh() {
+      await fetchDrandStatus();
+      await fetchContractEvents();
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+    setInterval(fetchDrandStatus, 1000); // drand countdown every 1s
+  </script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+version: "3.8"
+
+# HA Oracle Deployment: Primary + Hot-Standby
+# Leader election via shared lock file (bind-mounted volume)
+#
+# Usage:
+#   docker compose -f docker-compose.ha.yml up -d
+#
+# To test failover:
+#   docker compose -f docker-compose.ha.yml stop oracle-primary
+#   # standby becomes leader within LEADER_LOCK_TTL_MS (30s)
+
+services:
+  oracle-primary:
+    build: .
+    container_name: vrf-oracle-primary
+    env_file: .env
+    environment:
+      INSTANCE_ID: oracle-primary
+      HEALTH_PORT: "8080"
+      LEADER_LOCK_FILE: /var/lock/vrf-oracle.lock
+      LEADER_LOCK_TTL_MS: "30000"
+      LEADER_HEARTBEAT_MS: "10000"
+      LEADER_POLL_MS: "5000"
+    volumes:
+      - leader-lock:/var/lock
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  oracle-standby:
+    build: .
+    container_name: vrf-oracle-standby
+    env_file: .env
+    environment:
+      INSTANCE_ID: oracle-standby
+      HEALTH_PORT: "8081"
+      LEADER_LOCK_FILE: /var/lock/vrf-oracle.lock
+      LEADER_LOCK_TTL_MS: "30000"
+      LEADER_HEARTBEAT_MS: "10000"
+      LEADER_POLL_MS: "5000"
+    volumes:
+      - leader-lock:/var/lock
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    depends_on:
+      oracle-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  leader-lock:
+    driver: local
