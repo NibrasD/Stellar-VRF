@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stellar VRF — Example dApp</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
+    .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 20px 40px; display: flex; align-items: center; gap: 16px; }
+    .header h1 { font-size: 1.4rem; color: #60a5fa; }
+    .badge { background: #1e40af; color: #93c5fd; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; }
+    .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+    .card { background: #111827; border: 1px solid #1e3a5f; border-radius: 12px; padding: 28px; margin-bottom: 24px; }
+    .card h2 { color: #60a5fa; margin-bottom: 16px; font-size: 1.1rem; }
+    .step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
+    .step-num { background: #1e40af; color: #93c5fd; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; flex-shrink: 0; }
+    label { display: block; color: #94a3b8; font-size: 0.85rem; margin-bottom: 6px; }
+    input, textarea { width: 100%; background: #0a0e1a; border: 1px solid #1e3a5f; color: #e0e6f0; padding: 10px 14px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; }
+    input:focus, textarea:focus { outline: none; border-color: #3b82f6; }
+    button { background: #1e40af; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 0.95rem; font-family: monospace; transition: background 0.2s; }
+    button:hover { background: #2563eb; }
+    button:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+    .status { padding: 12px 16px; border-radius: 8px; font-size: 0.85rem; margin-top: 12px; }
+    .status.pending { background: #1c1f2e; border: 1px solid #3b82f6; color: #93c5fd; }
+    .status.success { background: #052e16; border: 1px solid #16a34a; color: #86efac; }
+    .status.error { background: #1c0a0a; border: 1px solid #dc2626; color: #fca5a5; }
+    .proof-display { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; margin-top: 16px; word-break: break-all; font-size: 0.8rem; }
+    .proof-display .field { margin-bottom: 10px; }
+    .proof-display .field-label { color: #60a5fa; margin-bottom: 4px; }
+    .proof-display .field-value { color: #86efac; }
+    .random { font-size: 4rem; text-align: center; padding: 20px; animation: rollIn 0.5s ease; }
+    @keyframes rollIn { from { transform: rotate(-180deg) scale(0); } to { transform: rotate(0) scale(1); } }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #3b82f6; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.8rem; }
+    .tx-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🎲 Stellar VRF Oracle</h1>
+    <span class="badge">Testnet</span>
+    <span id="network-badge" class="badge" style="background:#052e16;color:#86efac;">●  Connected</span>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>🎯 Request Verifiable Randomness</h2>
+      <p style="color:#94a3b8;font-size:0.85rem;margin-bottom:20px;">
+        Submit a randomness request to the VRF Oracle. The oracle will generate a
+        cryptographically verified random number using drand + BLS12-381.
+      </p>
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div style="flex:1">
+          <label>Context (entropy input)</label>
+          <input type="text" id="context-input" placeholder="my-game-round-42" value="stellar-vrf-demo" />
+          <small style="color:#6b7280">Arbitrary string — becomes part of the randomness seed</small>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div style="flex:1">
+          <label>Random range: 1 to</label>
+          <input type="number" id="range-max" value="6" min="2" max="1000000" style="width:120px" />
+          <small style="color:#6b7280"> (simulates a random roll from 1 to N)</small>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div style="flex:1">
+          <button id="request-btn" onclick="submitRequest()">🎲 Request Randomness</button>
+        </div>
+      </div>
+
+      <div id="status-area"></div>
+    </div>
+
+    <div class="card" id="result-card" style="display:none">
+      <h2>✅ VRF Result</h2>
+      <div class="random" id="random-display">🎲</div>
+      <div style="text-align:center;margin-bottom:20px">
+        <span style="font-size:2rem;color:#60a5fa" id="result-number">—</span>
+        <span style="color:#94a3b8"> / </span>
+        <span style="color:#94a3b8" id="result-range">6</span>
+      </div>
+      <div class="proof-display" id="proof-display"></div>
+    </div>
+
+    <div class="card">
+      <h2>📋 How It Works</h2>
+      <ol style="color:#94a3b8;font-size:0.85rem;line-height:1.8;padding-left:20px">
+        <li>Your request is submitted to the VRF smart contract on Stellar</li>
+        <li>The oracle fetches a drand beacon for the required round</li>
+        <li>Oracle generates a BLS12-381 VRF proof using its secret key</li>
+        <li>The contract verifies the proof with a pairing check on-chain</li>
+        <li>The verified random output (beta) is stored permanently</li>
+        <li>Anyone can verify the result is unbiased and unpredictable</li>
+      </ol>
+    </div>
+  </div>
+
+  <script type="module">
+    import { VrfClient, Networks } from "https://cdn.jsdelivr.net/npm/@stellar-vrf/sdk@1.0.0/dist/index.js";
+    import { Keypair } from "https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.0.0/dist/stellar-sdk.js";
+
+    const CONTRACT_ID = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
+    const NETWORK = "testnet";
+    // Demo keypair — funded via friendbot in production
+    let client = null;
+
+    async function init() {
+      try {
+        // Generate ephemeral keypair for demo
+        const kp = Keypair.random();
+        await fetch(`https://friendbot.stellar.org?addr=${kp.publicKey()}`);
+
+        client = new VrfClient({
+          contractId: CONTRACT_ID,
+          rpcUrl: "https://soroban-testnet.stellar.org",
+          networkPassphrase: Networks.TESTNET,
+          keypair: kp,
+        });
+        document.getElementById("network-badge").textContent = "● Testnet";
+      } catch (e) {
+        console.error("Init failed:", e);
+      }
+    }
+
+    window.submitRequest = async function() {
+      const btn = document.getElementById("request-btn");
+      const ctx = document.getElementById("context-input").value || "demo";
+      const rangeMax = parseInt(document.getElementById("range-max").value) || 6;
+      const statusArea = document.getElementById("status-area");
+
+      btn.disabled = true;
+      statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar testnet…</div>`;
+
+      try {
+        const contextBytes = new TextEncoder().encode(ctx);
+        const requestId = await client.request(contextBytes);
+
+        statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>
+          Request #${requestId} submitted. Waiting for oracle fulfillment…
+          <br><small style="color:#6b7280">This takes ~10-30 seconds (oracle + drand)</small>
+        </div>`;
+
+        const proof = await client.waitForFulfillment(requestId, 120000);
+        const roll = await client.deriveRandomInRange(requestId, 1n, BigInt(rangeMax));
+
+        // Show result
+        document.getElementById("result-card").style.display = "block";
+        document.getElementById("random-display").textContent =
+          rangeMax === 6 ? ["⚀","⚁","⚂","⚃","⚄","⚅"][Number(roll)-1] : "🎲";
+        document.getElementById("result-number").textContent = roll.toString();
+        document.getElementById("result-range").textContent = rangeMax;
+
+        document.getElementById("proof-display").innerHTML = `
+          <div class="field"><div class="field-label">Request ID</div><div class="field-value">${requestId}</div></div>
+          <div class="field"><div class="field-label">Beta Output (random seed)</div><div class="field-value">${Array.from(proof.betaOutput).map(b=>b.toString(16).padStart(2,'0')).join('')}</div></div>
+          <div class="field"><div class="field-label">drand Round</div><div class="field-value">${proof.drandRound}</div></div>
+        `;
+
+        statusArea.innerHTML = `<div class="status success">✅ Fulfilled! Random number verified on-chain.</div>`;
+      } catch (e) {
+        statusArea.innerHTML = `<div class="status error">❌ ${e.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    init();
+  </script>
+</body>
+</html>

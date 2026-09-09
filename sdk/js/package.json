@@ -1,0 +1,21 @@
+{
+  "name": "@stellar-vrf/sdk",
+  "version": "1.0.0",
+  "description": "JavaScript/TypeScript SDK for the Stellar VRF Oracle",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "keywords": ["stellar", "soroban", "vrf", "randomness", "oracle"],
+  "license": "MIT",
+  "dependencies": {
+    "@stellar/stellar-sdk": "^13.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}
