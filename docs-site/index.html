@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stellar VRF Oracle</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    h1 { font-size: 2rem; color: #60a5fa; margin-bottom: 12px; }
+    p { color: #94a3b8; margin-bottom: 40px; font-size: 1rem; }
+    .links { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+    .link-card { background: #111827; border: 1px solid #1e3a5f; border-radius: 12px; padding: 24px 32px; text-decoration: none; color: #e0e6f0; text-align: center; transition: border-color 0.2s; }
+    .link-card:hover { border-color: #3b82f6; }
+    .link-card .icon { font-size: 2.5rem; margin-bottom: 10px; }
+    .link-card .title { color: #60a5fa; font-size: 1rem; margin-bottom: 6px; }
+    .link-card .desc { color: #6b7280; font-size: 0.78rem; }
+    .badge { background: #1e40af; color: #93c5fd; padding: 3px 10px; border-radius: 10px; font-size: 0.7rem; margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <h1>🎲 Stellar VRF Oracle</h1>
+  <p>Verifiable randomness on Stellar — powered by BLS12-381 + drand</p>
+  <div class="links">
+    <a class="link-card" href="dashboard/">
+      <div class="icon">📊</div>
+      <div class="title">Dashboard <span class="badge">LIVE</span></div>
+      <div class="desc">Real-time oracle activity</div>
+    </a>
+    <a class="link-card" href="playground/">
+      <div class="icon">🔬</div>
+      <div class="title">Playground</div>
+      <div class="desc">Submit real VRF requests</div>
+    </a>
+    <a class="link-card" href="example-dapp/">
+      <div class="icon">🎯</div>
+      <div class="title">Example dApp</div>
+      <div class="desc">Integration demo</div>
+    </a>
+    <a class="link-card" href="https://github.com/NibrasD/Stellar-VRF" target="_blank">
+      <div class="icon">📦</div>
+      <div class="title">GitHub</div>
+      <div class="desc">Source code &amp; SDK</div>
+    </a>
+  </div>
+</body>
+</html>

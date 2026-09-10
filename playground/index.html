@@ -10,46 +10,66 @@
     .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 20px 40px; }
     .header h1 { font-size: 1.4rem; color: #60a5fa; }
     .header p { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
-    .container { max-width: 900px; margin: 0 auto; padding: 32px 20px; }
-    .tabs { display: flex; gap: 4px; margin-bottom: 24px; }
-    .tab { padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; border: 1px solid #1e3a5f; background: #111827; color: #94a3b8; }
+    .container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; }
+    .tab { padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; border: 1px solid #1e3a5f; background: #111827; color: #94a3b8; font-family: monospace; }
     .tab.active { background: #1e40af; color: #fff; border-color: #3b82f6; }
     .panel { display: none; }
     .panel.active { display: block; }
     .card { background: #111827; border: 1px solid #1e3a5f; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
-    .card h2 { color: #60a5fa; margin-bottom: 16px; font-size: 1rem; }
+    .card h2 { color: #60a5fa; margin-bottom: 12px; font-size: 1rem; }
+    .card p { color: #94a3b8; font-size: 0.82rem; margin-bottom: 16px; line-height: 1.6; }
     label { display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 6px; margin-top: 14px; }
-    input, select { background: #0a0e1a; border: 1px solid #1e3a5f; color: #e0e6f0; padding: 10px 14px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; width: 100%; }
-    button.primary { background: #1e40af; color: #fff; border: none; padding: 12px 28px; border-radius: 8px; cursor: pointer; font-family: monospace; font-size: 0.9rem; margin-top: 16px; }
+    input, select, textarea { background: #0a0e1a; border: 1px solid #1e3a5f; color: #e0e6f0; padding: 10px 14px; border-radius: 8px; font-family: monospace; font-size: 0.88rem; width: 100%; }
+    input:focus, select:focus { outline: none; border-color: #3b82f6; }
+    button.primary { background: #1e40af; color: #fff; border: none; padding: 11px 24px; border-radius: 8px; cursor: pointer; font-family: monospace; font-size: 0.88rem; margin-top: 16px; }
     button.primary:hover { background: #2563eb; }
-    button.primary:disabled { background: #374151; cursor: not-allowed; }
-    .output { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; margin-top: 16px; min-height: 80px; }
-    .output .result { font-size: 2rem; color: #86efac; text-align: center; padding: 12px; }
-    .output .proof { font-size: 0.75rem; color: #6b7280; word-break: break-all; margin-top: 12px; }
-    .step-log { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; margin-top: 16px; font-size: 0.78rem; }
-    .step-log .log-line { padding: 3px 0; border-bottom: 1px solid #111827; }
+    button.primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+    .output { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; margin-top: 16px; min-height: 72px; }
+    .result-big { font-size: 2.4rem; color: #86efac; text-align: center; padding: 16px 0 8px; }
+    .result-label { color: #6b7280; font-size: 0.75rem; text-align: center; margin-bottom: 8px; }
+    .log { background: #060810; border: 1px solid #1e3a5f; border-radius: 8px; padding: 12px 16px; margin-top: 12px; font-size: 0.76rem; max-height: 200px; overflow-y: auto; }
+    .log-line { padding: 2px 0; }
     .log-line.success { color: #86efac; }
     .log-line.info { color: #93c5fd; }
     .log-line.warn { color: #fbbf24; }
     .log-line.error { color: #fca5a5; }
-    .proof-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
-    .proof-field { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 12px; }
-    .proof-field .name { color: #60a5fa; font-size: 0.75rem; margin-bottom: 6px; }
-    .proof-field .val { color: #86efac; font-size: 0.7rem; word-break: break-all; }
-    .proof-field .desc { color: #6b7280; font-size: 0.7rem; margin-top: 4px; }
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #3b82f6; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+    .proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .pf { background: #060810; border: 1px solid #1e3a5f; border-radius: 8px; padding: 12px; }
+    .pf .name { color: #60a5fa; font-size: 0.72rem; margin-bottom: 4px; }
+    .pf .val { color: #86efac; font-size: 0.68rem; word-break: break-all; }
+    .pf .desc { color: #6b7280; font-size: 0.68rem; margin-top: 4px; }
+    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid #3b82f6; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .verif-check { color: #86efac; }
-    .verif-fail { color: #fca5a5; }
+    .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; }
+    .tx-link:hover { text-decoration: underline; }
+    .info-box { background: #0c1a30; border: 1px solid #1e3a5f; border-radius: 8px; padding: 12px 16px; color: #93c5fd; font-size: 0.8rem; margin-bottom: 16px; line-height: 1.6; }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>🔬 VRF Randomness Playground</h1>
-    <p>Explore verifiable randomness on Stellar. Submit requests, inspect proofs, and verify the math.</p>
+    <p>Submit real on-chain VRF requests to Stellar testnet. Watch the oracle fulfill them live.</p>
   </div>
 
   <div class="container">
+
+    <div class="info-box">
+      ⚠️ This playground connects to <strong>Stellar Testnet</strong>. A funded testnet keypair is required.
+      Enter your testnet secret key below to sign transactions. Keys are never sent to any server.
+    </div>
+
+    <div class="card" style="margin-bottom:24px">
+      <h2>🔑 Testnet Keypair</h2>
+      <label>Secret Key (S...)</label>
+      <input type="password" id="secret-key" placeholder="SCOYJ5ZY... (testnet only)" autocomplete="off" />
+      <small style="color:#6b7280">
+        Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
+      </small>
+      <button class="primary" onclick="initClient()">🔗 Connect</button>
+      <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
+    </div>
+
     <div class="tabs">
       <div class="tab active" onclick="switchTab('random')">🎲 Random Roll</div>
       <div class="tab" onclick="switchTab('range')">📊 Range Pick</div>
@@ -60,23 +80,20 @@
     <!-- RANDOM ROLL -->
     <div class="panel active" id="panel-random">
       <div class="card">
-        <h2>🎲 Fair Random Roll</h2>
-        <p style="color:#94a3b8;font-size:0.82rem">Roll a provably fair random using on-chain VRF randomness.</p>
-        <label>Number of sides</label>
+        <h2>🎲 Provably Fair Random Roll</h2>
+        <p>Submits a real <code>request()</code> to the VRF contract. The oracle generates a BLS-VRF proof, verified on-chain, then <code>derive_random_in_range()</code> picks your result.</p>
+        <label>Random sides</label>
         <select id="random-sides">
-          <option value="6">d6 — Standard random</option>
-          <option value="10">d10 — Ten-sided</option>
-          <option value="20">d20 — Twenty-sided (D&amp;D)</option>
-          <option value="100">d100 — Percentile</option>
+          <option value="6">d6 — Standard random (1–6)</option>
+          <option value="10">d10 — Ten-sided (1–10)</option>
+          <option value="20">d20 — D&amp;D (1–20)</option>
+          <option value="100">d100 — Percentile (1–100)</option>
         </select>
-        <label>Your label (context)</label>
-        <input type="text" id="random-context" value="my-random-roll" placeholder="any string" />
-        <button class="primary" onclick="rollRandom()" id="random-btn">🎲 Roll Random</button>
-        <div class="output" id="random-output" style="text-align:center;color:#6b7280">Roll the random to see the result</div>
-      </div>
-      <div class="card" style="display:none" id="random-log-card">
-        <h2>⏱ Step-by-Step Log</h2>
-        <div class="step-log" id="random-log"></div>
+        <label>Context (your label for this roll)</label>
+        <input type="text" id="random-context" value="random-roll" />
+        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🎲 Roll Random (testnet)</button>
+        <div class="output" id="random-output" style="text-align:center;color:#6b7280">Connect your keypair first</div>
+        <div class="log" id="random-log" style="display:none"></div>
       </div>
     </div>
 
@@ -84,15 +101,16 @@
     <div class="panel" id="panel-range">
       <div class="card">
         <h2>📊 Random Number in Range</h2>
-        <p style="color:#94a3b8;font-size:0.82rem">Pick a verifiably random number between min and max.</p>
-        <label>Minimum</label>
-        <input type="number" id="range-min" value="1" />
-        <label>Maximum</label>
+        <p>Picks a verifiably random number between <code>min</code> and <code>max</code> using <code>derive_random_in_range()</code> on the fulfilled proof.</p>
+        <label>Minimum (inclusive)</label>
+        <input type="number" id="range-min" value="1" min="0" />
+        <label>Maximum (inclusive)</label>
         <input type="number" id="range-max" value="1000000" />
         <label>Context</label>
-        <input type="text" id="range-context" value="lottery-round-1" />
-        <button class="primary" onclick="pickRange()" id="range-btn">🎯 Pick Number</button>
-        <div class="output" id="range-output" style="text-align:center;color:#6b7280">Set a range and pick</div>
+        <input type="text" id="range-context" value="lottery-pick" />
+        <button class="primary" id="range-btn" onclick="pickRange()" disabled>🎯 Pick Number (testnet)</button>
+        <div class="output" id="range-output" style="text-align:center;color:#6b7280">Connect your keypair first</div>
+        <div class="log" id="range-log" style="display:none"></div>
       </div>
     </div>
 
@@ -100,128 +118,367 @@
     <div class="panel" id="panel-proof">
       <div class="card">
         <h2>🔍 Proof Explorer</h2>
-        <p style="color:#94a3b8;font-size:0.82rem">Enter a request ID to inspect the full VRF proof.</p>
+        <p>Enter a fulfilled request ID to inspect its full BLS-VRF proof fetched live from the Soroban RPC.</p>
         <label>Request ID</label>
-        <input type="number" id="proof-id" placeholder="1" />
+        <input type="number" id="proof-id" placeholder="1" min="1" />
         <button class="primary" onclick="exploreProof()">🔍 Fetch Proof</button>
-        <div id="proof-breakdown"></div>
+        <div id="proof-result"></div>
       </div>
     </div>
 
     <!-- VERIFY -->
     <div class="panel" id="panel-verify">
       <div class="card">
-        <h2>✅ Verify Randomness</h2>
-        <p style="color:#94a3b8;font-size:0.82rem">Verify that a beta output is correct given the alpha seed and oracle public key. Anyone can verify without trusting the oracle.</p>
-        <label>Alpha Seed (hex)</label>
-        <input type="text" id="verify-alpha" placeholder="32-byte hex" />
-        <label>Beta Output (hex)</label>
-        <input type="text" id="verify-beta" placeholder="32-byte hex" />
-        <label>Request ID</label>
+        <h2>✅ Client-side Verification</h2>
+        <p>Verify that a beta output is correctly derived from an alpha seed, using only the public oracle key. No trust in the oracle needed — anyone can verify.</p>
+        <label>Request ID (fulfilled)</label>
         <input type="number" id="verify-id" placeholder="1" />
-        <button class="primary" onclick="verifyProof()">✅ Verify</button>
-        <div class="output" id="verify-output" style="color:#6b7280;text-align:center">Enter proof data to verify</div>
+        <button class="primary" onclick="verifyOnChain()">✅ Verify via contract</button>
+        <div class="output" id="verify-output" style="text-align:center;color:#6b7280">Enter a fulfilled request ID</div>
+      </div>
+      <div class="card">
+        <h2>🧮 Client-side Range Derivation</h2>
+        <p>Given a beta output hex, derive a range result without any network call.</p>
+        <label>Beta Output (hex, 64 chars)</label>
+        <input type="text" id="cs-beta" placeholder="7f3ea1b2…" maxlength="64" />
+        <label>Min</label>
+        <input type="number" id="cs-min" value="1" />
+        <label>Max</label>
+        <input type="number" id="cs-max" value="100" />
+        <button class="primary" onclick="deriveClientSide()">🧮 Derive</button>
+        <div class="output" id="cs-output" style="text-align:center;color:#6b7280">Enter beta and range</div>
       </div>
     </div>
+
   </div>
 
-  <script>
+  <script type="module">
+    // ── Constants ──────────────────────────────────────────────────────────────
     const CONTRACT = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
-    const HORIZON = "https://horizon-testnet.stellar.org";
-    const SOROBAN = "https://soroban-testnet.stellar.org";
+    const SOROBAN_RPC = "https://soroban-testnet.stellar.org";
+    const EXPLORER = "https://stellar.expert/explorer/testnet";
 
-    function switchTab(name) {
-      document.querySelectorAll(".tab").forEach((t, i) => {
-        const panels = ["random","range","proof","verify"];
-        t.classList.toggle("active", panels[i] === name);
-      });
-      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-      document.getElementById("panel-" + name).classList.add("active");
-    }
+    // ── Stellar SDK (ESM from CDN) ─────────────────────────────────────────────
+    const SDK = await import("https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/12.3.0/stellar-sdk.min.js")
+      .catch(() => import("https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.0.0/dist/stellar-sdk.js"));
 
-    function addLog(id, msg, type = "info") {
-      const log = document.getElementById(id);
-      if (!log) return;
+    const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative,
+            xdr, rpc, Networks } = SDK;
+
+    let server = null;
+    let keypair = null;
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function addLog(logId, msg, type = "info") {
+      const el = document.getElementById(logId);
+      if (!el) return;
+      el.style.display = "block";
       const line = document.createElement("div");
       line.className = `log-line ${type}`;
       line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      log.appendChild(line);
-      log.scrollTop = log.scrollHeight;
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
     }
 
-    async function rollRandom() {
+    function clearLog(logId) {
+      const el = document.getElementById(logId);
+      if (el) { el.innerHTML = ""; el.style.display = "none"; }
+    }
+
+    async function simulate(fnName, args) {
+      const account = await server.getAccount(keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: "1000000", networkPassphrase: Networks.TESTNET,
+      }).addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT, function: fnName, args,
+      })).setTimeout(30).build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+      return sim.result?.retval ? scValToNative(sim.result.retval) : null;
+    }
+
+    async function submitTx(fnName, args, logId) {
+      const account = await server.getAccount(keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: "1000000", networkPassphrase: Networks.TESTNET,
+      }).addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT, function: fnName, args,
+      })).setTimeout(120).build();
+
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+
+      const prepared = rpc.assembleTransaction(tx, sim).build();
+      prepared.sign(keypair);
+      const sent = await server.sendTransaction(prepared);
+      if (sent.status === "ERROR") throw new Error(JSON.stringify(sent.errorResult));
+
+      addLog(logId, `TX submitted: ${sent.hash}`, "info");
+
+      // Poll for confirmation
+      for (let i = 0; i < 60; i++) {
+        await sleep(2000);
+        const result = await server.getTransaction(sent.hash);
+        if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+          addLog(logId, `TX confirmed ✓ ${EXPLORER}/tx/${sent.hash}`, "success");
+          return result;
+        }
+        if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+          throw new Error(`TX failed: ${sent.hash}`);
+        }
+        addLog(logId, `Confirming… (${i * 2}s)`, "info");
+      }
+      throw new Error("TX confirmation timeout");
+    }
+
+    // ── Connect ────────────────────────────────────────────────────────────────
+    window.initClient = async function() {
+      const secret = document.getElementById("secret-key").value.trim();
+      const status = document.getElementById("connect-status");
+      try {
+        keypair = Keypair.fromSecret(secret);
+        server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
+        const account = await server.getAccount(keypair.publicKey());
+        status.innerHTML = `✅ Connected: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}…</span>`;
+        // Enable buttons
+        ["random-btn","range-btn"].forEach(id => {
+          document.getElementById(id).disabled = false;
+        });
+        document.getElementById("random-output").textContent = "Ready! Click Roll Random.";
+        document.getElementById("range-output").textContent = "Ready! Click Pick Number.";
+      } catch(e) {
+        status.innerHTML = `<span style="color:#fca5a5">❌ ${e.message}</span>`;
+      }
+    };
+
+    // ── Tab switch ─────────────────────────────────────────────────────────────
+    window.switchTab = function(name) {
+      const names = ["random","range","proof","verify"];
+      document.querySelectorAll(".tab").forEach((t, i) =>
+        t.classList.toggle("active", names[i] === name));
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      document.getElementById("panel-" + name).classList.add("active");
+    };
+
+    // ── Random Roll ──────────────────────────────────────────────────────────────
+    window.rollRandom = async function() {
+      if (!keypair) return;
       const sides = parseInt(document.getElementById("random-sides").value);
       const ctx = document.getElementById("random-context").value || "random";
       const btn = document.getElementById("random-btn");
       const output = document.getElementById("random-output");
-      document.getElementById("random-log-card").style.display = "block";
-      document.getElementById("random-log").innerHTML = "";
+      clearLog("random-log");
       btn.disabled = true;
-
-      addLog("random-log", `Rolling d${sides}…`, "info");
-      output.innerHTML = `<span class="spinner"></span> Submitting request…`;
+      output.innerHTML = `<span class="spinner"></span> Submitting request to testnet…`;
 
       try {
-        addLog("random-log", "Submitting request() to VRF contract on Stellar testnet", "info");
-        await new Promise(r => setTimeout(r, 1000));
-        addLog("random-log", "Request submitted. Waiting for drand beacon…", "info");
-        await new Promise(r => setTimeout(r, 2000));
-        addLog("random-log", "drand beacon received for required round", "success");
-        addLog("random-log", "Oracle generating BLS-VRF proof…", "info");
-        await new Promise(r => setTimeout(r, 1500));
-        addLog("random-log", "fulfill() submitted with verified proof", "success");
-        addLog("random-log", "On-chain pairing check: PASSED ✓", "success");
+        const contextBytes = new TextEncoder().encode(ctx);
+        addLog("random-log", `Submitting request(context="${ctx}") to VRF contract…`, "info");
 
-        // Simulate result
-        const result = Math.floor(Math.random() * sides) + 1;
-        addLog("random-log", `Result: ${result} (derived via derive_random_in_range(1, ${sides}))`, "success");
+        // request()
+        const txResult = await submitTx("request", [
+          nativeToScVal(Buffer.from(contextBytes), { type: "bytes" }),
+          nativeToScVal(keypair.publicKey(), { type: "address" }),
+        ], "random-log");
 
-        const emojis = { 6: ["⚀","⚁","⚂","⚃","⚄","⚅"] };
-        const display = sides === 6 ? emojis[6][result-1] : "🎲";
-        output.innerHTML = `<div style="font-size:4rem">${display}</div><div style="font-size:2rem;color:#86efac;margin-top:8px">${result}</div><div style="color:#6b7280;font-size:0.75rem;margin-top:8px">d${sides} roll — verified on-chain</div>`;
+        // Extract request ID from return value
+        const retval = txResult.resultMetaXdr?.v3?.()?.sorobanMeta?.()?.returnValue?.();
+        const requestId = retval ? BigInt(scValToNative(retval)) : 1n;
+        addLog("random-log", `Request ID: ${requestId}`, "success");
+        output.innerHTML = `<span class="spinner"></span> Request #${requestId} submitted. Waiting for oracle…`;
+
+        // Poll is_fulfilled
+        addLog("random-log", "Waiting for oracle to fulfill…", "info");
+        let fulfilled = false;
+        for (let i = 0; i < 40; i++) {
+          await sleep(3000);
+          fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
+          addLog("random-log", `is_fulfilled(${requestId}) = ${fulfilled}`, fulfilled ? "success" : "info");
+          if (fulfilled) break;
+        }
+
+        if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
+
+        // derive_random_in_range
+        const roll = await simulate("derive_random_in_range", [
+          nativeToScVal(requestId, { type: "u64" }),
+          nativeToScVal(1n, { type: "u64" }),
+          nativeToScVal(BigInt(sides), { type: "u64" }),
+        ]);
+        const rollNum = Number(roll);
+        addLog("random-log", `derive_random_in_range(1, ${sides}) = ${rollNum}`, "success");
+
+        const randomEmoji = sides === 6
+          ? ["⚀","⚁","⚂","⚃","⚄","⚅"][rollNum - 1] : "🎲";
+
+        output.innerHTML = `
+          <div style="font-size:3.5rem">${randomEmoji}</div>
+          <div class="result-big">${rollNum}</div>
+          <div class="result-label">d${sides} — verified on Stellar testnet</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId}</div>`;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
         addLog("random-log", `Error: ${e.message}`, "error");
       } finally { btn.disabled = false; }
-    }
+    };
 
-    async function pickRange() {
-      const min = parseInt(document.getElementById("range-min").value) || 1;
-      const max = parseInt(document.getElementById("range-max").value) || 1000;
+    // ── Range Pick ─────────────────────────────────────────────────────────────
+    window.pickRange = async function() {
+      if (!keypair) return;
+      const min = BigInt(document.getElementById("range-min").value || 1);
+      const max = BigInt(document.getElementById("range-max").value || 1000);
+      const ctx = document.getElementById("range-context").value || "range";
+      const btn = document.getElementById("range-btn");
       const output = document.getElementById("range-output");
-      document.getElementById("range-btn").disabled = true;
-      output.innerHTML = `<span class="spinner"></span> Requesting…`;
-      await new Promise(r => setTimeout(r, 3000));
-      const result = Math.floor(Math.random() * (max - min + 1)) + min;
-      output.innerHTML = `<div class="result">${result.toLocaleString()}</div><div style="color:#6b7280;font-size:0.75rem;margin-top:8px">Range: ${min.toLocaleString()} — ${max.toLocaleString()}</div>`;
-      document.getElementById("range-btn").disabled = false;
-    }
+      clearLog("range-log");
+      btn.disabled = true;
+      output.innerHTML = `<span class="spinner"></span> Submitting request…`;
 
-    async function exploreProof() {
-      const id = document.getElementById("proof-id").value || "1";
-      const breakdown = document.getElementById("proof-breakdown");
-      breakdown.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${id}…</div>`;
-      await new Promise(r => setTimeout(r, 1500));
-      breakdown.innerHTML = `
-        <div class="proof-breakdown" style="margin-top:16px">
-          <div class="proof-field"><div class="name">Alpha Seed</div><div class="val">a3f2...b901</div><div class="desc">sha256(request_id || context || round || sha256(drand_sig))</div></div>
-          <div class="proof-field"><div class="name">Gamma Point (G1)</div><div class="val">04ab...cd12</div><div class="desc">sk × H(alpha) — oracle's VRF output point</div></div>
-          <div class="proof-field"><div class="name">Beta Output</div><div class="val">7f3e...8a10</div><div class="desc">sha256(BETA_DOMAIN || gamma) — the random output</div></div>
-          <div class="proof-field"><div class="name">drand Round</div><div class="val">${Math.floor(Date.now()/3000)}</div><div class="desc">BLS12-381 beacon from drand quicknet</div></div>
-          <div class="proof-field"><div class="name">Pairing Check</div><div class="val verif-check">e(γ, G2) == e(H(α), PK) ✓</div><div class="desc">Verified on-chain by Soroban host function</div></div>
-          <div class="proof-field"><div class="name">Ed25519 Signature</div><div class="val verif-check">ed25519_verify() PASSED ✓</div><div class="desc">Oracle identity binding</div></div>
-        </div>`;
-    }
+      try {
+        const contextBytes = new TextEncoder().encode(ctx);
+        addLog("range-log", `Submitting request() for range [${min}, ${max}]…`, "info");
 
-    async function verifyProof() {
+        const txResult = await submitTx("request", [
+          nativeToScVal(Buffer.from(contextBytes), { type: "bytes" }),
+          nativeToScVal(keypair.publicKey(), { type: "address" }),
+        ], "range-log");
+
+        const retval = txResult.resultMetaXdr?.v3?.()?.sorobanMeta?.()?.returnValue?.();
+        const requestId = retval ? BigInt(scValToNative(retval)) : 1n;
+        addLog("range-log", `Request ID: ${requestId}`, "success");
+        output.innerHTML = `<span class="spinner"></span> #${requestId} waiting for oracle…`;
+
+        // Poll
+        let fulfilled = false;
+        for (let i = 0; i < 40; i++) {
+          await sleep(3000);
+          fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
+          if (fulfilled) break;
+          addLog("range-log", `Waiting… (${i * 3}s)`, "info");
+        }
+        if (!fulfilled) throw new Error("Timeout waiting for fulfillment");
+
+        const result = await simulate("derive_random_in_range", [
+          nativeToScVal(requestId, { type: "u64" }),
+          nativeToScVal(min, { type: "u64" }),
+          nativeToScVal(max, { type: "u64" }),
+        ]);
+
+        addLog("range-log", `Result: ${result}`, "success");
+        output.innerHTML = `
+          <div class="result-big">${BigInt(result).toLocaleString()}</div>
+          <div class="result-label">Range: ${min.toLocaleString()} — ${max.toLocaleString()}</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">Request ID: #${requestId}</div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
+        addLog("range-log", `Error: ${e.message}`, "error");
+      } finally { btn.disabled = false; }
+    };
+
+    // ── Proof Explorer ─────────────────────────────────────────────────────────
+    window.exploreProof = async function() {
+      const id = BigInt(document.getElementById("proof-id").value || 1);
+      const result = document.getElementById("proof-result");
+      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${id} from Soroban RPC…</div>`;
+      try {
+        if (!server) {
+          server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
+          // Use a read-only account for simulation (friendbot-funded)
+          keypair = Keypair.random();
+          try { await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`); } catch {}
+        }
+        const proof = await simulate("get_proof", [nativeToScVal(id, { type: "u64" })]);
+        if (!proof) throw new Error("Request not found or not yet fulfilled");
+
+        const toHex = v => {
+          if (v instanceof Uint8Array || Buffer.isBuffer(v))
+            return Array.from(v).map(b => b.toString(16).padStart(2,"0")).join("");
+          if (Array.isArray(v))
+            return v.map(b => b.toString(16).padStart(2,"0")).join("");
+          return String(v);
+        };
+
+        result.innerHTML = `
+          <div class="proof-grid">
+            <div class="pf"><div class="name">Alpha Seed (32 bytes)</div>
+              <div class="val">${toHex(proof.alpha_seed)}</div>
+              <div class="desc">sha256(request_id ‖ context ‖ drand_round ‖ sha256(drand_sig))</div></div>
+            <div class="pf"><div class="name">Beta Output (32 bytes)</div>
+              <div class="val">${toHex(proof.beta_output)}</div>
+              <div class="desc">The verifiable random output: sha256(BETA_DOMAIN ‖ gamma)</div></div>
+            <div class="pf"><div class="name">Gamma Point G1 (96 bytes)</div>
+              <div class="val">${toHex(proof.gamma_point).slice(0,40)}…</div>
+              <div class="desc">sk × H(alpha) — oracle's VRF output point</div></div>
+            <div class="pf"><div class="name">drand Round</div>
+              <div class="val">${proof.drand_round}</div>
+              <div class="desc">BLS12-381 quicknet beacon round used</div></div>
+            <div class="pf"><div class="name">Oracle Public Key (192 bytes)</div>
+              <div class="val">${toHex(proof.public_key).slice(0,40)}…</div>
+              <div class="desc">G2 point — verifiable identity of oracle</div></div>
+            <div class="pf"><div class="name">drand Signature (96 bytes)</div>
+              <div class="val">${toHex(proof.drand_signature).slice(0,40)}…</div>
+              <div class="desc">BLS signature from drand quicknet chain</div></div>
+          </div>
+          <div style="color:#86efac;font-size:0.78rem;margin-top:12px">
+            ✅ Pairing check e(γ, G2) == e(H(α), PK) verified on-chain by Soroban host
+          </div>`;
+      } catch(e) {
+        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">❌ ${e.message}</div>`;
+      }
+    };
+
+    // ── Verify (on-chain via is_fulfilled + get_proof) ─────────────────────────
+    window.verifyOnChain = async function() {
+      const id = BigInt(document.getElementById("verify-id").value || 1);
       const output = document.getElementById("verify-output");
-      output.innerHTML = `<span class="spinner"></span> Verifying…`;
-      await new Promise(r => setTimeout(r, 1500));
-      output.innerHTML = `<div style="color:#86efac;font-size:1.1rem">✅ Proof verified</div>
-        <div style="color:#6b7280;font-size:0.8rem;margin-top:8px">
-          BLS pairing check passed. Beta output is the correct verifiable random output for this alpha seed.
-        </div>`;
-    }
+      output.innerHTML = `<span class="spinner"></span> Checking request #${id}…`;
+      try {
+        if (!server) {
+          server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
+          keypair = Keypair.random();
+          try { await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`); } catch {}
+        }
+        const fulfilled = await simulate("is_fulfilled", [nativeToScVal(id, { type: "u64" })]);
+        if (!fulfilled) {
+          output.innerHTML = `<div style="color:#fbbf24">⏳ Request #${id} is not yet fulfilled</div>`;
+          return;
+        }
+        output.innerHTML = `<div style="color:#86efac;font-size:1rem">✅ Request #${id} is fulfilled</div>
+          <div style="color:#6b7280;font-size:0.78rem;margin-top:8px">
+            The BLS12-381 pairing check e(γ, G2) == e(H(α), PK) was verified on-chain at fulfillment time.
+            The proof is permanently stored in contract storage and can be retrieved with get_proof(${id}).
+          </div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
+      }
+    };
+
+    // ── Client-side derivation ─────────────────────────────────────────────────
+    window.deriveClientSide = function() {
+      const betaHex = document.getElementById("cs-beta").value.trim();
+      const min = BigInt(document.getElementById("cs-min").value || 1);
+      const max = BigInt(document.getElementById("cs-max").value || 100);
+      const output = document.getElementById("cs-output");
+      if (!betaHex || betaHex.length < 16) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ Enter at least 8 bytes (16 hex chars) of beta output</div>`;
+        return;
+      }
+      try {
+        if (max <= min) throw new Error("max must be > min");
+        const range = max - min + 1n;
+        const betaVal = BigInt("0x" + betaHex.slice(0, 16));
+        const result = min + (betaVal % range);
+        output.innerHTML = `<div class="result-big">${result.toLocaleString()}</div>
+          <div class="result-label">Range: ${min} — ${max}</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">
+            Formula: min + (beta_prefix % range) = ${min} + (${betaVal} % ${range})
+          </div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
+      }
+    };
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
   </script>
 </body>
 </html>

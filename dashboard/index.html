@@ -11,7 +11,10 @@
     .header h1 { font-size: 1.2rem; color: #60a5fa; }
     .live-badge { background: #052e16; color: #86efac; border: 1px solid #16a34a; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; padding: 24px 40px; }
+    .net-switcher { display: flex; gap: 8px; }
+    .net-btn { padding: 4px 12px; border-radius: 10px; cursor: pointer; font-size: 0.75rem; border: 1px solid #1e3a5f; background: #111827; color: #94a3b8; font-family: monospace; }
+    .net-btn.active { background: #1e40af; color: #fff; border-color: #3b82f6; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; padding: 24px 40px; }
     .stat-card { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; }
     .stat-card .label { color: #94a3b8; font-size: 0.75rem; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
     .stat-card .value { font-size: 2rem; color: #60a5fa; font-weight: bold; }
@@ -19,37 +22,41 @@
     .section { padding: 0 40px 24px; }
     .section h2 { color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px; }
     .table { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; overflow: hidden; }
-    .table-header { display: grid; grid-template-columns: 80px 1fr 1fr 120px 100px; padding: 12px 20px; background: #0f172a; color: #6b7280; font-size: 0.75rem; text-transform: uppercase; }
-    .table-row { display: grid; grid-template-columns: 80px 1fr 1fr 120px 100px; padding: 12px 20px; border-top: 1px solid #1e2a3a; font-size: 0.8rem; align-items: center; }
+    .table-header { display: grid; grid-template-columns: 70px 80px 1fr 1fr 90px; padding: 12px 20px; background: #0f172a; color: #6b7280; font-size: 0.72rem; text-transform: uppercase; }
+    .table-row { display: grid; grid-template-columns: 70px 80px 1fr 1fr 90px; padding: 12px 20px; border-top: 1px solid #1e2a3a; font-size: 0.78rem; align-items: center; }
     .table-row:hover { background: #0f172a; }
-    .badge-fulfilled { background: #052e16; color: #86efac; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+    .badge-ok { background: #052e16; color: #86efac; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
     .badge-pending { background: #1c1f2e; color: #93c5fd; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
-    .hash { color: #60a5fa; font-size: 0.75rem; }
-    .drand-status { padding: 0 40px 24px; }
-    .drand-card { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; display: flex; gap: 40px; align-items: center; }
+    .hash-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; }
+    .hash-link:hover { text-decoration: underline; }
+    .drand-card { background: #111827; border: 1px solid #1e3a5f; border-radius: 10px; padding: 20px; display: flex; gap: 32px; align-items: center; flex-wrap: wrap; }
     .drand-info .label { color: #94a3b8; font-size: 0.75rem; margin-bottom: 4px; }
-    .drand-info .value { color: #e0e6f0; font-size: 1rem; }
-    .progress-bar { flex: 1; background: #0a0e1a; border-radius: 4px; height: 8px; overflow: hidden; }
+    .drand-info .value { color: #e0e6f0; }
+    .progress-bar { flex: 1; min-width: 120px; background: #0a0e1a; border-radius: 4px; height: 8px; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, #1e40af, #60a5fa); border-radius: 4px; transition: width 0.5s; }
-    .contract-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; }
-    .contract-link:hover { text-decoration: underline; }
-    #last-updated { color: #6b7280; font-size: 0.75rem; }
+    .error-box { background: #1c0a0a; border: 1px solid #7f1d1d; border-radius: 8px; padding: 12px 16px; color: #fca5a5; font-size: 0.8rem; margin: 0 40px 16px; }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>📊 Stellar VRF Oracle Dashboard</h1>
     <div style="display:flex;gap:12px;align-items:center">
-      <span id="last-updated">Updating…</span>
+      <div class="net-switcher">
+        <button class="net-btn active" id="btn-testnet" onclick="switchNetwork('testnet')">Testnet</button>
+        <button class="net-btn" id="btn-mainnet" onclick="switchNetwork('mainnet')">Mainnet</button>
+      </div>
+      <span id="last-updated" style="color:#6b7280;font-size:0.75rem">Loading…</span>
       <span class="live-badge">● LIVE</span>
     </div>
   </div>
+
+  <div id="error-area"></div>
 
   <div class="grid">
     <div class="stat-card">
       <div class="label">Total Requests</div>
       <div class="value" id="stat-total">—</div>
-      <div class="sub">All time</div>
+      <div class="sub">All time on-chain</div>
     </div>
     <div class="stat-card">
       <div class="label">Fulfilled</div>
@@ -57,9 +64,9 @@
       <div class="sub">Success rate: <span id="stat-rate">—</span>%</div>
     </div>
     <div class="stat-card">
-      <div class="label">Avg Fulfillment Time</div>
+      <div class="label">Avg Fulfill Time</div>
       <div class="value" id="stat-avg-time">—</div>
-      <div class="sub">seconds</div>
+      <div class="sub">seconds (ledger delta)</div>
     </div>
     <div class="stat-card">
       <div class="label">drand Round</div>
@@ -67,17 +74,17 @@
       <div class="sub">Latest beacon</div>
     </div>
     <div class="stat-card">
-      <div class="label">Oracle Uptime</div>
-      <div class="value" id="stat-uptime" style="color:#86efac">—</div>
-      <div class="sub">hours</div>
+      <div class="label">Latest Ledger</div>
+      <div class="value" id="stat-ledger">—</div>
+      <div class="sub" id="stat-ledger-sub">Soroban RPC</div>
     </div>
   </div>
 
-  <div class="drand-status">
-    <div class="section" style="padding:0 0 12px"><h2>drand Chain Status</h2></div>
+  <div class="section">
+    <h2>drand Chain Status</h2>
     <div class="drand-card">
       <div class="drand-info"><div class="label">Chain</div><div class="value">quicknet</div></div>
-      <div class="drand-info"><div class="label">Period</div><div class="value">3s</div></div>
+      <div class="drand-info"><div class="label">Period</div><div class="value">3 seconds</div></div>
       <div class="drand-info"><div class="label">Current Round</div><div class="value" id="drand-current">—</div></div>
       <div class="drand-info"><div class="label">Next round in</div><div class="value" id="drand-next">—s</div></div>
       <div class="progress-bar"><div class="progress-fill" id="drand-progress" style="width:0%"></div></div>
@@ -85,107 +92,287 @@
   </div>
 
   <div class="section">
-    <h2>Recent Activity</h2>
+    <h2>Recent VRF Activity</h2>
     <div class="table">
       <div class="table-header">
-        <span>ID</span>
+        <span>Req ID</span>
+        <span>Ledger</span>
         <span>Requester</span>
-        <span>TX Hash</span>
-        <span>Time</span>
+        <span>Beta Output</span>
         <span>Status</span>
       </div>
       <div id="activity-feed">
-        <div style="padding:24px;text-align:center;color:#6b7280">Loading…</div>
+        <div style="padding:24px;text-align:center;color:#6b7280">Loading contract events…</div>
       </div>
     </div>
   </div>
 
   <div class="section">
-    <div style="color:#6b7280;font-size:0.75rem;margin-top:8px">
-      Contract:
-      <a class="contract-link" href="https://stellar.expert/explorer/testnet/contract/CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE" target="_blank">
-        CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE
-      </a>
+    <div style="color:#6b7280;font-size:0.72rem">
+      Contract: <span id="contract-display">—</span>
       &nbsp;|&nbsp;
-      Network: Testnet
+      <a id="explorer-link" class="hash-link" href="#" target="_blank">View on Stellar Expert ↗</a>
     </div>
   </div>
 
   <script>
-    const HORIZON = "https://horizon-testnet.stellar.org";
-    const CONTRACT = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
-    const DRAND_API = "https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971";
-    const GENESIS = 1692803367;
-    const PERIOD = 3;
+    // ── Config ───────────────────────────────────────────────────────────────
+    const NETWORKS = {
+      testnet: {
+        soroban: "https://soroban-testnet.stellar.org",
+        explorer: "https://stellar.expert/explorer/testnet",
+        contract: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
+        drand: "https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+      },
+      mainnet: {
+        soroban: "https://soroban.stellar.org",
+        explorer: "https://stellar.expert/explorer/public",
+        contract: "", // set after mainnet deployment
+        drand: "https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+      },
+    };
+    const DRAND_GENESIS = 1692803367;
+    const DRAND_PERIOD = 3;
 
-    let stats = { total: 0, fulfilled: 0, times: [], startTime: Date.now() };
+    let currentNetwork = "testnet";
+    let cfg = NETWORKS.testnet;
+    let startLedger = 0;
+    let requestEvents = []; // {requestId, requester, ledger}
+    let fulfillEvents = {}; // requestId -> {betaOutput, ledger}
 
-    async function fetchDrandStatus() {
-      try {
-        const resp = await fetch(`${DRAND_API}/public/latest`);
-        const beacon = await resp.json();
-        const now = Math.floor(Date.now() / 1000);
-        const elapsed = (now - GENESIS) % PERIOD;
-        const nextIn = PERIOD - elapsed;
-        document.getElementById("drand-current").textContent = beacon.round;
-        document.getElementById("stat-drand-round").textContent = beacon.round;
-        document.getElementById("drand-next").textContent = nextIn + "s";
-        document.getElementById("drand-progress").style.width = ((elapsed / PERIOD) * 100) + "%";
-      } catch (e) { /* ignore */ }
+    // ── Network switch ────────────────────────────────────────────────────────
+    function switchNetwork(net) {
+      currentNetwork = net;
+      cfg = NETWORKS[net];
+      document.getElementById("btn-testnet").classList.toggle("active", net === "testnet");
+      document.getElementById("btn-mainnet").classList.toggle("active", net === "mainnet");
+      requestEvents = [];
+      fulfillEvents = {};
+      startLedger = 0;
+      if (!cfg.contract) {
+        showError("Mainnet contract not yet deployed. Coming soon.");
+        return;
+      }
+      hideError();
+      document.getElementById("contract-display").textContent = cfg.contract;
+      document.getElementById("explorer-link").href = `${cfg.explorer}/contract/${cfg.contract}`;
+      refresh();
     }
 
-    async function fetchContractEvents() {
+    function showError(msg) {
+      document.getElementById("error-area").innerHTML =
+        `<div class="error-box">⚠️ ${msg}</div>`;
+    }
+    function hideError() {
+      document.getElementById("error-area").innerHTML = "";
+    }
+
+    // ── Soroban RPC helpers ───────────────────────────────────────────────────
+    async function rpcCall(method, params) {
+      const res = await fetch(cfg.soroban, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message);
+      return json.result;
+    }
+
+    async function getLatestLedger() {
+      const r = await rpcCall("getLatestLedger", {});
+      return r.sequence;
+    }
+
+    async function getContractEvents(eventType, topicSymbol, fromLedger, limit = 50) {
+      // Encode topic symbol as base64 XDR ScVal
+      // ScvSymbol: type byte 0x0a, then 4-byte length, then UTF-8 bytes
+      const sym = topicSymbol;
+      const symBytes = new TextEncoder().encode(sym);
+      // Build ScVal scvSymbol manually: discriminant u32 = 10 (0x0000000a)
+      const buf = new ArrayBuffer(4 + 4 + symBytes.length);
+      const view = new DataView(buf);
+      view.setUint32(0, 10, false); // scvSymbol discriminant
+      view.setUint32(4, symBytes.length, false);
+      symBytes.forEach((b, i) => view.setUint8(8 + i, b));
+      const topicBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+
+      const r = await rpcCall("getEvents", {
+        filters: [{
+          type: "contract",
+          contractIds: [cfg.contract],
+          topics: [[topicBase64]],
+        }],
+        startLedger: fromLedger,
+        pagination: { limit },
+      });
+      return r.events || [];
+    }
+
+    // ── XDR parsing (minimal, for our specific event format) ──────────────────
+    // The VRF contract emits:
+    //   request: value = (request_id: u64, requester: Address, required_round: u64)
+    //   fulfill: value = (request_id: u64, beta_output: Bytes<32>)
+    // scValToNative is not available in vanilla JS, so we parse the returned
+    // xdr field (already decoded by the Soroban RPC into a value object).
+
+    function parseU64(scval) {
+      // RPC returns ScVal as JSON: {u64: "12345"} or {i64: ...}
+      if (scval && scval.u64 !== undefined) return BigInt(scval.u64);
+      if (scval && scval.i64 !== undefined) return BigInt(scval.i64);
+      return 0n;
+    }
+
+    function parseAddress(scval) {
+      // {address: {accountId: {publicKeyTypeEd25519: "hex..."}}}
       try {
-        const resp = await fetch(`${HORIZON}/operations?order=desc&limit=20`);
-        const data = await resp.json();
-        const ops = (data._embedded?.records || []).filter(op =>
-          op.type === "invoke_host_function" &&
-          (op.function === "HostFunctionTypeInvokeContract")
-        );
-
-        const feed = document.getElementById("activity-feed");
-        if (ops.length === 0) {
-          feed.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280">No recent activity</div>';
-          return;
+        const addr = scval?.address;
+        if (addr?.accountId) {
+          const pk = addr.accountId.publicKeyTypeEd25519;
+          // Convert raw hex public key to G... address via stellar SDK not available,
+          // so we display the contract/account discriminant
+          return addr.accountId ? "[address]" : "[contract]";
         }
+        if (addr?.contractId) return addr.contractId;
+      } catch {}
+      return "unknown";
+    }
 
-        stats.total = ops.length;
-        stats.fulfilled = ops.filter(op => op.transaction_successful).length;
+    function parseBytes(scval) {
+      if (scval && scval.bytes) return scval.bytes; // base64 or hex
+      return null;
+    }
 
-        feed.innerHTML = ops.slice(0, 10).map((op, i) => `
+    function parseTuple(scval) {
+      if (scval && scval.vec) return scval.vec;
+      return [];
+    }
+
+    // ── Event fetching ────────────────────────────────────────────────────────
+    async function fetchEvents() {
+      if (!cfg.contract) return;
+
+      // On first load, start from recent ledgers
+      if (startLedger === 0) {
+        const latest = await getLatestLedger();
+        startLedger = Math.max(1, latest - 17280); // ~1 day back
+        document.getElementById("stat-ledger").textContent = latest;
+      }
+
+      // Fetch request events
+      const rawRequests = await getContractEvents("contract", "request", startLedger);
+      for (const evt of rawRequests) {
+        const tuple = parseTuple(evt.value);
+        if (tuple.length >= 3) {
+          const id = parseU64(tuple[0]).toString();
+          if (!requestEvents.find(e => e.requestId === id)) {
+            requestEvents.push({
+              requestId: id,
+              requester: evt.contractId || "—",
+              ledger: evt.ledger,
+              pagingToken: evt.pagingToken,
+            });
+          }
+        }
+      }
+
+      // Fetch fulfill events
+      const rawFulfills = await getContractEvents("contract", "fulfill", startLedger);
+      for (const evt of rawFulfills) {
+        const tuple = parseTuple(evt.value);
+        if (tuple.length >= 2) {
+          const id = parseU64(tuple[0]).toString();
+          const beta = parseBytes(tuple[1]);
+          fulfillEvents[id] = { betaOutput: beta, ledger: evt.ledger };
+        }
+      }
+
+      renderActivity();
+      updateStats();
+    }
+
+    function renderActivity() {
+      const feed = document.getElementById("activity-feed");
+      if (requestEvents.length === 0) {
+        feed.innerHTML = '<div style="padding:24px;text-align:center;color:#6b7280">No VRF requests found. Submit a request via the playground!</div>';
+        return;
+      }
+
+      // Show most recent 10, newest first
+      const sorted = [...requestEvents].reverse().slice(0, 10);
+      feed.innerHTML = sorted.map(req => {
+        const fulfilled = fulfillEvents[req.requestId];
+        const betaHex = fulfilled?.betaOutput
+          ? (fulfilled.betaOutput.slice(0, 8) + "…")
+          : "pending…";
+        const explorerBase = cfg.explorer;
+        return `
           <div class="table-row">
-            <span style="color:#94a3b8">#${i + 1}</span>
-            <span style="color:#94a3b8">${(op.source_account || "").slice(0, 8)}…</span>
-            <span><a class="hash" href="https://stellar.expert/explorer/testnet/tx/${op.transaction_hash}" target="_blank">${(op.transaction_hash || "").slice(0, 12)}…</a></span>
-            <span style="color:#6b7280">${new Date(op.created_at).toLocaleTimeString()}</span>
-            <span><span class="${op.transaction_successful ? 'badge-fulfilled' : 'badge-pending'}">${op.transaction_successful ? 'Fulfilled' : 'Pending'}</span></span>
-          </div>
-        `).join("");
-
-        updateStats();
-      } catch (e) { /* ignore */ }
+            <span style="color:#93c5fd">#${req.requestId}</span>
+            <span style="color:#6b7280">${req.ledger}</span>
+            <span style="color:#94a3b8">
+              <a class="hash-link" href="${explorerBase}/contract/${cfg.contract}" target="_blank">
+                ${req.requester.slice(0, 10)}…
+              </a>
+            </span>
+            <span style="color:${fulfilled ? '#86efac' : '#6b7280'};font-size:0.72rem">
+              ${betaHex}
+            </span>
+            <span>
+              <span class="${fulfilled ? 'badge-ok' : 'badge-pending'}">
+                ${fulfilled ? '✓ Fulfilled' : '⏳ Pending'}
+              </span>
+            </span>
+          </div>`;
+      }).join("");
     }
 
     function updateStats() {
-      document.getElementById("stat-total").textContent = stats.total;
-      document.getElementById("stat-fulfilled").textContent = stats.fulfilled;
-      const rate = stats.total > 0 ? Math.round((stats.fulfilled / stats.total) * 100) : 0;
-      document.getElementById("stat-rate").textContent = rate;
-      const uptime = ((Date.now() - stats.startTime) / 3600000).toFixed(1);
-      document.getElementById("stat-uptime").textContent = uptime;
-      document.getElementById("stat-avg-time").textContent = "~15";
-      document.getElementById("last-updated").textContent = "Updated " + new Date().toLocaleTimeString();
+      const total = requestEvents.length;
+      const fulfilled = Object.keys(fulfillEvents).length;
+      const rate = total > 0 ? Math.round((fulfilled / total) * 100) : 100;
+
+      document.getElementById("stat-total").textContent = total || "—";
+      document.getElementById("stat-fulfilled").textContent = fulfilled || "—";
+      document.getElementById("stat-rate").textContent = total > 0 ? rate : "—";
+      document.getElementById("last-updated").textContent =
+        "Updated " + new Date().toLocaleTimeString();
     }
 
-    // Refresh every 5s
-    async function refresh() {
-      await fetchDrandStatus();
-      await fetchContractEvents();
+    // ── drand ─────────────────────────────────────────────────────────────────
+    async function fetchDrand() {
+      try {
+        const r = await fetch(`${cfg.drand}/public/latest`);
+        const beacon = await r.json();
+        const now = Math.floor(Date.now() / 1000);
+        const elapsed = (now - DRAND_GENESIS) % DRAND_PERIOD;
+        const nextIn = DRAND_PERIOD - elapsed;
+        document.getElementById("drand-current").textContent = beacon.round;
+        document.getElementById("stat-drand-round").textContent = beacon.round;
+        document.getElementById("drand-next").textContent = nextIn + "s";
+        document.getElementById("drand-progress").style.width =
+          ((elapsed / DRAND_PERIOD) * 100) + "%";
+      } catch {}
     }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    async function refresh() {
+      try {
+        await fetchDrand();
+        await fetchEvents();
+      } catch (e) {
+        showError("RPC error: " + e.message);
+      }
+    }
+
+    // Set initial contract display
+    document.getElementById("contract-display").textContent = cfg.contract;
+    document.getElementById("explorer-link").href =
+      `${cfg.explorer}/contract/${cfg.contract}`;
 
     refresh();
-    setInterval(refresh, 5000);
-    setInterval(fetchDrandStatus, 1000); // drand countdown every 1s
+    setInterval(fetchDrand, 1000);
+    setInterval(refresh, 10000);
   </script>
 </body>
 </html>
