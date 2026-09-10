@@ -75,7 +75,7 @@ export class VrfClient {
     const fnName = options?.callbackContract ? "request_with_callback" : "request";
 
     const args: xdr.ScVal[] = [
-      nativeToScVal(Buffer.from(context), { type: "bytes" }),
+      nativeToScVal(context instanceof Uint8Array ? context : new Uint8Array(context), { type: "bytes" }),
       new Address(requester).toScVal(),
     ];
 
@@ -292,8 +292,12 @@ export class VrfClient {
     const obj = raw as Record<string, unknown>;
     const toUint8Array = (v: unknown): Uint8Array => {
       if (v instanceof Uint8Array) return v;
-      if (Buffer.isBuffer(v)) return new Uint8Array(v);
       if (Array.isArray(v)) return new Uint8Array(v as number[]);
+      if (v instanceof ArrayBuffer) return new Uint8Array(v);
+      // scValToNative may return Buffer-like objects (which are Uint8Array subclasses)
+      if (typeof v === "object" && v !== null && "length" in v) {
+        return new Uint8Array(v as ArrayLike<number>);
+      }
       throw new Error(`Cannot convert ${typeof v} to Uint8Array`);
     };
     return {
