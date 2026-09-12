@@ -14,7 +14,8 @@ const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal
 const MAINNET_RPC = "https://mainnet.sorobanrpc.com";
 const NETWORK     = Networks.PUBLIC;
 
-const ORACLE_SECRET  = "***REDACTED_MAINNET_SECRET***";
+const ORACLE_SECRET  = process.env.ORACLE_SECRET;
+if (!ORACLE_SECRET) { console.error("ERROR: ORACLE_SECRET env var is required"); process.exit(1); }
 const ORACLE_KP      = Keypair.fromSecret(ORACLE_SECRET);
 const ORACLE_PUBLIC  = ORACLE_KP.publicKey();
 const ORACLE_ED25519 = ORACLE_KP.rawPublicKey().toString("hex");

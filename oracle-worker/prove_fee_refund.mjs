@@ -72,7 +72,9 @@ async function getBalance(accountId) {
 console.log(`\n═══ Fee Escrow & Timeout Refund Proof on Testnet ═══\n`);
 
 // ── 1. Fund deployer + requester ────────────────────────────────────────────
-const deployerKP = Keypair.fromSecret("***REDACTED_TESTNET_SECRET***");
+const DEPLOYER_SECRET = process.env.DEPLOYER_SECRET || process.env.ORACLE_SECRET;
+if (!DEPLOYER_SECRET) { console.error("ERROR: DEPLOYER_SECRET or ORACLE_SECRET env var is required"); process.exit(1); }
+const deployerKP = Keypair.fromSecret(DEPLOYER_SECRET);
 const requesterKP = Keypair.random();
 
 console.log(`[1/7] Funding requester: ${requesterKP.publicKey()}`);

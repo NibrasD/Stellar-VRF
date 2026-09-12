@@ -19,6 +19,6 @@
   },
   "homepage": "https://github.com/NibrasD/Stellar-VRF#readme",
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.0.1"
+    "@stellar/stellar-sdk": "^15.1.0"
   }
 }
