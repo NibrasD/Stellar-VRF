@@ -9,7 +9,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
-    .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 20px 40px; }
+    .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 20px 40px; display: flex; align-items: center; gap: 20px; }
     .header h1 { font-size: 1.4rem; color: #60a5fa; }
     .header p { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
     .container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
@@ -50,24 +50,39 @@
 </head>
 <body>
   <div class="header">
-    <h1>🔬 VRF Randomness Playground</h1>
-    <p>Submit real on-chain VRF requests to Stellar testnet. Watch the oracle fulfill them live.</p>
+    <div style="flex:1">
+      <h1>🔬 VRF Randomness Playground</h1>
+      <p id="header-desc">Submit real on-chain VRF requests. Watch the oracle fulfill them live.</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="btn-testnet" onclick="switchNetwork('testnet')"
+        style="padding:7px 16px;border-radius:8px;border:1px solid #3b82f6;background:#1e40af;color:#fff;font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif">
+        Testnet
+      </button>
+      <button id="btn-mainnet" onclick="switchNetwork('mainnet')"
+        style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:#111827;color:#94a3b8;font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif">
+        🔴 Mainnet
+      </button>
+    </div>
   </div>
 
   <div class="container">
 
-    <div class="info-box">
-      ⚠️ This playground connects to <strong>Stellar Testnet</strong>. A funded testnet keypair is required.
-      Enter your testnet secret key below to sign transactions. Keys are never sent to any server.
+    <div class="info-box" id="network-info-box">
+      ⚠️ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+      Need a funded testnet account?
+      <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
     </div>
 
     <div class="card" style="margin-bottom:24px">
-      <h2>🔑 Testnet Keypair</h2>
+      <h2 id="keypair-title">🔑 Testnet Keypair</h2>
       <label>Secret Key (S...)</label>
-      <input type="password" id="secret-key" placeholder="SCOYJ5ZY... (testnet only)" autocomplete="off" />
-      <small style="color:#6b7280">
-        Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
-      </small>
+      <input type="password" id="secret-key" placeholder="SCOYJ5ZY..." autocomplete="off" />
+      <div id="keypair-hint" style="margin-top:6px">
+        <small style="color:#6b7280">
+          Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
+        </small>
+      </div>
       <button class="primary" onclick="initClient()">🔗 Connect</button>
       <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
     </div>
@@ -170,9 +185,47 @@
       },
     };
     let NETWORK = NETWORKS.testnet;
-    const CONTRACT  = () => NETWORK.contract;
+    const CONTRACT   = () => NETWORK.contract;
     const SOROBAN_RPC = () => NETWORK.soroban;
-    const EXPLORER  = () => NETWORK.explorer;
+    const EXPLORER   = () => NETWORK.explorer;
+
+    // ── Network Switcher ───────────────────────────────────────────────────────
+    window.switchNetwork = function(net) {
+      NETWORK = NETWORKS[net];
+      keypair = null;
+      server  = null;
+      document.getElementById("connect-status").textContent = "";
+      document.getElementById("secret-key").value = "";
+
+      const isMainnet = net === "mainnet";
+
+      // Update button styles
+      document.getElementById("btn-testnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMainnet?"#1e3a5f":"#3b82f6"};background:${isMainnet?"#111827":"#1e40af"};color:${isMainnet?"#94a3b8":"#fff"};font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif`;
+      document.getElementById("btn-mainnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMainnet?"#dc2626":"#1e3a5f"};background:${isMainnet?"#7f1d1d":"#111827"};color:${isMainnet?"#fca5a5":"#94a3b8"};font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif`;
+
+      // Update info box
+      document.getElementById("network-info-box").innerHTML = isMainnet
+        ? `🔴 <strong>Stellar Mainnet</strong> — Real XLM will be spent on transactions.
+           Your secret key signs locally and is <strong>never sent to any server</strong>.
+           Contract: <code style="color:#86efac;font-size:0.78rem">CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57</code>`
+        : `⚠️ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+           Need a funded testnet account?
+           <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>`;
+
+      // Update keypair section
+      document.getElementById("keypair-title").textContent = isMainnet ? "🔑 Mainnet Keypair" : "🔑 Testnet Keypair";
+      document.getElementById("keypair-hint").innerHTML = isMainnet
+        ? `<small style="color:#fbbf24">⚠️ Use a dedicated oracle/app keypair with a small XLM balance. Never enter a wallet with large funds.</small>`
+        : `<small style="color:#6b7280">Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a></small>`;
+
+      // Disable action buttons until reconnected
+      ["random-btn","range-btn"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = true;
+      });
+    };
 
     // ── Stellar SDK (ESM from CDN) ─────────────────────────────────────────────
     const SDK = await import("https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/12.3.0/stellar-sdk.min.js")
@@ -183,6 +236,7 @@
 
     let server = null;
     let keypair = null;
+
 
     // ── Helpers ────────────────────────────────────────────────────────────────
     function addLog(logId, msg, type = "info") {
@@ -204,9 +258,9 @@
     async function simulate(fnName, args) {
       const account = await server.getAccount(keypair.publicKey());
       const tx = new TransactionBuilder(account, {
-        fee: "1000000", networkPassphrase: Networks.TESTNET,
+        fee: "1000000", networkPassphrase: NETWORK.passphrase,
       }).addOperation(Operation.invokeContractFunction({
-        contract: CONTRACT, function: fnName, args,
+        contract: CONTRACT(), function: fnName, args,
       })).setTimeout(30).build();
       const sim = await server.simulateTransaction(tx);
       if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
@@ -216,9 +270,9 @@
     async function submitTx(fnName, args, logId) {
       const account = await server.getAccount(keypair.publicKey());
       const tx = new TransactionBuilder(account, {
-        fee: "1000000", networkPassphrase: Networks.TESTNET,
+        fee: "2000000", networkPassphrase: NETWORK.passphrase,
       }).addOperation(Operation.invokeContractFunction({
-        contract: CONTRACT, function: fnName, args,
+        contract: CONTRACT(), function: fnName, args,
       })).setTimeout(120).build();
 
       const sim = await server.simulateTransaction(tx);
@@ -253,15 +307,16 @@
       const status = document.getElementById("connect-status");
       try {
         keypair = Keypair.fromSecret(secret);
-        server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
+        server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
         const account = await server.getAccount(keypair.publicKey());
-        status.innerHTML = `✅ Connected: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}…</span>`;
+        const isMainnet = NETWORK === NETWORKS.mainnet;
+        status.innerHTML = `✅ Connected to <strong>${isMainnet ? "🔴 Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}…</span>`;
         // Enable buttons
         ["random-btn","range-btn"].forEach(id => {
           document.getElementById(id).disabled = false;
         });
-        document.getElementById("random-output").textContent = "Ready! Click Roll Random.";
-        document.getElementById("range-output").textContent = "Ready! Click Pick Number.";
+        document.getElementById("random-output").textContent = "Ready! Click Generate.";
+        document.getElementById("range-output").textContent = "Ready! Click Generate.";
       } catch(e) {
         status.innerHTML = `<span style="color:#fca5a5">❌ ${e.message}</span>`;
       }
