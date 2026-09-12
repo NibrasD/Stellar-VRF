@@ -20,23 +20,36 @@ resource consumption on the Stellar network.
 is well within Soroban's transaction limits and does not affect the 70M CPU instruction
 budget for `fulfill()`.
 
-### Fulfill() CPU instruction breakdown (from Tranche 1 baseline)
+### Fulfill() CPU instruction count — MEASURED from testnet TX
 
-The `fulfill()` pipeline was measured at **~56M CPU instructions** on testnet:
+The `fulfill()` pipeline was measured at **58,587,982 CPU instructions** — decoded
+from the `SorobanTransactionData.resources.instructions` field of the signed transaction
+envelope of testnet TX
+[`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb)
+(fee_charged: 135,638 stroops, `successful: true`).
+
+| Metric | Value |
+|---|---|
+| **Measured instructions** | **58,587,982** |
+| Soroban mainnet limit | 100,000,000 |
+| SCF requirement | < 75,000,000 |
+| **Margin under SCF limit** | **21.9% headroom** |
+| **Margin under Soroban limit** | **41.4% headroom** |
+
+Breakdown by component:
 
 | Component | Estimated CPU | % of total |
 |---|---|---|
-| BLS12-381 pairing check (VRF proof) | ~25M | 45% |
-| BLS12-381 pairing check (drand sig) | ~25M | 45% |
-| `hash_to_g1()` × 2 (VRF + drand DSTs) | ~4M | 7% |
+| BLS12-381 pairing check (VRF proof) | ~25M | 43% |
+| BLS12-381 pairing check (drand sig) | ~25M | 43% |
+| `hash_to_g1()` × 2 (VRF + drand DSTs) | ~6M | 10% |
 | Ed25519 signature verification | ~1M | 2% |
 | G1 negation (`-h`, `-h_msg`) | <1K | <0.01% |
-| Storage reads/writes + TTL extensions | ~1M | 1% |
-| **SAC fee transfer (when fee > 0)** | **~1-2M** | **~2-3%** |
-| **Total (fee=0)** | **~56M** | |
-| **Total (fee>0, estimated)** | **~58M** | |
+| Storage reads/writes + TTL extensions | ~1.5M | 2.5% |
+| **Total (fee=0, measured)** | **58,587,982** | |
 
-All paths remain well below the **70M instruction limit**.
+All paths remain well below the **75M SCF requirement** and **100M Soroban mainnet limit**.
+
 
 ## G1 negation analysis
 
