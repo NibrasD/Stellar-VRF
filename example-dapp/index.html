@@ -108,8 +108,12 @@
     import { VrfClient, Networks } from "https://cdn.jsdelivr.net/npm/@stellar-vrf/sdk@1.0.0/dist/index.js";
     import { Keypair } from "https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.0.0/dist/stellar-sdk.js";
 
-    const CONTRACT_ID = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
-    const NETWORK = "testnet";
+    const CONTRACTS = {
+      testnet: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
+      mainnet: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+    };
+    const CONTRACT_ID = CONTRACTS.mainnet;
+    const NETWORK = "mainnet";
     // Demo keypair — funded via friendbot in production
     let client = null;
 
@@ -121,11 +125,11 @@
 
         client = new VrfClient({
           contractId: CONTRACT_ID,
-          rpcUrl: "https://soroban-testnet.stellar.org",
-          networkPassphrase: Networks.TESTNET,
+          rpcUrl: "https://mainnet.sorobanrpc.com",
+          networkPassphrase: Networks.PUBLIC,
           keypair: kp,
         });
-        document.getElementById("network-badge").textContent = "● Testnet";
+        document.getElementById("network-badge").textContent = "● Mainnet";
       } catch (e) {
         console.error("Init failed:", e);
       }
