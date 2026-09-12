@@ -3,77 +3,91 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stellar VRF — Example dApp</title>
+  <title>Stellar VRF — Verifiable Randomness Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Courier New', monospace; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
+    body { font-family: 'Inter', sans-serif; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
     .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 20px 40px; display: flex; align-items: center; gap: 16px; }
-    .header h1 { font-size: 1.4rem; color: #60a5fa; }
-    .badge { background: #1e40af; color: #93c5fd; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; }
+    .header h1 { font-size: 1.4rem; color: #60a5fa; font-weight: 600; }
+    .badge { background: #1e40af; color: #93c5fd; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
     .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
     .card { background: #111827; border: 1px solid #1e3a5f; border-radius: 12px; padding: 28px; margin-bottom: 24px; }
-    .card h2 { color: #60a5fa; margin-bottom: 16px; font-size: 1.1rem; }
+    .card h2 { color: #60a5fa; margin-bottom: 16px; font-size: 1.1rem; font-weight: 600; }
     .step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
-    .step-num { background: #1e40af; color: #93c5fd; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; flex-shrink: 0; }
-    label { display: block; color: #94a3b8; font-size: 0.85rem; margin-bottom: 6px; }
-    input, textarea { width: 100%; background: #0a0e1a; border: 1px solid #1e3a5f; color: #e0e6f0; padding: 10px 14px; border-radius: 8px; font-family: monospace; font-size: 0.9rem; }
+    .step-num { background: #1e40af; color: #93c5fd; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; flex-shrink: 0; font-weight: 600; }
+    label { display: block; color: #94a3b8; font-size: 0.85rem; margin-bottom: 6px; font-weight: 500; }
+    input, textarea { width: 100%; background: #0a0e1a; border: 1px solid #1e3a5f; color: #e0e6f0; padding: 10px 14px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; }
     input:focus, textarea:focus { outline: none; border-color: #3b82f6; }
-    button { background: #1e40af; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 0.95rem; font-family: monospace; transition: background 0.2s; }
+    button { background: #1e40af; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 0.95rem; font-family: 'Inter', sans-serif; font-weight: 500; transition: background 0.2s; }
     button:hover { background: #2563eb; }
     button:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
     .status { padding: 12px 16px; border-radius: 8px; font-size: 0.85rem; margin-top: 12px; }
     .status.pending { background: #1c1f2e; border: 1px solid #3b82f6; color: #93c5fd; }
     .status.success { background: #052e16; border: 1px solid #16a34a; color: #86efac; }
     .status.error { background: #1c0a0a; border: 1px solid #dc2626; color: #fca5a5; }
-    .proof-display { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; margin-top: 16px; word-break: break-all; font-size: 0.8rem; }
+    .result-box { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 12px; padding: 32px; text-align: center; margin-bottom: 20px; }
+    .result-number { font-size: 3.5rem; font-weight: 700; color: #86efac; font-family: 'JetBrains Mono', monospace; letter-spacing: -2px; }
+    .result-label { color: #6b7280; font-size: 0.8rem; margin-top: 8px; }
+    .proof-display { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 16px; margin-top: 16px; word-break: break-all; font-size: 0.78rem; font-family: 'JetBrains Mono', monospace; }
     .proof-display .field { margin-bottom: 10px; }
-    .proof-display .field-label { color: #60a5fa; margin-bottom: 4px; }
+    .proof-display .field-label { color: #60a5fa; margin-bottom: 4px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .proof-display .field-value { color: #86efac; }
-    .random { font-size: 4rem; text-align: center; padding: 20px; animation: rollIn 0.5s ease; }
-    @keyframes rollIn { from { transform: rotate(-180deg) scale(0); } to { transform: rotate(0) scale(1); } }
     .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #3b82f6; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.8rem; }
     .tx-link:hover { text-decoration: underline; }
+    .use-cases { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .use-case { background: #0a0e1a; border: 1px solid #1e3a5f; border-radius: 8px; padding: 10px 14px; font-size: 0.8rem; color: #94a3b8; }
+    .use-case strong { color: #60a5fa; display: block; margin-bottom: 4px; font-size: 0.75rem; }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>🎲 Stellar VRF Oracle</h1>
-    <span class="badge">Testnet</span>
-    <span id="network-badge" class="badge" style="background:#052e16;color:#86efac;">●  Connected</span>
+    <h1>🔒 Stellar VRF Oracle</h1>
+    <span id="network-badge" class="badge" style="background:#052e16;color:#86efac;">● Mainnet</span>
   </div>
 
   <div class="container">
     <div class="card">
-      <h2>🎯 Request Verifiable Randomness</h2>
-      <p style="color:#94a3b8;font-size:0.85rem;margin-bottom:20px;">
-        Submit a randomness request to the VRF Oracle. The oracle will generate a
-        cryptographically verified random number using drand + BLS12-381.
+      <h2>📡 Request Verifiable Randomness</h2>
+      <p style="color:#94a3b8;font-size:0.85rem;margin-bottom:20px;line-height:1.7;">
+        Submit an on-chain randomness request. The oracle generates a BLS12-381 VRF proof
+        verified by the smart contract — producing a tamper-proof, publicly auditable random number.
       </p>
 
       <div class="step">
         <div class="step-num">1</div>
         <div style="flex:1">
-          <label>Context (entropy input)</label>
-          <input type="text" id="context-input" placeholder="my-game-round-42" value="stellar-vrf-demo" />
-          <small style="color:#6b7280">Arbitrary string — becomes part of the randomness seed</small>
+          <label>Label / Context</label>
+          <input type="text" id="context-input" placeholder="e.g. audit-round-42, nft-trait-gen, team-assignment" value="stellar-vrf-demo" />
+          <small style="color:#6b7280">Becomes part of the randomness seed — bind it to your use case</small>
         </div>
       </div>
 
       <div class="step">
         <div class="step-num">2</div>
         <div style="flex:1">
-          <label>Random range: 1 to</label>
-          <input type="number" id="range-max" value="6" min="2" max="1000000" style="width:120px" />
-          <small style="color:#6b7280"> (simulates a random roll from 1 to N)</small>
+          <label>Output Range</label>
+          <div style="display:flex;gap:12px;align-items:center">
+            <div style="flex:1">
+              <label style="font-size:0.75rem">From</label>
+              <input type="number" id="range-min" value="1" min="0" style="width:100%" />
+            </div>
+            <div style="flex:1">
+              <label style="font-size:0.75rem">To</label>
+              <input type="number" id="range-max" value="1000" min="2" max="999999999" style="width:100%" />
+            </div>
+          </div>
+          <small style="color:#6b7280;margin-top:6px;display:block">Random integer in [from, to] — e.g. select item #N from a list of 1000</small>
         </div>
       </div>
 
       <div class="step">
         <div class="step-num">3</div>
         <div style="flex:1">
-          <button id="request-btn" onclick="submitRequest()">🎲 Request Randomness</button>
+          <button id="request-btn" onclick="submitRequest()">🔒 Request Verifiable Randomness</button>
         </div>
       </div>
 
@@ -81,25 +95,35 @@
     </div>
 
     <div class="card" id="result-card" style="display:none">
-      <h2>✅ VRF Result</h2>
-      <div class="random" id="random-display">🎲</div>
-      <div style="text-align:center;margin-bottom:20px">
-        <span style="font-size:2rem;color:#60a5fa" id="result-number">—</span>
-        <span style="color:#94a3b8"> / </span>
-        <span style="color:#94a3b8" id="result-range">6</span>
+      <h2>✅ Verified Random Output</h2>
+      <div class="result-box">
+        <div class="result-number" id="result-number">—</div>
+        <div class="result-label" id="result-label">Verified on Stellar Mainnet</div>
       </div>
       <div class="proof-display" id="proof-display"></div>
     </div>
 
     <div class="card">
+      <h2>🧩 Use Cases</h2>
+      <div class="use-cases">
+        <div class="use-case"><strong>🔍 Audit Sampling</strong>Select random transaction IDs from a dataset for compliance review</div>
+        <div class="use-case"><strong>🏅 Fair Selection</strong>Choose a random winner from verified applicants or participants</div>
+        <div class="use-case"><strong>🎨 NFT Traits</strong>Assign verifiably random attributes to NFT tokens at mint time</div>
+        <div class="use-case"><strong>👥 Team Assignment</strong>Randomly allocate tasks or reviewers in a DAO governance process</div>
+        <div class="use-case"><strong>📊 Random Sampling</strong>Select survey respondents or test subjects without bias</div>
+        <div class="use-case"><strong>🔐 Cryptographic Seeds</strong>Generate unpredictable, on-chain entropy for protocol initialization</div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>📋 How It Works</h2>
-      <ol style="color:#94a3b8;font-size:0.85rem;line-height:1.8;padding-left:20px">
-        <li>Your request is submitted to the VRF smart contract on Stellar</li>
-        <li>The oracle fetches a drand beacon for the required round</li>
-        <li>Oracle generates a BLS12-381 VRF proof using its secret key</li>
-        <li>The contract verifies the proof with a pairing check on-chain</li>
-        <li>The verified random output (beta) is stored permanently</li>
-        <li>Anyone can verify the result is unbiased and unpredictable</li>
+      <ol style="color:#94a3b8;font-size:0.85rem;line-height:1.9;padding-left:20px">
+        <li>Your request is submitted to the VRF smart contract on Stellar Mainnet</li>
+        <li>The oracle fetches a drand quicknet beacon for the required round</li>
+        <li>Oracle generates a BLS12-381 VRF proof bound to your context and the drand randomness</li>
+        <li>The contract verifies the proof with two on-chain BLS12-381 pairing checks (~58M instructions)</li>
+        <li>The verified random output (beta) is stored permanently on-chain</li>
+        <li>Anyone can re-verify the result is unbiased and tamper-proof — no trust required</li>
       </ol>
     </div>
   </div>
@@ -113,16 +137,12 @@
       mainnet: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
     };
     const CONTRACT_ID = CONTRACTS.mainnet;
-    const NETWORK = "mainnet";
-    // Demo keypair — funded via friendbot in production
     let client = null;
 
     async function init() {
       try {
-        // Generate ephemeral keypair for demo
         const kp = Keypair.random();
-        await fetch(`https://friendbot.stellar.org?addr=${kp.publicKey()}`);
-
+        // Note: mainnet accounts need real XLM — for demo purposes only
         client = new VrfClient({
           contractId: CONTRACT_ID,
           rpcUrl: "https://mainnet.sorobanrpc.com",
@@ -137,12 +157,13 @@
 
     window.submitRequest = async function() {
       const btn = document.getElementById("request-btn");
-      const ctx = document.getElementById("context-input").value || "demo";
-      const rangeMax = parseInt(document.getElementById("range-max").value) || 6;
+      const ctx = document.getElementById("context-input").value || "vrf-demo";
+      const rangeMin = BigInt(document.getElementById("range-min").value || 1);
+      const rangeMax = BigInt(document.getElementById("range-max").value || 1000);
       const statusArea = document.getElementById("status-area");
 
       btn.disabled = true;
-      statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar testnet…</div>`;
+      statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar Mainnet…</div>`;
 
       try {
         const contextBytes = new TextEncoder().encode(ctx);
@@ -150,26 +171,28 @@
 
         statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>
           Request #${requestId} submitted. Waiting for oracle fulfillment…
-          <br><small style="color:#6b7280">This takes ~10-30 seconds (oracle + drand)</small>
+          <br><small style="color:#6b7280">The oracle generates a BLS-VRF proof (~10–30 seconds)</small>
         </div>`;
 
         const proof = await client.waitForFulfillment(requestId, 120000);
-        const roll = await client.deriveRandomInRange(requestId, 1n, BigInt(rangeMax));
+        const result = await client.deriveRandomInRange(requestId, rangeMin, rangeMax);
 
         // Show result
         document.getElementById("result-card").style.display = "block";
-        document.getElementById("random-display").textContent =
-          rangeMax === 6 ? ["⚀","⚁","⚂","⚃","⚄","⚅"][Number(roll)-1] : "🎲";
-        document.getElementById("result-number").textContent = roll.toString();
-        document.getElementById("result-range").textContent = rangeMax;
+        document.getElementById("result-number").textContent = result.toString();
+        document.getElementById("result-label").textContent =
+          `Range [${rangeMin} – ${rangeMax}] · Context: "${ctx}" · Request #${requestId}`;
+
+        const betaHex = Array.from(proof.betaOutput).map(b => b.toString(16).padStart(2,'0')).join('');
 
         document.getElementById("proof-display").innerHTML = `
           <div class="field"><div class="field-label">Request ID</div><div class="field-value">${requestId}</div></div>
-          <div class="field"><div class="field-label">Beta Output (random seed)</div><div class="field-value">${Array.from(proof.betaOutput).map(b=>b.toString(16).padStart(2,'0')).join('')}</div></div>
+          <div class="field"><div class="field-label">Beta Output (verifiable random seed)</div><div class="field-value">${betaHex}</div></div>
           <div class="field"><div class="field-label">drand Round</div><div class="field-value">${proof.drandRound}</div></div>
+          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} ∈ [${rangeMin}, ${rangeMax}]</div></div>
         `;
 
-        statusArea.innerHTML = `<div class="status success">✅ Fulfilled! Random number verified on-chain.</div>`;
+        statusArea.innerHTML = `<div class="status success">✅ Fulfilled and verified on-chain. Result is tamper-proof.</div>`;
       } catch (e) {
         statusArea.innerHTML = `<div class="status error">❌ ${e.message}</div>`;
       } finally {
