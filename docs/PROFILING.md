@@ -20,21 +20,23 @@ resource consumption on the Stellar network.
 is well within Soroban's transaction limits and does not affect the 70M CPU instruction
 budget for `fulfill()`.
 
-### Fulfill() CPU instruction count — MEASURED from testnet TX
+### Fulfill() CPU instruction count — MEASURED from **Mainnet** TX
 
-The `fulfill()` pipeline was measured at **58,587,982 CPU instructions** — decoded
-from the `SorobanTransactionData.resources.instructions` field of the signed transaction
-envelope of testnet TX
-[`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb)
-(fee_charged: 135,638 stroops, `successful: true`).
+The `fulfill()` pipeline was measured at **58,641,186 CPU instructions** on **Stellar Mainnet** —
+decoded from the `SorobanTransactionData.resources.instructions` field of the signed
+transaction envelope:
 
-| Metric | Value |
+| Field | Value |
 |---|---|
-| **Measured instructions** | **58,587,982** |
+| **Network** | **Stellar Mainnet** |
+| **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) |
+| **Status** | `successful: true` |
+| Fee charged | 1,284,508 stroops |
+| **Instructions (measured)** | **58,641,186** |
 | Soroban mainnet limit | 100,000,000 |
 | SCF requirement | < 75,000,000 |
-| **Margin under SCF limit** | **21.9% headroom** |
-| **Margin under Soroban limit** | **41.4% headroom** |
+| **Headroom under SCF limit** | **21.8%** |
+| **Headroom under Soroban limit** | **41.4%** |
 
 Breakdown by component:
 
@@ -46,9 +48,12 @@ Breakdown by component:
 | Ed25519 signature verification | ~1M | 2% |
 | G1 negation (`-h`, `-h_msg`) | <1K | <0.01% |
 | Storage reads/writes + TTL extensions | ~1.5M | 2.5% |
-| **Total (fee=0, measured)** | **58,587,982** | |
+| **Total (fee=0, mainnet measured)** | **58,641,186** | |
 
 All paths remain well below the **75M SCF requirement** and **100M Soroban mainnet limit**.
+
+> **Testnet cross-check:** testnet TX [`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb)
+> measured 58,587,982 instructions — within 0.1% of mainnet, confirming consistency.
 
 
 ## G1 negation analysis
