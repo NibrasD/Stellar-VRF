@@ -37,38 +37,74 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Try to acquire the leader lock.
+ * Uses atomic file operations to prevent TOCTOU race conditions.
  * Returns true if this instance is now the leader.
  */
 function tryAcquireLock(): boolean {
   try {
-    // Read existing lock if present
-    if (fs.existsSync(LOCK_FILE)) {
-      const raw = fs.readFileSync(LOCK_FILE, "utf-8");
-      const lock: LockFile = JSON.parse(raw);
-      const age = Date.now() - lock.timestamp;
-
-      // Lock is fresh and held by another instance
-      if (age < LOCK_TTL_MS && lock.instanceId !== INSTANCE_ID) {
-        return false;
-      }
-
-      // Lock is held by us — renew it
-      if (lock.instanceId === INSTANCE_ID) {
-        writeLock();
-        return true;
-      }
-
-      // Lock is stale — take over
-      log.warn(
-        `[Leader] Lock stale (age=${age}ms, held by ${lock.instanceId}). Taking over.`
-      );
+    // If lock file exists, check if it's ours or stale
+    let raw: string;
+    try {
+      raw = fs.readFileSync(LOCK_FILE, "utf-8");
+    } catch {
+      // Lock file doesn't exist — try to create it atomically
+      return tryCreateLockAtomically();
     }
 
-    // No lock or stale lock — acquire
+    let lock: LockFile;
+    try {
+      lock = JSON.parse(raw);
+    } catch {
+      // Corrupted lock — try to take over
+      log.warn("[Leader] Corrupted lock file. Attempting takeover.");
+      return tryCreateLockAtomically();
+    }
+
+    const age = Date.now() - lock.timestamp;
+
+    // Lock is fresh and held by another instance
+    if (age < LOCK_TTL_MS && lock.instanceId !== INSTANCE_ID) {
+      return false;
+    }
+
+    // Lock is held by us — renew it
+    if (lock.instanceId === INSTANCE_ID) {
+      writeLock();
+      return true;
+    }
+
+    // Lock is stale — take over atomically
+    log.warn(
+      `[Leader] Lock stale (age=${age}ms, held by ${lock.instanceId}). Taking over.`
+    );
     writeLock();
     return true;
   } catch (err) {
-    log.error(`[Leader] Error reading lock: ${err}`);
+    log.error(`[Leader] Error in tryAcquireLock: ${err}`);
+    return false;
+  }
+}
+
+/**
+ * Atomically try to create the lock file using exclusive flag 'wx'.
+ * Only one process can succeed — the OS guarantees exclusivity.
+ */
+function tryCreateLockAtomically(): boolean {
+  try {
+    const lock: LockFile = {
+      pid: process.pid,
+      instanceId: INSTANCE_ID,
+      timestamp: Date.now(),
+    };
+    // 'wx' flag: create exclusively — fails if file already exists
+    fs.writeFileSync(LOCK_FILE, JSON.stringify(lock), { encoding: "utf-8", flag: "wx" });
+    return true;
+  } catch (err: any) {
+    if (err.code === "EEXIST") {
+      // Another process created the lock between our read attempt and this write
+      return false;
+    }
+    log.error(`[Leader] Failed to create lock atomically: ${err}`);
     return false;
   }
 }
@@ -80,7 +116,7 @@ function writeLock(): void {
     timestamp: Date.now(),
   };
   // Atomic write: write to temp file, then rename
-  const tmp = LOCK_FILE + ".tmp";
+  const tmp = LOCK_FILE + ".tmp." + INSTANCE_ID;
   fs.writeFileSync(tmp, JSON.stringify(lock), "utf-8");
   fs.renameSync(tmp, LOCK_FILE);
 }

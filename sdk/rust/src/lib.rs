@@ -360,10 +360,11 @@ impl VrfClient {
         let mut out = Vec::new();
         if let Some(events) = events_result.events {
             for evt in events {
+                let (request_id, requester, required_round) = parse_request_event_value(&evt);
                 out.push(VrfRequestEvent {
-                    request_id: 0, // parsed from event value in production
-                    requester: String::new(),
-                    required_round: 0,
+                    request_id,
+                    requester,
+                    required_round,
                     ledger: evt.ledger.unwrap_or(0),
                 });
             }
@@ -398,7 +399,8 @@ impl VrfClient {
         let mut out = Vec::new();
         if let Some(events) = events_result.events {
             for evt in events {
-                out.push((0u64, evt.ledger.unwrap_or(0)));
+                let request_id = parse_fulfill_event_value(&evt);
+                out.push((request_id, evt.ledger.unwrap_or(0)));
             }
         }
         Ok(out)
@@ -658,6 +660,181 @@ pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+// ── Event value XDR parsing ──────────────────────────────────────────────────
+
+/// Parse request event value from Soroban getEvents response.
+///
+/// The event value is a base64-encoded ScVal. For VRF request events, the
+/// contract emits a ScMap (discriminant 14) containing:
+///   - "request_id" → scvU64
+///   - "requester"  → scvAddress
+///   - "required_round" → scvU64
+///
+/// If parsing fails (e.g. unknown format), returns safe defaults.
+fn parse_request_event_value(evt: &EventEntry) -> (u64, String, u64) {
+    let value_str = match &evt.value {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        _ => return (0, String::new(), 0),
+    };
+
+    let bytes = match base64_decode(&value_str) {
+        Ok(b) => b,
+        Err(_) => return (0, String::new(), 0),
+    };
+
+    // Try to parse as ScVal. The XDR starts with a 4-byte discriminant.
+    // ScvU64 = 5: the event value is just a u64 request_id
+    // ScvMap = 14: the event value is a map with request_id, requester, etc.
+    if bytes.len() < 4 {
+        return (0, String::new(), 0);
+    }
+
+    let discriminant = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+
+    match discriminant {
+        // scvU64: event value is just the request_id
+        5 if bytes.len() >= 12 => {
+            let request_id = u64::from_be_bytes(bytes[4..12].try_into().unwrap_or_default());
+            (request_id, String::new(), 0)
+        }
+        // scvMap: event value is a map — parse key-value pairs
+        14 => parse_scval_map_for_request(&bytes[4..]),
+        // Unknown format — return what we can
+        _ => (0, String::new(), 0),
+    }
+}
+
+/// Parse fulfill event value to extract the request_id.
+///
+/// Fulfill events typically emit the request_id as a u64 ScVal.
+fn parse_fulfill_event_value(evt: &EventEntry) -> u64 {
+    let value_str = match &evt.value {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        _ => return 0,
+    };
+
+    let bytes = match base64_decode(&value_str) {
+        Ok(b) => b,
+        Err(_) => return 0,
+    };
+
+    if bytes.len() < 4 {
+        return 0;
+    }
+
+    let discriminant = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+
+    match discriminant {
+        // scvU64: the value is the request_id
+        5 if bytes.len() >= 12 => {
+            u64::from_be_bytes(bytes[4..12].try_into().unwrap_or_default())
+        }
+        // scvMap: parse map for request_id field
+        14 => {
+            let (request_id, _, _) = parse_scval_map_for_request(&bytes[4..]);
+            request_id
+        }
+        _ => 0,
+    }
+}
+
+/// Parse an ScVal Map payload to extract request_id, requester, required_round.
+///
+/// XDR map format: count (4 bytes) + entries. Each entry is key ScVal + value ScVal.
+/// Keys are typically ScvSymbol (discriminant 10).
+fn parse_scval_map_for_request(data: &[u8]) -> (u64, String, u64) {
+    let mut request_id: u64 = 0;
+    let mut requester = String::new();
+    let mut required_round: u64 = 0;
+
+    if data.len() < 4 {
+        return (request_id, requester, required_round);
+    }
+
+    let count = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let mut offset = 4;
+
+    for _ in 0..count {
+        if offset + 4 > data.len() {
+            break;
+        }
+
+        // Parse key (expect ScvSymbol = discriminant 10)
+        let key_disc = u32::from_be_bytes(
+            data[offset..offset + 4].try_into().unwrap_or_default(),
+        );
+        offset += 4;
+
+        if key_disc != 10 || offset + 4 > data.len() {
+            break; // Not a symbol key — can't reliably parse further
+        }
+
+        let key_len = u32::from_be_bytes(
+            data[offset..offset + 4].try_into().unwrap_or_default(),
+        ) as usize;
+        offset += 4;
+
+        if offset + key_len > data.len() {
+            break;
+        }
+
+        let key_name = String::from_utf8_lossy(&data[offset..offset + key_len]).to_string();
+        let key_padded = (key_len + 3) & !3; // 4-byte alignment
+        offset += key_padded;
+
+        if offset + 4 > data.len() {
+            break;
+        }
+
+        // Parse value
+        let val_disc = u32::from_be_bytes(
+            data[offset..offset + 4].try_into().unwrap_or_default(),
+        );
+        offset += 4;
+
+        match val_disc {
+            // scvU64
+            5 => {
+                if offset + 8 <= data.len() {
+                    let val = u64::from_be_bytes(
+                        data[offset..offset + 8].try_into().unwrap_or_default(),
+                    );
+                    offset += 8;
+                    match key_name.as_str() {
+                        "request_id" => request_id = val,
+                        "required_round" => required_round = val,
+                        _ => {}
+                    }
+                } else {
+                    break;
+                }
+            }
+            // scvAddress (discriminant 0 = Account type, then 32 bytes)
+            18 => {
+                if offset + 36 <= data.len() {
+                    let addr_type = u32::from_be_bytes(
+                        data[offset..offset + 4].try_into().unwrap_or_default(),
+                    );
+                    offset += 4;
+                    let addr_bytes = &data[offset..offset + 32];
+                    offset += 32;
+                    if key_name == "requester" {
+                        requester = format!("G{}", to_hex(addr_bytes));
+                    }
+                } else {
+                    break;
+                }
+            }
+            // Skip unknown value types
+            _ => {
+                break; // Can't determine value length — stop parsing
+            }
+        }
+    }
+
+    (request_id, requester, required_round)
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -744,7 +921,8 @@ mod tests {
             contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE"
                 .into(),
             network: Network::Testnet,
-            secret_key: "***REDACTED_TESTNET_SECRET***"
+            // NOTE: Use a test-only key, never a real secret
+            secret_key: "SCZANGBA5YHTNYVVV3C7CAZMCLN4JUKQ3YOVTGFBODNNMMWDV5BH6MXI"
                 .into(),
         });
         // Client creation should not fail

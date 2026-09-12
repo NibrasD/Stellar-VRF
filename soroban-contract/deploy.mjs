@@ -57,7 +57,8 @@ const FEE_TOKEN_ADDRESS = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGC
 const FEE_AMOUNT = 0; // i128 — set to 0 for fee-free operation
 
 // Oracle Stellar Ed25519 keypair (pays gas + signs proofs)
-const ORACLE_STELLAR_SEED = "***REDACTED_TESTNET_SECRET***";
+const ORACLE_STELLAR_SEED = process.env.ORACLE_STELLAR_SECRET;
+if (!ORACLE_STELLAR_SEED) { console.error("ERROR: ORACLE_STELLAR_SECRET env var is required"); process.exit(1); }
 const oracleKP = Keypair.fromSecret(ORACLE_STELLAR_SEED);
 const ORACLE_ADDRESS = oracleKP.publicKey(); // GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI
 const ORACLE_ED25519_PK = oracleKP.rawPublicKey(); // 32 bytes
