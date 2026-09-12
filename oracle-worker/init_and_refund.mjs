@@ -18,9 +18,11 @@ const VRF_CONTRACT = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
 const XLM_SAC     = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 const FEE_AMOUNT  = 1_000_000n; // 0.1 XLM
 
-// Keys
-const deployerKP = Keypair.fromSecret("***REDACTED_TESTNET_SECRET***");
-const oracleKP   = Keypair.fromSecret("***REDACTED_TESTNET_SECRET***");
+// Keys — loaded from environment
+const DEPLOYER_SECRET = process.env.DEPLOYER_SECRET || process.env.ORACLE_SECRET;
+if (!DEPLOYER_SECRET) { console.error("ERROR: DEPLOYER_SECRET or ORACLE_SECRET env var is required"); process.exit(1); }
+const deployerKP = Keypair.fromSecret(DEPLOYER_SECRET);
+const oracleKP   = Keypair.fromSecret(DEPLOYER_SECRET);
 // deployer and oracle are the same account in this testnet setup
 
 // Known hex values
