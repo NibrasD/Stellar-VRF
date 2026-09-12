@@ -154,9 +154,26 @@
 
   <script type="module">
     // ── Constants ──────────────────────────────────────────────────────────────
-    const CONTRACT = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
-    const SOROBAN_RPC = "https://soroban-testnet.stellar.org";
-    const EXPLORER = "https://stellar.expert/explorer/testnet";
+    const NETWORKS = {
+      testnet: {
+        contract: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
+        soroban: "https://soroban-testnet.stellar.org",
+        explorer: "https://stellar.expert/explorer/testnet",
+        passphrase: "Test SDF Network ; September 2015",
+        friendbot: "https://friendbot.stellar.org",
+      },
+      mainnet: {
+        contract: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+        soroban: "https://mainnet.sorobanrpc.com",
+        explorer: "https://stellar.expert/explorer/public",
+        passphrase: "Public Global Stellar Network ; September 2015",
+        friendbot: null,
+      },
+    };
+    let NETWORK = NETWORKS.testnet;
+    const CONTRACT  = () => NETWORK.contract;
+    const SOROBAN_RPC = () => NETWORK.soroban;
+    const EXPLORER  = () => NETWORK.explorer;
 
     // ── Stellar SDK (ESM from CDN) ─────────────────────────────────────────────
     const SDK = await import("https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/12.3.0/stellar-sdk.min.js")
