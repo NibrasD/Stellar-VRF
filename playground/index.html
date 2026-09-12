@@ -4,15 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Stellar VRF — Randomness Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Courier New', monospace; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
+    body { font-family: 'Inter', sans-serif; background: #0a0e1a; color: #e0e6f0; min-height: 100vh; }
     .header { background: #111827; border-bottom: 1px solid #1e3a5f; padding: 20px 40px; }
     .header h1 { font-size: 1.4rem; color: #60a5fa; }
     .header p { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
     .container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
     .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; }
-    .tab { padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; border: 1px solid #1e3a5f; background: #111827; color: #94a3b8; font-family: monospace; }
+    .tab { padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; border: 1px solid #1e3a5f; background: #111827; color: #94a3b8; font-family: 'Inter', sans-serif; }
     .tab.active { background: #1e40af; color: #fff; border-color: #3b82f6; }
     .panel { display: none; }
     .panel.active { display: block; }
@@ -71,27 +73,24 @@
     </div>
 
     <div class="tabs">
-      <div class="tab active" onclick="switchTab('random')">🎲 Random Roll</div>
+      <div class="tab active" onclick="switchTab('random')">🔢 Random Number</div>
       <div class="tab" onclick="switchTab('range')">📊 Range Pick</div>
       <div class="tab" onclick="switchTab('proof')">🔍 Proof Explorer</div>
       <div class="tab" onclick="switchTab('verify')">✅ Verify</div>
     </div>
 
-    <!-- RANDOM ROLL -->
+    <!-- RANDOM NUMBER GENERATOR -->
     <div class="panel active" id="panel-random">
       <div class="card">
-        <h2>🎲 Provably Fair Random Roll</h2>
-        <p>Submits a real <code>request()</code> to the VRF contract. The oracle generates a BLS-VRF proof, verified on-chain, then <code>derive_random_in_range()</code> picks your result.</p>
-        <label>Random sides</label>
-        <select id="random-sides">
-          <option value="6">d6 — Standard random (1–6)</option>
-          <option value="10">d10 — Ten-sided (1–10)</option>
-          <option value="20">d20 — D&amp;D (1–20)</option>
-          <option value="100">d100 — Percentile (1–100)</option>
-        </select>
-        <label>Context (your label for this roll)</label>
-        <input type="text" id="random-context" value="random-roll" />
-        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🎲 Roll Random (testnet)</button>
+        <h2>🔢 Verifiable Random Number</h2>
+        <p>Generates a cryptographically verifiable random number on-chain. Useful for fair selection, audit sampling, ID assignment, NFT traits, or any use case requiring transparent, tamper-proof randomness.</p>
+        <label>Range — From</label>
+        <input type="number" id="random-sides" value="1" min="1" />
+        <label>Range — To</label>
+        <input type="number" id="random-max" value="1000" min="2" />
+        <label>Label / Purpose</label>
+        <input type="text" id="random-context" value="random-selection" placeholder="e.g. audit-sample, nft-trait, team-assignment" />
+        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🔢 Generate Random Number</button>
         <div class="output" id="random-output" style="text-align:center;color:#6b7280">Connect your keypair first</div>
         <div class="log" id="random-log" style="display:none"></div>
       </div>
@@ -106,9 +105,9 @@
         <input type="number" id="range-min" value="1" min="0" />
         <label>Maximum (inclusive)</label>
         <input type="number" id="range-max" value="1000000" />
-        <label>Context</label>
-        <input type="text" id="range-context" value="lottery-pick" />
-        <button class="primary" id="range-btn" onclick="pickRange()" disabled>🎯 Pick Number (testnet)</button>
+        <label>Label / Purpose</label>
+        <input type="text" id="range-context" value="audit-sample" placeholder="e.g. audit-sample, nft-rarity, team-pick" />
+        <button class="primary" id="range-btn" onclick="pickRange()" disabled>🎯 Generate Number</button>
         <div class="output" id="range-output" style="text-align:center;color:#6b7280">Connect your keypair first</div>
         <div class="log" id="range-log" style="display:none"></div>
       </div>
@@ -277,16 +276,18 @@
       document.getElementById("panel-" + name).classList.add("active");
     };
 
-    // ── Random Roll ──────────────────────────────────────────────────────────────
+    // ── Random Number Generator ────────────────────────────────────────────────
     window.rollRandom = async function() {
       if (!keypair) return;
-      const sides = parseInt(document.getElementById("random-sides").value);
-      const ctx = document.getElementById("random-context").value || "random";
+      const minVal = BigInt(document.getElementById("random-sides").value || 1);
+      const maxEl = document.getElementById("random-max");
+      const maxVal = BigInt(maxEl ? maxEl.value || 1000 : 1000);
+      const ctx = document.getElementById("random-context").value || "random-selection";
       const btn = document.getElementById("random-btn");
       const output = document.getElementById("random-output");
       clearLog("random-log");
       btn.disabled = true;
-      output.innerHTML = `<span class="spinner"></span> Submitting request to testnet…`;
+      output.innerHTML = `<span class="spinner"></span> Submitting request to network…`;
 
       try {
         const contextBytes = new TextEncoder().encode(ctx);
@@ -317,22 +318,18 @@
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
 
         // derive_random_in_range
-        const roll = await simulate("derive_random_in_range", [
+        const result = await simulate("derive_random_in_range", [
           nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(1n, { type: "u64" }),
-          nativeToScVal(BigInt(sides), { type: "u64" }),
+          nativeToScVal(minVal, { type: "u64" }),
+          nativeToScVal(maxVal, { type: "u64" }),
         ]);
-        const rollNum = Number(roll);
-        addLog("random-log", `derive_random_in_range(1, ${sides}) = ${rollNum}`, "success");
-
-        const randomEmoji = sides === 6
-          ? ["⚀","⚁","⚂","⚃","⚄","⚅"][rollNum - 1] : "🎲";
+        const resultNum = Number(result);
+        addLog("random-log", `derive_random_in_range(${minVal}, ${maxVal}) = ${resultNum}`, "success");
 
         output.innerHTML = `
-          <div style="font-size:3.5rem">${randomEmoji}</div>
-          <div class="result-big">${rollNum}</div>
-          <div class="result-label">d${sides} — verified on Stellar testnet</div>
-          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId}</div>`;
+          <div class="result-big">${resultNum}</div>
+          <div class="result-label">Range [${minVal} – ${maxVal}] — verified on Stellar</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId} | Context: ${ctx}</div>`;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
         addLog("random-log", `Error: ${e.message}`, "error");
