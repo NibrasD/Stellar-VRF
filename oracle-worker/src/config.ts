@@ -3,7 +3,32 @@
  * Reads from environment variables (.env file supported via dotenv).
  */
 
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
+import { fileURLToPath } from "url";
+import path from "path";
+import fs from "fs";
+
+// Load .env robustly, independent of the current working directory.
+// Under process managers like PM2 the cwd is often NOT the worker folder, so
+// `import "dotenv/config"` (which only checks cwd) silently finds nothing and
+// every required variable ends up missing. We resolve the worker root from
+// this compiled file's location (dist/ -> worker root) and also honor an
+// explicit DOTENV_PATH override.
+const here = path.dirname(fileURLToPath(import.meta.url));
+const candidates = [
+  process.env.DOTENV_PATH,                 // explicit override, if set
+  path.resolve(here, "../.env"),           // dist/config.js  -> ../.env
+  path.resolve(here, "../../.env"),        // src/config.ts   -> ../../.env (ts-node/tsx)
+  path.resolve(process.cwd(), ".env"),     // cwd fallback
+].filter(Boolean) as string[];
+
+for (const p of candidates) {
+  if (fs.existsSync(p)) {
+    loadDotenv({ path: p });
+    break;
+  }
+}
+
 import { Keypair, Networks } from "@stellar/stellar-sdk";
 
 function requireEnv(key: string): string {
