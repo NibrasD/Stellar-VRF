@@ -235,8 +235,10 @@
     const SDK = window.StellarSdk;
     const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative,
             xdr, rpc, Networks } = SDK;
-    // The UMD bundle ships a browser Buffer polyfill; fall back to globalThis.
-    const Buffer = SDK.Buffer || globalThis.Buffer;
+    // Browsers have no global Buffer; the UMD bundle doesn't reliably export it
+    // either. We only need a tiny shim for .isBuffer (used in one hex helper);
+    // everywhere else we pass Uint8Array directly to nativeToScVal.
+    const Buffer = (SDK && SDK.Buffer) || globalThis.Buffer || { isBuffer: () => false };
 
     let server = null;
     let keypair = null;
@@ -366,9 +368,9 @@
         const contextBytes = new TextEncoder().encode(ctx);
         addLog("random-log", `Submitting request(context="${ctx}") to VRF contract…`, "info");
 
-        // request()
+        // request()  (contextBytes is a Uint8Array — nativeToScVal accepts it directly)
         const txResult = await submitTx("request", [
-          nativeToScVal(Buffer.from(contextBytes), { type: "bytes" }),
+          nativeToScVal(contextBytes, { type: "bytes" }),
           nativeToScVal(keypair.publicKey(), { type: "address" }),
         ], "random-log");
 
@@ -426,7 +428,7 @@
         addLog("range-log", `Submitting request() for range [${min}, ${max}]…`, "info");
 
         const txResult = await submitTx("request", [
-          nativeToScVal(Buffer.from(contextBytes), { type: "bytes" }),
+          nativeToScVal(contextBytes, { type: "bytes" }),
           nativeToScVal(keypair.publicKey(), { type: "address" }),
         ], "range-log");
 
