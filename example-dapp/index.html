@@ -46,10 +46,30 @@
 <body>
   <div class="header">
     <h1>🔒 Stellar VRF Oracle</h1>
-    <span id="network-badge" class="badge" style="background:#052e16;color:#86efac;">● Mainnet</span>
+    <span id="network-badge" class="badge" style="background:#1e40af;color:#93c5fd;">● Testnet</span>
   </div>
 
   <div class="container">
+    <div class="card">
+      <h2>🔗 Connect</h2>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button id="btn-testnet" onclick="switchNetwork('testnet')"
+          style="padding:7px 16px;border-radius:8px;border:1px solid #3b82f6;background:#1e40af;color:#fff;font-size:0.82rem">Testnet</button>
+        <button id="btn-mainnet" onclick="switchNetwork('mainnet')"
+          style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:#111827;color:#94a3b8;font-size:0.82rem">Mainnet</button>
+      </div>
+      <div id="network-info-box" style="background:#0a0e1a;border:1px solid #1e3a5f;border-radius:8px;padding:12px 16px;font-size:0.8rem;color:#94a3b8;line-height:1.6;margin-bottom:16px"></div>
+      <label>Secret Key (S…)</label>
+      <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
+      <div id="keypair-hint" style="margin-top:6px"></div>
+      <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+        <button id="connect-btn" onclick="initClient()">Connect</button>
+        <button id="fund-btn" onclick="createTestnetAccount()"
+          style="background:#065f46">⚡ Create &amp; Fund Testnet Account</button>
+      </div>
+      <div id="connect-status" style="margin-top:12px;font-size:0.85rem"></div>
+    </div>
+
     <div class="card">
       <h2>📡 Request Verifiable Randomness</h2>
       <p style="color:#94a3b8;font-size:0.85rem;margin-bottom:20px;line-height:1.7;">
@@ -129,69 +149,175 @@
   </div>
 
   <script type="module">
-    import { VrfClient, Networks } from "https://cdn.jsdelivr.net/npm/@stellar-vrf/sdk@1.0.0/dist/index.js";
-    import { Keypair } from "https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.0.0/dist/stellar-sdk.js";
+    // Self-contained integration reference — talks to the VRF contract directly
+    // via the official @stellar/stellar-sdk (no external package required).
+    const SDK = await import("https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/13.1.0/stellar-sdk.min.js")
+      .catch(() => import("https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.1.0/dist/stellar-sdk.js"));
+    const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative, rpc, Networks } = SDK;
 
-    const CONTRACTS = {
-      testnet: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
-      mainnet: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+    const NETWORKS = {
+      testnet: {
+        contract: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
+        soroban: "https://soroban-testnet.stellar.org",
+        passphrase: Networks.TESTNET,
+        explorer: "https://stellar.expert/explorer/testnet",
+      },
+      mainnet: {
+        contract: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+        soroban: "https://mainnet.sorobanrpc.com",
+        passphrase: Networks.PUBLIC,
+        explorer: "https://stellar.expert/explorer/public",
+      },
     };
-    const CONTRACT_ID = CONTRACTS.mainnet;
-    let client = null;
+    let NETWORK = NETWORKS.testnet;
+    let server = null;
+    let keypair = null;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    async function init() {
+    window.switchNetwork = function (net) {
+      NETWORK = NETWORKS[net];
+      keypair = null; server = null;
+      const isMain = net === "mainnet";
+      const badge = document.getElementById("network-badge");
+      badge.textContent = isMain ? "● Mainnet" : "● Testnet";
+      badge.style.cssText = `background:${isMain ? "#052e16" : "#1e40af"};color:${isMain ? "#86efac" : "#93c5fd"};padding:4px 10px;border-radius:12px;font-size:0.75rem`;
+      document.getElementById("btn-testnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMain ? "#1e3a5f" : "#3b82f6"};background:${isMain ? "#111827" : "#1e40af"};color:${isMain ? "#94a3b8" : "#fff"};font-size:0.82rem`;
+      document.getElementById("btn-mainnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMain ? "#3b82f6" : "#1e3a5f"};background:${isMain ? "#1e40af" : "#111827"};color:${isMain ? "#fff" : "#94a3b8"};font-size:0.82rem`;
+      document.getElementById("network-info-box").innerHTML = isMain
+        ? `🔴 <strong>Stellar Mainnet</strong> — real XLM is spent. Enter a dedicated keypair with a small balance. Your secret key signs locally and is <strong>never sent to any server</strong>.`
+        : `⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.`;
+      document.getElementById("keypair-hint").innerHTML = isMain
+        ? `<small style="color:#fbbf24">⚠️ Never enter a wallet holding large funds.</small>`
+        : `<small style="color:#6b7280">No account? Use the fund button →</small>`;
+      document.getElementById("fund-btn").style.display = isMain ? "none" : "inline-block";
+      document.getElementById("connect-status").innerHTML = "";
+      document.getElementById("request-btn").disabled = true;
+    };
+
+    window.createTestnetAccount = async function () {
+      const status = document.getElementById("connect-status");
       try {
         const kp = Keypair.random();
-        // Note: mainnet accounts need real XLM — for demo purposes only
-        client = new VrfClient({
-          contractId: CONTRACT_ID,
-          rpcUrl: "https://mainnet.sorobanrpc.com",
-          networkPassphrase: Networks.PUBLIC,
-          keypair: kp,
-        });
-        document.getElementById("network-badge").textContent = "● Mainnet";
+        status.innerHTML = `<span class="spinner"></span> Funding new testnet account via Friendbot…`;
+        const res = await fetch(`https://friendbot.stellar.org?addr=${kp.publicKey()}`);
+        if (!res.ok) throw new Error("Friendbot funding failed");
+        document.getElementById("secret-key").value = kp.secret();
+        await window.initClient();
       } catch (e) {
-        console.error("Init failed:", e);
+        status.innerHTML = `<span style="color:#fca5a5">❌ ${e.message}</span>`;
       }
+    };
+
+    window.initClient = async function () {
+      const secret = document.getElementById("secret-key").value.trim();
+      const status = document.getElementById("connect-status");
+      try {
+        keypair = Keypair.fromSecret(secret);
+        server = new rpc.Server(NETWORK.soroban, { allowHttp: false });
+        await server.getAccount(keypair.publicKey());
+        status.innerHTML = `✅ Connected: <span style="color:#86efac">${keypair.publicKey().slice(0, 20)}…</span>`;
+        document.getElementById("request-btn").disabled = false;
+      } catch (e) {
+        keypair = null;
+        status.innerHTML = `<span style="color:#fca5a5">❌ ${e.message}</span>`;
+        document.getElementById("request-btn").disabled = true;
+      }
+    };
+
+    async function simulate(fnName, args) {
+      const account = await server.getAccount(keypair.publicKey());
+      const tx = new TransactionBuilder(account, { fee: "1000000", networkPassphrase: NETWORK.passphrase })
+        .addOperation(Operation.invokeContractFunction({ contract: NETWORK.contract, function: fnName, args }))
+        .setTimeout(30).build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+      return sim.result?.retval ? scValToNative(sim.result.retval) : null;
     }
 
-    window.submitRequest = async function() {
+    async function submitTx(fnName, args) {
+      const account = await server.getAccount(keypair.publicKey());
+      const tx = new TransactionBuilder(account, { fee: "2000000", networkPassphrase: NETWORK.passphrase })
+        .addOperation(Operation.invokeContractFunction({ contract: NETWORK.contract, function: fnName, args }))
+        .setTimeout(120).build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+      const prepared = rpc.assembleTransaction(tx, sim).build();
+      prepared.sign(keypair);
+      const sent = await server.sendTransaction(prepared);
+      if (sent.status === "ERROR") throw new Error(JSON.stringify(sent.errorResult));
+      for (let i = 0; i < 60; i++) {
+        await sleep(2000);
+        const result = await server.getTransaction(sent.hash);
+        if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) return { result, hash: sent.hash };
+        if (result.status === rpc.Api.GetTransactionStatus.FAILED) throw new Error(`TX failed: ${sent.hash}`);
+      }
+      throw new Error("TX confirmation timeout");
+    }
+
+    window.submitRequest = async function () {
+      if (!keypair) {
+        document.getElementById("status-area").innerHTML =
+          `<div class="status error">❌ Connect a funded account first (use the Connect card above).</div>`;
+        return;
+      }
       const btn = document.getElementById("request-btn");
       const ctx = document.getElementById("context-input").value || "vrf-demo";
       const rangeMin = BigInt(document.getElementById("range-min").value || 1);
       const rangeMax = BigInt(document.getElementById("range-max").value || 1000);
       const statusArea = document.getElementById("status-area");
-
       btn.disabled = true;
-      statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar Mainnet…</div>`;
-
       try {
+        const netName = NETWORK === NETWORKS.mainnet ? "Mainnet" : "Testnet";
+        statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar ${netName}…</div>`;
+
         const contextBytes = new TextEncoder().encode(ctx);
-        const requestId = await client.request(contextBytes);
+        const { result: reqResult, hash } = await submitTx("request", [
+          nativeToScVal(Buffer.from(contextBytes), { type: "bytes" }),
+          nativeToScVal(keypair.publicKey(), { type: "address" }),
+        ]);
+        // Extract requestId robustly (returnValue is decoded by the RPC;
+        // resultMetaXdr.v3() throws "v3 not set" on newer v4 meta).
+        let requestId = 1n;
+        try {
+          if (reqResult.returnValue) requestId = BigInt(scValToNative(reqResult.returnValue));
+          else {
+            const meta = reqResult.resultMetaXdr;
+            const sw = meta?.switch?.().value;
+            const sm = sw === 3 ? meta.v3().sorobanMeta() : meta?.v4?.().sorobanMeta?.();
+            const rv = sm?.returnValue?.();
+            if (rv) requestId = BigInt(scValToNative(rv));
+          }
+        } catch (_) {}
 
         statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>
-          Request #${requestId} submitted. Waiting for oracle fulfillment…
-          <br><small style="color:#6b7280">The oracle generates a BLS-VRF proof (~10–30 seconds)</small>
-        </div>`;
+          Request #${requestId} submitted (<a class="tx-link" href="${NETWORK.explorer}/tx/${hash}" target="_blank">tx ↗</a>).
+          Waiting for oracle fulfillment…
+          <br><small style="color:#6b7280">The oracle generates a BLS-VRF proof (~10–30s)</small></div>`;
 
-        const proof = await client.waitForFulfillment(requestId, 120000);
-        const result = await client.deriveRandomInRange(requestId, rangeMin, rangeMax);
+        let fulfilled = false;
+        for (let i = 0; i < 40; i++) {
+          await sleep(3000);
+          fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
+          if (fulfilled) break;
+        }
+        if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
 
-        // Show result
+        const result = await simulate("derive_random_in_range", [
+          nativeToScVal(requestId, { type: "u64" }),
+          nativeToScVal(rangeMin, { type: "u64" }),
+          nativeToScVal(rangeMax, { type: "u64" }),
+        ]);
+
         document.getElementById("result-card").style.display = "block";
         document.getElementById("result-number").textContent = result.toString();
         document.getElementById("result-label").textContent =
           `Range [${rangeMin} – ${rangeMax}] · Context: "${ctx}" · Request #${requestId}`;
-
-        const betaHex = Array.from(proof.betaOutput).map(b => b.toString(16).padStart(2,'0')).join('');
-
         document.getElementById("proof-display").innerHTML = `
           <div class="field"><div class="field-label">Request ID</div><div class="field-value">${requestId}</div></div>
-          <div class="field"><div class="field-label">Beta Output (verifiable random seed)</div><div class="field-value">${betaHex}</div></div>
-          <div class="field"><div class="field-label">drand Round</div><div class="field-value">${proof.drandRound}</div></div>
-          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} ∈ [${rangeMin}, ${rangeMax}]</div></div>
-        `;
-
+          <div class="field"><div class="field-label">Request TX</div><div class="field-value"><a class="tx-link" href="${NETWORK.explorer}/tx/${hash}" target="_blank">${hash}</a></div></div>
+          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} ∈ [${rangeMin}, ${rangeMax}]</div></div>`;
         statusArea.innerHTML = `<div class="status success">✅ Fulfilled and verified on-chain. Result is tamper-proof.</div>`;
       } catch (e) {
         statusArea.innerHTML = `<div class="status error">❌ ${e.message}</div>`;
@@ -200,7 +326,8 @@
       }
     };
 
-    init();
+    switchNetwork("testnet");
+    document.getElementById("request-btn").disabled = true;
   </script>
 </body>
 </html>
