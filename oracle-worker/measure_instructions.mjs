@@ -16,7 +16,9 @@ const NETWORK     = Networks.TESTNET;
 
 // Testnet deployment
 const CONTRACT_ID = "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE";
-const ORACLE_KP   = Keypair.fromSecret("***REDACTED_TESTNET_SECRET***");
+const ORACLE_SECRET = process.env.ORACLE_SECRET;
+if (!ORACLE_SECRET) { console.error("ERROR: ORACLE_SECRET env var is required"); process.exit(1); }
+const ORACLE_KP   = Keypair.fromSecret(ORACLE_SECRET);
 const server      = new rpc.Server(TESTNET_RPC, { allowHttp: false });
 
 function bytesN(hex, n) {
