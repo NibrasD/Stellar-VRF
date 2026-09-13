@@ -42,8 +42,8 @@
     <h1>📊 Stellar VRF Oracle Dashboard</h1>
     <div style="display:flex;gap:12px;align-items:center">
       <div class="net-switcher">
-        <button class="net-btn active" id="btn-testnet" onclick="switchNetwork('testnet')">Testnet</button>
-        <button class="net-btn" id="btn-mainnet" onclick="switchNetwork('mainnet')">Mainnet</button>
+        <button class="net-btn" id="btn-testnet" onclick="switchNetwork('testnet')">Testnet</button>
+        <button class="net-btn active" id="btn-mainnet" onclick="switchNetwork('mainnet')">Mainnet</button>
       </div>
       <span id="last-updated" style="color:#6b7280;font-size:0.75rem">Loading…</span>
       <span class="live-badge">● LIVE</span>
@@ -115,6 +115,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.1.0/dist/stellar-sdk.min.js"></script>
   <script>
     // ── Config ───────────────────────────────────────────────────────────────
     const NETWORKS = {
@@ -134,8 +135,8 @@
     const DRAND_GENESIS = 1692803367;
     const DRAND_PERIOD = 3;
 
-    let currentNetwork = "testnet";
-    let cfg = NETWORKS.testnet;
+    let currentNetwork = "mainnet";
+    let cfg = NETWORKS.mainnet;
     let startLedger = 0;
     let requestEvents = []; // {requestId, requester, ledger}
     let fulfillEvents = {}; // requestId -> {betaOutput, ledger}
@@ -150,7 +151,7 @@
       fulfillEvents = {};
       startLedger = 0;
       if (!cfg.contract) {
-        showError("Mainnet contract not yet deployed. Coming soon.");
+        showError("No contract configured for this network.");
         return;
       }
       hideError();
@@ -184,106 +185,117 @@
       return r.sequence;
     }
 
-    async function getContractEvents(eventType, topicSymbol, fromLedger, limit = 50) {
-      // Encode topic symbol as base64 XDR ScVal
-      // ScvSymbol: type byte 0x0a, then 4-byte length, then UTF-8 bytes
-      const sym = topicSymbol;
-      const symBytes = new TextEncoder().encode(sym);
-      // Build ScVal scvSymbol manually: discriminant u32 = 10 (0x0000000a)
-      const buf = new ArrayBuffer(4 + 4 + symBytes.length);
-      const view = new DataView(buf);
-      view.setUint32(0, 10, false); // scvSymbol discriminant
-      view.setUint32(4, symBytes.length, false);
-      symBytes.forEach((b, i) => view.setUint8(8 + i, b));
-      const topicBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    // Encode a Soroban Symbol topic to base64 XDR using the official SDK.
+    // (ScVal::Symbol has discriminant 15 and requires XDR 4-byte alignment —
+    //  hand-rolling this is error-prone, so we delegate to stellar-sdk.)
+    function encodeSymbolTopic(sym) {
+      return StellarSdk.xdr.ScVal.scvSymbol(sym).toXDR("base64");
+    }
 
-      const r = await rpcCall("getEvents", {
-        filters: [{
+    // Soroban RPC only scans a bounded window (~12k ledgers) per call, so a
+    // single getEvents call starting at the oldest retained ledger will NOT
+    // reach events that are further ahead. We must follow the returned cursor
+    // page-by-page until we reach the latest ledger — even across empty pages.
+    async function getContractEvents(topicSymbol, fromLedger) {
+      const topicBase64 = encodeSymbolTopic(topicSymbol);
+      const out = [];
+      let cursor = null;
+      let calls = 0;
+      while (calls < 40) {
+        calls++;
+        const filters = [{
           type: "contract",
           contractIds: [cfg.contract],
           topics: [[topicBase64]],
-        }],
-        startLedger: fromLedger,
-        pagination: { limit },
-      });
-      return r.events || [];
+        }];
+        const params = cursor
+          ? { filters, pagination: { cursor, limit: 500 } }
+          : { startLedger: fromLedger, filters, pagination: { limit: 500 } };
+        const r = await rpcCall("getEvents", params);
+        if (r.events && r.events.length) out.push(...r.events);
+        cursor = r.cursor;
+        if (!cursor) break;
+        // Stop once the cursor's ledger has caught up to the scanned tip.
+        const cursorLedger = Number(BigInt(cursor.split("-")[0]) >> 32n);
+        if (r.latestLedger && cursorLedger >= r.latestLedger) break;
+      }
+      return out;
     }
 
-    // ── XDR parsing (minimal, for our specific event format) ──────────────────
+    // ── XDR parsing via the official SDK ──────────────────────────────────────
     // The VRF contract emits:
     //   request: value = (request_id: u64, requester: Address, required_round: u64)
     //   fulfill: value = (request_id: u64, beta_output: Bytes<32>)
-    // scValToNative is not available in vanilla JS, so we parse the returned
-    // xdr field (already decoded by the Soroban RPC into a value object).
+    // Soroban RPC returns each event `value` as a base64-encoded ScVal XDR string.
+    // We decode it with scValToNative for a robust, correct parse.
 
-    function parseU64(scval) {
-      // RPC returns ScVal as JSON: {u64: "12345"} or {i64: ...}
-      if (scval && scval.u64 !== undefined) return BigInt(scval.u64);
-      if (scval && scval.i64 !== undefined) return BigInt(scval.i64);
-      return 0n;
-    }
-
-    function parseAddress(scval) {
-      // {address: {accountId: {publicKeyTypeEd25519: "hex..."}}}
+    function decodeEventValue(evt) {
+      // Newer RPC returns `value` (base64 XDR string); older returns `valueXdr`.
+      const b64 = typeof evt.value === "string" ? evt.value : evt.valueXdr;
+      if (!b64) return null;
       try {
-        const addr = scval?.address;
-        if (addr?.accountId) {
-          const pk = addr.accountId.publicKeyTypeEd25519;
-          // Convert raw hex public key to G... address via stellar SDK not available,
-          // so we display the contract/account discriminant
-          return addr.accountId ? "[address]" : "[contract]";
-        }
-        if (addr?.contractId) return addr.contractId;
-      } catch {}
-      return "unknown";
+        const scv = StellarSdk.xdr.ScVal.fromXDR(b64, "base64");
+        return StellarSdk.scValToNative(scv);
+      } catch (e) {
+        console.warn("decodeEventValue failed:", e);
+        return null;
+      }
     }
 
-    function parseBytes(scval) {
-      if (scval && scval.bytes) return scval.bytes; // base64 or hex
-      return null;
-    }
-
-    function parseTuple(scval) {
-      if (scval && scval.vec) return scval.vec;
-      return [];
+    function toHex(u8) {
+      if (!u8) return null;
+      const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8.data || u8);
+      return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
     // ── Event fetching ────────────────────────────────────────────────────────
     async function fetchEvents() {
       if (!cfg.contract) return;
 
-      // On first load, start from recent ledgers
-      if (startLedger === 0) {
-        const latest = await getLatestLedger();
-        startLedger = Math.max(1, latest - 17280); // ~1 day back
-        document.getElementById("stat-ledger").textContent = latest;
-      }
+      // Recompute the retention window every refresh. getEvents rejects any
+      // startLedger older than the node's oldest retained ledger, so we must
+      // discover `oldestLedger` and start just inside it.
+      const latest = await getLatestLedger();
+      document.getElementById("stat-ledger").textContent = latest;
+      let oldest = Math.max(1, latest - 16000);
+      try {
+        const probe = await rpcCall("getEvents", {
+          startLedger: Math.max(1, latest - 100),
+          filters: [{ type: "contract", contractIds: [cfg.contract] }],
+          pagination: { limit: 1 },
+        });
+        if (probe.oldestLedger) oldest = probe.oldestLedger + 1;
+      } catch (_) { /* fall back to latest-16000 */ }
+      startLedger = oldest;
+
+      // Reset accumulators so a refresh reflects current on-chain state.
+      requestEvents = [];
+      fulfillEvents = {};
 
       // Fetch request events
-      const rawRequests = await getContractEvents("contract", "request", startLedger);
+      const rawRequests = await getContractEvents("request", startLedger);
       for (const evt of rawRequests) {
-        const tuple = parseTuple(evt.value);
-        if (tuple.length >= 3) {
-          const id = parseU64(tuple[0]).toString();
+        const val = decodeEventValue(evt); // [request_id, requester, required_round]
+        if (Array.isArray(val) && val.length >= 3) {
+          const id = String(val[0]);
           if (!requestEvents.find(e => e.requestId === id)) {
             requestEvents.push({
               requestId: id,
-              requester: evt.contractId || "—",
+              requester: String(val[1]),
               ledger: evt.ledger,
-              pagingToken: evt.pagingToken,
+              txHash: evt.txHash,
             });
           }
         }
       }
 
       // Fetch fulfill events
-      const rawFulfills = await getContractEvents("contract", "fulfill", startLedger);
+      const rawFulfills = await getContractEvents("fulfill", startLedger);
       for (const evt of rawFulfills) {
-        const tuple = parseTuple(evt.value);
-        if (tuple.length >= 2) {
-          const id = parseU64(tuple[0]).toString();
-          const beta = parseBytes(tuple[1]);
-          fulfillEvents[id] = { betaOutput: beta, ledger: evt.ledger };
+        const val = decodeEventValue(evt); // [request_id, beta_output]
+        if (Array.isArray(val) && val.length >= 2) {
+          const id = String(val[0]);
+          fulfillEvents[id] = { betaOutput: toHex(val[1]), ledger: evt.ledger };
         }
       }
 
@@ -372,7 +384,9 @@
 
     refresh();
     setInterval(fetchDrand, 1000);
-    setInterval(refresh, 10000);
+    // Each refresh paginates the full retention window (multiple getEvents
+    // calls per topic), so poll every 30s to stay well under public RPC limits.
+    setInterval(refresh, 30000);
   </script>
 </body>
 </html>
