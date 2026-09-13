@@ -166,7 +166,11 @@
 
   </div>
 
-  <script type="module">
+  <!-- Stellar SDK is a UMD bundle: load via a classic <script> so it attaches
+       window.StellarSdk. (Dynamic import() of a UMD file returns an empty module
+       and breaks everything.) -->
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.1.0/dist/stellar-sdk.min.js"></script>
+  <script>
     // ── Constants ──────────────────────────────────────────────────────────────
     const NETWORKS = {
       testnet: {
@@ -227,12 +231,12 @@
       });
     };
 
-    // ── Stellar SDK (ESM from CDN) ─────────────────────────────────────────────
-    const SDK = await import("https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/12.3.0/stellar-sdk.min.js")
-      .catch(() => import("https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@13.0.0/dist/stellar-sdk.js"));
-
+    // ── Stellar SDK (UMD global loaded via <script> above) ─────────────────────
+    const SDK = window.StellarSdk;
     const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative,
             xdr, rpc, Networks } = SDK;
+    // The UMD bundle ships a browser Buffer polyfill; fall back to globalThis.
+    const Buffer = SDK.Buffer || globalThis.Buffer;
 
     let server = null;
     let keypair = null;
