@@ -255,6 +255,20 @@
       if (el) { el.innerHTML = ""; el.style.display = "none"; }
     }
 
+    // Safely extract a contract call's return value across protocol versions.
+    // The RPC-decoded getTransaction result exposes `returnValue` directly;
+    // calling resultMetaXdr.v3() throws "v3 not set" on newer (v4) meta.
+    function extractReturnValue(txResult) {
+      try {
+        if (txResult.returnValue) return scValToNative(txResult.returnValue);
+        const meta = txResult.resultMetaXdr;
+        const sw = meta?.switch?.().value;
+        const sm = sw === 3 ? meta.v3().sorobanMeta() : meta?.v4?.().sorobanMeta?.();
+        const rv = sm?.returnValue?.();
+        return rv ? scValToNative(rv) : null;
+      } catch (_) { return null; }
+    }
+
     async function simulate(fnName, args) {
       const account = await server.getAccount(keypair.publicKey());
       const tx = new TransactionBuilder(account, {
@@ -355,8 +369,8 @@
         ], "random-log");
 
         // Extract request ID from return value
-        const retval = txResult.resultMetaXdr?.v3?.()?.sorobanMeta?.()?.returnValue?.();
-        const requestId = retval ? BigInt(scValToNative(retval)) : 1n;
+        const rv = extractReturnValue(txResult);
+        const requestId = rv != null ? BigInt(rv) : 1n;
         addLog("random-log", `Request ID: ${requestId}`, "success");
         output.innerHTML = `<span class="spinner"></span> Request #${requestId} submitted. Waiting for oracle…`;
 
@@ -412,8 +426,8 @@
           nativeToScVal(keypair.publicKey(), { type: "address" }),
         ], "range-log");
 
-        const retval = txResult.resultMetaXdr?.v3?.()?.sorobanMeta?.()?.returnValue?.();
-        const requestId = retval ? BigInt(scValToNative(retval)) : 1n;
+        const rv = extractReturnValue(txResult);
+        const requestId = rv != null ? BigInt(rv) : 1n;
         addLog("range-log", `Request ID: ${requestId}`, "success");
         output.innerHTML = `<span class="spinner"></span> #${requestId} waiting for oracle…`;
 
