@@ -2,40 +2,48 @@
 
 ## Architecture Overview
 
+Production (Mainnet) topology — **primary and standby on separate hosts**,
+coordinating through a shared Redis lease:
+
 ```
-                    ┌──────────────────────────────────────┐
-                    │           Shared Lock Volume          │
-                    │        /var/lock/vrf-oracle.lock      │
-                    └──────────────┬───────────────────────┘
-                                   │
-                    ┌──────────────┴───────────────────────┐
-                    │                                       │
-          ┌─────────▼──────────┐              ┌────────────▼────────┐
-          │   oracle-primary   │              │   oracle-standby    │
-          │   (LEADER)         │              │   (STANDBY)         │
-          │   :8080            │              │   :8081             │
-          │                    │              │                     │
-          │ ✓ Holds lock       │              │ ✗ Watches lock      │
-          │ ✓ Submits TXs      │              │ ✗ No TX submission  │
-          │ ✓ Renews every 10s │              │ ✓ Polls every 5s    │
-          └────────────────────┘              └─────────────────────┘
-                    │                                       │
-                    └───────────────┬───────────────────────┘
-                                    │
-                         ┌──────────▼──────────┐
-                         │   Stellar Testnet   │
-                         │   VRF Contract      │
-                         └─────────────────────┘
+          ┌───────────────────────────────────────────────┐
+          │              Shared Redis (lease)              │
+          │   SET vrf-oracle:leader <instance> PX 30000 NX │
+          └───────────────┬───────────────────────────────┘
+                          │  (network — no shared filesystem needed)
+          ┌───────────────┴───────────────────────┐
+          │                                        │
+  ┌───────▼─────────── HOST A ──┐        ┌─────────▼──────── HOST B ──┐
+  │   oracle-primary  (LEADER)  │        │   oracle-standby (STANDBY) │
+  │   :8080                     │        │   :8081                    │
+  │ ✓ Holds Redis lease         │        │ ✗ Lease held by A          │
+  │ ✓ Submits fulfill() TXs     │        │ ✗ No TX submission         │
+  │ ✓ Renews lease every 10s    │        │ ✓ Attempts acquire every 5s│
+  └─────────────────────────────┘        └────────────────────────────┘
+                          │                        │
+                          └───────────┬────────────┘
+                                      │
+                           ┌──────────▼──────────┐
+                           │   Stellar Mainnet   │
+                           │   VRF Contract      │
+                           └─────────────────────┘
 ```
 
-## Leader Election Protocol
+Two backends are selected automatically at runtime:
 
-1. **Startup**: Both nodes try to acquire the lock file
-2. **Lock format**: `{"pid": 1234, "instanceId": "oracle-primary", "timestamp": 1694000000}`
-3. **Lock TTL**: 30 seconds — if not renewed, lock is considered stale
-4. **Heartbeat**: Leader renews lock every 10 seconds
-5. **Failover**: Standby detects stale lock (age > 30s) and takes over
-6. **Prevention**: Only the lock holder submits `fulfill()` transactions
+| Backend | When | Multi-host? |
+|---|---|---|
+| **Redis lease** (`src/redisLock.ts`) | `REDIS_URL` is set | ✅ Yes — production |
+| **Atomic file lock** (`src/leader.ts`) | `REDIS_URL` is empty | ❌ Single host / shared volume only |
+
+## Leader Election Protocol (Redis, multi-server)
+
+1. **Acquire**: `SET vrf-oracle:leader <instanceId> PX <ttl> NX` — atomic; only one node can win.
+2. **Renew**: Leader runs a fenced Lua `pexpire` every `LEADER_HEARTBEAT_MS` (only if it still owns the key).
+3. **Failover**: If the leader stops renewing, the key expires after `LEADER_LOCK_TTL_MS`; a standby's next `SET … NX` succeeds and it becomes leader.
+4. **Release**: On shutdown the leader runs a fenced Lua `del` (only deletes the key if it still owns it), so a standby takes over immediately.
+5. **Fail-closed**: Any Redis error makes `acquireOrRenew()` return `false` → the node drops to standby, so a Redis outage never produces two leaders.
+6. **Defense-in-depth**: Even in a rare split, the on-chain contract rejects duplicate `fulfill()` (idempotency + re-entrancy guard), so double-submission is impossible.
 
 ## Failover Timing
 
@@ -48,29 +56,40 @@
 | Standby starts fulfilling | T+35s |
 | **Maximum gap in service** | **~35 seconds** |
 
-## Single-Server Setup
+## Single-Host Demo
 
-Both containers on the same machine share the lock via a Docker volume:
+`docker-compose.ha.yml` bundles Redis + primary + standby on one machine:
 
 ```bash
 docker compose -f docker-compose.ha.yml up -d
 ```
 
-## Multi-Server Setup
+## Multi-Host Production Setup (recommended for Mainnet)
 
-For true geographic redundancy, use Redis-based locking:
+For true geographic redundancy, run one Redis reachable by both hosts and set
+the SAME `REDIS_URL` on each oracle. No shared filesystem is required.
 
 ```bash
-# Install Redis
-docker run -d --name redis -p 6379:6379 redis:7-alpine
+# 1. Provision a managed/HA Redis (or self-host) reachable by both oracle hosts.
 
-# Set in .env:
-# LEADER_BACKEND=redis
-# REDIS_URL=redis://redis:6379
+# 2. On HOST A (.env):
+INSTANCE_ID=oracle-primary
+REDIS_URL=redis://:password@redis.internal:6379
+HEALTH_PORT=8080
+
+# 3. On HOST B (.env):
+INSTANCE_ID=oracle-standby
+REDIS_URL=redis://:password@redis.internal:6379   # same Redis
+HEALTH_PORT=8080
+
+# 4. Start the worker on each host:
+npm install && npm run build && node dist/index.js
 ```
 
-> Note: Redis-based leader election requires the `ioredis` package.
-> File-based locking is sufficient for single-server HA.
+Whichever node acquires the Redis lease becomes the sole leader/submitter; the
+other automatically takes over if the leader dies. The Redis client is
+implemented over a raw TCP RESP socket in `src/redisLock.ts` — **no extra npm
+dependency is required** (works with `rediss://` for TLS too).
 
 ## Monitoring HA State
 
@@ -91,8 +110,10 @@ Expected output:
 | Variable | Default | Description |
 |---|---|---|
 | `INSTANCE_ID` | `oracle-<pid>` | Unique name for this node |
-| `LEADER_LOCK_FILE` | `/tmp/vrf-oracle.lock` | Path to lock file |
-| `LEADER_LOCK_TTL_MS` | `30000` | Lock expiry in ms |
-| `LEADER_HEARTBEAT_MS` | `10000` | How often leader renews lock |
-| `LEADER_POLL_MS` | `5000` | How often standby checks lock |
+| `REDIS_URL` | *(empty)* | If set, use the distributed Redis lease (multi-host). Empty = file lock. |
+| `LEADER_REDIS_KEY` | `vrf-oracle:leader` | Redis key holding the leader lease |
+| `LEADER_LOCK_FILE` | `/tmp/vrf-oracle.lock` | Lock file (single-host fallback only) |
+| `LEADER_LOCK_TTL_MS` | `30000` | Lease/lock expiry in ms |
+| `LEADER_HEARTBEAT_MS` | `10000` | How often the leader renews |
+| `LEADER_POLL_MS` | `5000` | How often a standby tries to acquire |
 | `HEALTH_PORT` | `8080` | HTTP health/metrics port |

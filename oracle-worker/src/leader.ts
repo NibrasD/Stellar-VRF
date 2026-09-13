@@ -1,26 +1,33 @@
 /**
- * leader.ts — File-based leader election for HA oracle deployment
+ * leader.ts — Leader election for HA oracle deployment.
  *
- * Strategy: single-server HA using a lock file with heartbeat.
- * Works without Redis — uses atomic file operations.
+ * Two backends, selected automatically:
  *
- * For multi-server HA: replace with Redis SETNX lock.
+ *   1. DISTRIBUTED (multi-server) — used when REDIS_URL is set.
+ *      Primary and hot-standby run on SEPARATE hosts and coordinate through a
+ *      shared Redis lease (SET NX PX + fenced renew/release via Lua). This is
+ *      the production topology required for Mainnet HA.
  *
- * Protocol:
- *   - Leader writes its PID + timestamp to LOCK_FILE every HEARTBEAT_MS
- *   - Standby reads the lock file every POLL_MS
- *   - If lock is stale (age > LOCK_TTL_MS), standby becomes leader
- *   - Only the leader submits fulfill() transactions
+ *   2. FILE-BASED (single-server) — fallback when REDIS_URL is absent.
+ *      Uses an atomic lock file; only valid when both instances share a
+ *      filesystem (e.g. one host, or a shared volume). Fine for local dev.
+ *
+ * In both modes only the current leader submits fulfill() transactions, which
+ * — together with the contract's on-chain idempotency guard — prevents
+ * double-submission from redundant nodes.
  */
 
 import fs from "fs";
-import path from "path";
 import { log } from "./utils.js";
+import { RedisLease } from "./redisLock.js";
 
 const LOCK_FILE = process.env.LEADER_LOCK_FILE || "/tmp/vrf-oracle.lock";
 const LOCK_TTL_MS = parseInt(process.env.LEADER_LOCK_TTL_MS || "30000", 10);    // 30s
 const HEARTBEAT_MS = parseInt(process.env.LEADER_HEARTBEAT_MS || "10000", 10); // 10s
 const POLL_MS = parseInt(process.env.LEADER_POLL_MS || "5000", 10);            // 5s
+
+const REDIS_URL = process.env.REDIS_URL || "";
+const REDIS_LOCK_KEY = process.env.LEADER_REDIS_KEY || "vrf-oracle:leader";
 
 export type LeaderState = "leader" | "standby" | "unknown";
 
@@ -34,6 +41,29 @@ const INSTANCE_ID = process.env.INSTANCE_ID || `oracle-${process.pid}`;
 
 let state: LeaderState = "unknown";
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+// Distributed backend (only instantiated when REDIS_URL is present).
+const useRedis = REDIS_URL.length > 0;
+const redisLease: RedisLease | null = useRedis
+  ? new RedisLease({ url: REDIS_URL, key: REDIS_LOCK_KEY, instanceId: INSTANCE_ID, ttlMs: LOCK_TTL_MS })
+  : null;
+
+/**
+ * Backend-agnostic acquire/renew. Returns true if this instance holds
+ * leadership afterwards. Redis errors fail closed (returns false → standby),
+ * so a Redis outage never causes two leaders.
+ */
+async function tryAcquire(): Promise<boolean> {
+  if (redisLease) {
+    try {
+      return await redisLease.acquireOrRenew();
+    } catch (err) {
+      log.error(`[Leader] Redis lease error (failing closed to standby): ${err}`);
+      return false;
+    }
+  }
+  return tryAcquireLock();
+}
 
 /**
  * Try to acquire the leader lock.
@@ -121,7 +151,7 @@ function writeLock(): void {
   fs.renameSync(tmp, LOCK_FILE);
 }
 
-function releaseLock(): void {
+function releaseFileLock(): void {
   try {
     if (fs.existsSync(LOCK_FILE)) {
       const raw = fs.readFileSync(LOCK_FILE, "utf-8");
@@ -136,6 +166,16 @@ function releaseLock(): void {
   }
 }
 
+/** Backend-agnostic release: give up leadership so a standby can take over fast. */
+async function release(): Promise<void> {
+  if (redisLease) {
+    await redisLease.release();
+    redisLease.close();
+    return;
+  }
+  releaseFileLock();
+}
+
 /**
  * Start the leader election loop.
  * Calls onBecomeLeader / onLoseLeadership when state changes.
@@ -145,50 +185,57 @@ export function startLeaderElection(
   onLoseLeadership: () => void
 ): void {
   log.info(
-    `[Leader] Starting election. Instance: ${INSTANCE_ID}, TTL: ${LOCK_TTL_MS}ms`
+    `[Leader] Starting election. Instance: ${INSTANCE_ID}, backend: ${useRedis ? "redis (multi-server)" : "file (single-server)"}, TTL: ${LOCK_TTL_MS}ms`
   );
 
-  const runElection = () => {
-    const isLeader = tryAcquireLock();
+  let running = false; // prevent overlapping async ticks
 
-    if (isLeader && state !== "leader") {
-      state = "leader";
-      log.success(`[Leader] ${INSTANCE_ID} is now the LEADER.`);
+  const runElection = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const leader = await tryAcquire();
 
-      // Start heartbeat
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      heartbeatTimer = setInterval(() => {
-        if (!tryAcquireLock()) {
-          log.warn("[Leader] Lost lock during heartbeat renewal!");
-          state = "standby";
-          if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (leader && state !== "leader") {
+        state = "leader";
+        log.success(`[Leader] ${INSTANCE_ID} is now the LEADER.`);
+
+        // Start heartbeat (renew the lease well before it expires)
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(async () => {
+          const stillLeader = await tryAcquire();
+          if (!stillLeader) {
+            log.warn("[Leader] Lost leadership during heartbeat renewal!");
+            state = "standby";
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+            onLoseLeadership();
+          }
+        }, HEARTBEAT_MS);
+
+        onBecomeLeader();
+      } else if (!leader && state !== "standby") {
+        state = "standby";
+        log.info(`[Leader] ${INSTANCE_ID} is STANDBY. Watching for leader failure.`);
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
           heartbeatTimer = null;
-          onLoseLeadership();
         }
-      }, HEARTBEAT_MS);
-
-      onBecomeLeader();
-    } else if (!isLeader && state !== "standby") {
-      state = "standby";
-      log.info(`[Leader] ${INSTANCE_ID} is STANDBY. Watching for leader failure.`);
-
-      if (heartbeatTimer) {
-        clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
+        onLoseLeadership();
       }
-
-      onLoseLeadership();
+    } finally {
+      running = false;
     }
   };
 
   // Run immediately, then poll
-  runElection();
-  setInterval(runElection, POLL_MS);
+  void runElection();
+  setInterval(() => { void runElection(); }, POLL_MS);
 
-  // Cleanup on exit
-  process.on("exit", releaseLock);
-  process.on("SIGINT", () => { releaseLock(); process.exit(0); });
-  process.on("SIGTERM", () => { releaseLock(); process.exit(0); });
+  // Cleanup on exit (release leadership so failover is immediate)
+  process.on("exit", () => { void release(); });
+  process.on("SIGINT", async () => { await release(); process.exit(0); });
+  process.on("SIGTERM", async () => { await release(); process.exit(0); });
 }
 
 export function isLeader(): boolean {
