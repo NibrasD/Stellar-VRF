@@ -1,16 +1,39 @@
 version: "3.8"
 
-# HA Oracle Deployment: Primary + Hot-Standby
-# Leader election via shared lock file (bind-mounted volume)
+# HA Oracle Deployment: Primary + Hot-Standby with DISTRIBUTED leader election.
 #
-# Usage:
+# Leader election uses a shared Redis lease (see src/redisLock.ts), so the two
+# workers coordinate over the network — they do NOT need a shared filesystem and
+# can run on SEPARATE hosts in production (see "Multi-host production" below).
+#
+# Single-host demo:
 #   docker compose -f docker-compose.ha.yml up -d
 #
-# To test failover:
+# Test failover:
 #   docker compose -f docker-compose.ha.yml stop oracle-primary
 #   # standby becomes leader within LEADER_LOCK_TTL_MS (30s)
+#
+# ── Multi-host production ────────────────────────────────────────────────────
+# Run ONE managed/HA Redis reachable by both hosts, then deploy oracle-primary
+# on host A and oracle-standby on host B, each with the SAME REDIS_URL pointing
+# at that Redis. Because leadership lives in Redis (not a local file), whichever
+# node holds the lease is the sole submitter, and the other takes over
+# automatically if the leader dies.
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: vrf-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   oracle-primary:
     build: .
     container_name: vrf-oracle-primary
@@ -18,15 +41,18 @@ services:
     environment:
       INSTANCE_ID: oracle-primary
       HEALTH_PORT: "8080"
-      LEADER_LOCK_FILE: /var/lock/vrf-oracle.lock
+      # Distributed leader election via Redis (multi-server safe).
+      REDIS_URL: redis://redis:6379
+      LEADER_REDIS_KEY: vrf-oracle:leader
       LEADER_LOCK_TTL_MS: "30000"
       LEADER_HEARTBEAT_MS: "10000"
       LEADER_POLL_MS: "5000"
-    volumes:
-      - leader-lock:/var/lock
     ports:
       - "8080:8080"
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 15s
@@ -41,17 +67,16 @@ services:
     environment:
       INSTANCE_ID: oracle-standby
       HEALTH_PORT: "8081"
-      LEADER_LOCK_FILE: /var/lock/vrf-oracle.lock
+      REDIS_URL: redis://redis:6379
+      LEADER_REDIS_KEY: vrf-oracle:leader
       LEADER_LOCK_TTL_MS: "30000"
       LEADER_HEARTBEAT_MS: "10000"
       LEADER_POLL_MS: "5000"
-    volumes:
-      - leader-lock:/var/lock
     ports:
       - "8081:8081"
     restart: unless-stopped
     depends_on:
-      oracle-primary:
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
@@ -60,6 +85,3 @@ services:
       retries: 3
       start_period: 30s
 
-volumes:
-  leader-lock:
-    driver: local
