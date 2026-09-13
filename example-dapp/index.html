@@ -157,8 +157,8 @@
     // via the official @stellar/stellar-sdk (loaded as a UMD global above).
     const SDK = window.StellarSdk;
     const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative, rpc, Networks } = SDK;
-    // The UMD bundle ships a browser Buffer polyfill; fall back to globalThis.
-    const Buffer = SDK.Buffer || globalThis.Buffer;
+    // (No Buffer needed — contextBytes is already a Uint8Array, which
+    //  nativeToScVal accepts directly. Browsers have no global Buffer.)
 
     const NETWORKS = {
       testnet: {
@@ -279,7 +279,7 @@
 
         const contextBytes = new TextEncoder().encode(ctx);
         const { result: reqResult, hash } = await submitTx("request", [
-          nativeToScVal(Buffer.from(contextBytes), { type: "bytes" }),
+          nativeToScVal(contextBytes, { type: "bytes" }),
           nativeToScVal(keypair.publicKey(), { type: "address" }),
         ]);
         // Extract requestId robustly (returnValue is decoded by the RPC;
