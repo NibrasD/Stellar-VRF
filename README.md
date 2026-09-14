@@ -39,7 +39,7 @@ docs/               — Security documentation
 | | |
 |---|---|
 | **Contract** | [`CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57`](https://stellar.expert/explorer/public/contract/CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57) |
-| **Oracle** | `GAQ3XIUK4VSMKMDPX6TA2CQGHJ3CUK7Z5ZLMNQRHTBYLVT3NUEBI5TVU` |
+| **Oracle** | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` (current, after key rotation) |
 | **Network** | Stellar Mainnet |
 
 ### Public Mainnet Transactions (Proof of Operation)
