@@ -309,11 +309,15 @@
         }
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
 
-        const result = await simulate("derive_random_in_range", [
+        // Contract signature: derive_random_in_range(request_id, context, max)
+        // returns [0, max). Map onto inclusive [rangeMin, rangeMax].
+        const span = rangeMax - rangeMin + 1n;
+        const raw = await simulate("derive_random_in_range", [
           nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(rangeMin, { type: "u64" }),
-          nativeToScVal(rangeMax, { type: "u64" }),
+          nativeToScVal(contextBytes, { type: "bytes" }),
+          nativeToScVal(span, { type: "u64" }),
         ]);
+        const result = BigInt(raw) + rangeMin;
 
         document.getElementById("result-card").style.display = "block";
         document.getElementById("result-number").textContent = result.toString();

@@ -20,7 +20,7 @@
 //!     println!("Fulfilled: {}", fulfilled);
 //!
 //!     // Derive random in range
-//!     let roll = client.derive_random_in_range(1, 1, 100).await?;
+//!     let roll = client.derive_random_in_range(1, 1, 100, b"").await?;
 //!     println!("Roll: {}", roll);
 //!
 //!     Ok(())
@@ -173,6 +173,20 @@ fn encode_scval_u64(val: u64) -> Vec<u8> {
     buf
 }
 
+/// Encode a byte slice as ScVal (scvBytes).
+/// XDR: discriminant 9 (0x00000009) + 4-byte length + bytes + 4-byte padding.
+fn encode_scval_bytes(data: &[u8]) -> Vec<u8> {
+    let padded_len = (data.len() + 3) & !3; // 4-byte aligned
+    let mut buf = Vec::with_capacity(8 + padded_len);
+    buf.extend_from_slice(&9u32.to_be_bytes()); // scvBytes discriminant
+    buf.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    buf.extend_from_slice(data);
+    for _ in 0..(padded_len - data.len()) {
+        buf.push(0);
+    }
+    buf
+}
+
 /// Encode a symbol string as ScVal (scvSymbol).
 /// XDR: discriminant 10 (0x0000000a) + 4-byte length + UTF-8 bytes + padding.
 fn encode_scval_symbol(sym: &str) -> Vec<u8> {
@@ -266,27 +280,36 @@ impl VrfClient {
         Ok(result.as_ref().map_or(false, |xdr_b64| xdr_b64.contains("AAAAAQ")))
     }
 
-    /// Derive a random number in [min, max] from a fulfilled request.
+    /// Derive a random number in the inclusive range `[min, max]` from a
+    /// fulfilled request.
     ///
-    /// This calls the contract's `derive_random_in_range` function via simulation,
-    /// meaning no transaction fee is charged.
+    /// The on-chain `derive_random_in_range(request_id, context, max)` returns
+    /// a value in `[0, max)`. This helper requests a span of `max - min + 1`
+    /// and shifts the result by `min` to cover the inclusive range.
+    ///
+    /// `context` is the domain-separation byte string (must match what the
+    /// consumer used); pass an empty slice for the default.
+    ///
+    /// This calls the contract via simulation, so no transaction fee is charged.
     pub async fn derive_random_in_range(
         &self,
         request_id: u64,
         min: u64,
         max: u64,
+        context: &[u8],
     ) -> Result<u64, VrfError> {
-        if max <= min {
-            return Err(VrfError::Rpc("max must be greater than min".into()));
+        if max < min {
+            return Err(VrfError::Rpc("max must be >= min".into()));
         }
 
+        let span = max - min + 1;
         let result = self
             .simulate_call(
                 "derive_random_in_range",
                 &[
                     encode_scval_u64(request_id),
-                    encode_scval_u64(min),
-                    encode_scval_u64(max),
+                    encode_scval_bytes(context),
+                    encode_scval_u64(span),
                 ],
             )
             .await?;
@@ -297,7 +320,7 @@ impl VrfClient {
                 // ScVal u64: 4-byte discriminant (5) + 8-byte BE value
                 if bytes.len() >= 12 {
                     let val = u64::from_be_bytes(bytes[4..12].try_into().unwrap());
-                    Ok(val)
+                    Ok(val + min)
                 } else {
                     Err(VrfError::Rpc("Invalid u64 ScVal response".into()))
                 }
