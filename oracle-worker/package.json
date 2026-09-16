@@ -12,7 +12,7 @@
   "dependencies": {
     "@noble/curves": "^1.8.0",
     "@noble/hashes": "^1.7.0",
-    "@stellar/stellar-sdk": "^15.0.1",
+    "@stellar/stellar-sdk": ">=15.0.1",
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
