@@ -392,14 +392,17 @@
 
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
 
-        // derive_random_in_range
-        const result = await simulate("derive_random_in_range", [
+        // derive_random_in_range(request_id, context, max) → [0, max).
+        // The contract returns [0, span); we shift by minVal to map onto
+        // the inclusive range [minVal, maxVal].
+        const span = maxVal - minVal + 1n;
+        const raw = await simulate("derive_random_in_range", [
           nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(minVal, { type: "u64" }),
-          nativeToScVal(maxVal, { type: "u64" }),
+          nativeToScVal(contextBytes, { type: "bytes" }),
+          nativeToScVal(span, { type: "u64" }),
         ]);
-        const resultNum = Number(result);
-        addLog("random-log", `derive_random_in_range(${minVal}, ${maxVal}) = ${resultNum}`, "success");
+        const resultNum = Number(BigInt(raw) + minVal);
+        addLog("random-log", `derive_random_in_range → ${resultNum} ∈ [${minVal}, ${maxVal}]`, "success");
 
         output.innerHTML = `
           <div class="result-big">${resultNum}</div>
@@ -447,13 +450,17 @@
         }
         if (!fulfilled) throw new Error("Timeout waiting for fulfillment");
 
-        const result = await simulate("derive_random_in_range", [
+        // Contract signature: derive_random_in_range(request_id, context, max)
+        // returns [0, max). Map onto inclusive [min, max] via span + offset.
+        const span = max - min + 1n;
+        const raw = await simulate("derive_random_in_range", [
           nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(min, { type: "u64" }),
-          nativeToScVal(max, { type: "u64" }),
+          nativeToScVal(contextBytes, { type: "bytes" }),
+          nativeToScVal(span, { type: "u64" }),
         ]);
+        const result = BigInt(raw) + min;
 
-        addLog("range-log", `Result: ${result}`, "success");
+        addLog("range-log", `Result: ${result} ∈ [${min}, ${max}]`, "success");
         output.innerHTML = `
           <div class="result-big">${BigInt(result).toLocaleString()}</div>
           <div class="result-label">Range: ${min.toLocaleString()} — ${max.toLocaleString()}</div>

@@ -55,7 +55,7 @@ console.log("Random roll:", roll);
 | `isFulfilled(requestId)` | `Promise<boolean>` | Check if request is fulfilled |
 | `getProof(requestId)` | `Promise<VrfProof \| null>` | Get the VRF proof |
 | `waitForFulfillment(requestId, timeoutMs?, intervalMs?)` | `Promise<VrfProof>` | Wait for fulfillment |
-| `deriveRandomInRange(requestId, min, max)` | `Promise<bigint>` | Get random number in range |
+| `deriveRandomInRange(requestId, min, max, context?)` | `Promise<bigint>` | Get random number in inclusive range `[min, max]`. `context` is optional domain-separation bytes. |
 
 ### `requestWithCallback`
 

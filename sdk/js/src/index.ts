@@ -132,15 +132,31 @@ export class VrfClient {
   }
 
   /**
-   * Derive a verifiable random number in [min, max] using the contract.
+   * Derive a verifiable random number in the inclusive range [min, max]
+   * using the contract's `derive_random_in_range(request_id, context, max)`,
+   * which returns a value in [0, max). We request a span of (max - min + 1)
+   * and shift the result by `min` to cover the inclusive range.
+   *
+   * @param requestId  The fulfilled request id.
+   * @param min        Inclusive lower bound.
+   * @param max        Inclusive upper bound.
+   * @param context    Domain-separation bytes (must match what the consumer
+   *                   used); defaults to an empty byte string.
    */
-  async deriveRandomInRange(requestId: bigint, min: bigint, max: bigint): Promise<bigint> {
+  async deriveRandomInRange(
+    requestId: bigint,
+    min: bigint,
+    max: bigint,
+    context: Uint8Array = new Uint8Array()
+  ): Promise<bigint> {
+    if (max < min) throw new Error("max must be >= min");
+    const span = max - min + 1n;
     const result = await this.simulate("derive_random_in_range", [
       nativeToScVal(requestId, { type: "u64" }),
-      nativeToScVal(min, { type: "u64" }),
-      nativeToScVal(max, { type: "u64" }),
+      nativeToScVal(context, { type: "bytes" }),
+      nativeToScVal(span, { type: "u64" }),
     ]);
-    return BigInt(result as string | number | bigint);
+    return BigInt(result as string | number | bigint) + min;
   }
 
   /**
