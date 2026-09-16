@@ -132,24 +132,55 @@
     }
     .use-case:hover { border-color: rgba(96,165,250,0.25); }
     .use-case strong { color: #60a5fa; display: block; margin-bottom: 4px; font-size: 0.72rem; font-weight: 600; }
+
+    /* ── Network info box ── */
+    .net-info {
+      background: rgba(30,58,95,0.25); border: 1px solid rgba(59,130,246,0.15);
+      border-radius: 8px; padding: 12px 16px; font-size: 0.82rem;
+      color: #60a5fa; line-height: 1.6; margin-bottom: 16px;
+    }
+    .net-info.mainnet { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.2); color: #fca5a5; }
+
+    /* ── Site Navigation ── */
+    .site-nav {
+      background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
+      padding: 0 36px; display: flex; gap: 2px; align-items: center;
+    }
+    .nav-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 14px; font-size: 0.78rem; font-weight: 500;
+      color: #374151; text-decoration: none;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .nav-link:hover { color: #94a3b8; }
+    .nav-link.active { color: #60a5fa; border-bottom-color: #3b82f6; }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>🔒 Stellar VRF Oracle</h1>
-    <span id="network-badge" class="badge" style="background:#1e40af;color:#93c5fd;">● Testnet</span>
+    <h1>🔮 Stellar VRF Oracle</h1>
+    <span id="network-badge" class="badge">● Testnet</span>
   </div>
+
+  <nav class="site-nav">
+    <a href="../dashboard/" class="nav-link">📊 Dashboard</a>
+    <a href="../playground/" class="nav-link">🔬 Playground</a>
+    <a href="../example-dapp/" class="nav-link active">💡 Example dApp</a>
+  </nav>
 
   <div class="container">
     <div class="card">
       <h2>🔗 Connect</h2>
-      <div style="display:flex;gap:8px;margin-bottom:16px">
+      <div style="display:flex;gap:8px;margin-bottom:14px">
         <button id="btn-testnet" onclick="switchNetwork('testnet')"
           style="padding:7px 16px;border-radius:8px;border:1px solid #3b82f6;background:#1e40af;color:#fff;font-size:0.82rem">Testnet</button>
         <button id="btn-mainnet" onclick="switchNetwork('mainnet')"
-          style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:#111827;color:#94a3b8;font-size:0.82rem">Mainnet</button>
+          style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:0.82rem">Mainnet</button>
       </div>
-      <div id="network-info-box" style="background:#0a0e1a;border:1px solid #1e3a5f;border-radius:8px;padding:12px 16px;font-size:0.8rem;color:#94a3b8;line-height:1.6;margin-bottom:16px"></div>
+      <div id="network-info-box" class="net-info">
+        ⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.
+      </div>
       <form onsubmit="return false;">
         <label>Secret Key (S…)</label>
         <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
@@ -278,17 +309,24 @@
       const isMain = net === "mainnet";
       const badge = document.getElementById("network-badge");
       badge.textContent = isMain ? "● Mainnet" : "● Testnet";
-      badge.style.cssText = `background:${isMain ? "#052e16" : "#1e40af"};color:${isMain ? "#86efac" : "#93c5fd"};padding:4px 10px;border-radius:12px;font-size:0.75rem`;
+      badge.style.cssText = isMain
+        ? "background:rgba(220,38,38,0.12);color:#fca5a5;border:1px solid rgba(220,38,38,0.3);padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600"
+        : "";
+
       document.getElementById("btn-testnet").style.cssText =
-        `padding:7px 16px;border-radius:8px;border:1px solid ${isMain ? "#1e3a5f" : "#3b82f6"};background:${isMain ? "#111827" : "#1e40af"};color:${isMain ? "#94a3b8" : "#fff"};font-size:0.82rem`;
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMain?"#1e3a5f":"#3b82f6"};background:${isMain?"transparent":"#1e40af"};color:${isMain?"#94a3b8":"#fff"};font-size:0.82rem`;
       document.getElementById("btn-mainnet").style.cssText =
-        `padding:7px 16px;border-radius:8px;border:1px solid ${isMain ? "#3b82f6" : "#1e3a5f"};background:${isMain ? "#1e40af" : "#111827"};color:${isMain ? "#fff" : "#94a3b8"};font-size:0.82rem`;
-      document.getElementById("network-info-box").innerHTML = isMain
-        ? `🔴 <strong>Stellar Mainnet</strong> — real XLM is spent. Enter a dedicated keypair with a small balance. Your secret key signs locally and is <strong>never sent to any server</strong>.`
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMain?"#dc2626":"#1e3a5f"};background:${isMain?"rgba(127,29,29,0.3)":"transparent"};color:${isMain?"#fca5a5":"#94a3b8"};font-size:0.82rem`;
+
+      const infoBox = document.getElementById("network-info-box");
+      infoBox.className = isMain ? "net-info mainnet" : "net-info";
+      infoBox.innerHTML = isMain
+        ? `🔴 <strong>Stellar Mainnet</strong> — real XLM will be spent. Enter a dedicated keypair with a small balance. Your secret key signs locally and is <strong>never sent to any server</strong>.`
         : `⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.`;
+
       document.getElementById("keypair-hint").innerHTML = isMain
-        ? `<small style="color:#fbbf24">⚠️ Never enter a wallet holding large funds.</small>`
-        : `<small style="color:#6b7280">No account? Use the fund button →</small>`;
+        ? `<small style="color:#fbbf24">⚠️ Never enter a wallet holding large funds. Use a dedicated keypair.</small>`
+        : `<small style="color:#475569">No account? Use the fund button →</small>`;
       document.getElementById("fund-btn").style.display = isMain ? "none" : "inline-block";
       document.getElementById("connect-status").innerHTML = "";
       document.getElementById("request-btn").disabled = true;
