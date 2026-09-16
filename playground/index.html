@@ -76,14 +76,16 @@
 
     <div class="card" style="margin-bottom:24px">
       <h2 id="keypair-title">🔑 Testnet Keypair</h2>
-      <label>Secret Key (S...)</label>
-      <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
-      <div id="keypair-hint" style="margin-top:6px">
-        <small style="color:#6b7280">
-          Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
-        </small>
-      </div>
-      <button class="primary" onclick="initClient()">🔗 Connect</button>
+      <form onsubmit="return false;">
+        <label>Secret Key (S...)</label>
+        <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
+        <div id="keypair-hint" style="margin-top:6px">
+          <small style="color:#6b7280">
+            Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
+          </small>
+        </div>
+        <button type="button" class="primary" onclick="initClient()">🔗 Connect</button>
+      </form>
       <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
     </div>
 
