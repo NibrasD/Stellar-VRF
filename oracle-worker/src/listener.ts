@@ -38,13 +38,42 @@ export function createServer(): rpc.Server {
  */
 export async function initListener(server: rpc.Server): Promise<void> {
   const health = await server.getHealth();
-  lastLedger = health.latestLedger - 100; // Look back ~8 min for any missed events
+  // Look back ~100 ledgers (~8 min) for any recently missed events, but never
+  // before the RPC's retention window (oldestLedger) or the request is rejected.
+  lastLedger = clampToRetention(health.latestLedger - 100, health);
+  lastCursor = undefined;
   log.info(`Listener initialized. Starting from ledger ${lastLedger}`);
+}
+
+/**
+ * Clamp a candidate startLedger so it always sits inside the RPC's retention
+ * window [oldestLedger, latestLedger]. Querying an expired ledger makes
+ * getEvents fail every poll, which silently blinds the oracle.
+ */
+function clampToRetention(
+  candidate: number,
+  health: { latestLedger: number; oldestLedger?: number }
+): number {
+  const oldest = (health.oldestLedger ?? 1) + 1; // +1 safety margin
+  const latest = health.latestLedger;
+  let ledger = candidate;
+  if (ledger < oldest) ledger = oldest;
+  if (ledger > latest) ledger = latest;
+  return ledger;
 }
 
 /**
  * Poll for new VRF request events.
  * Returns an array of parsed request events since the last poll.
+ *
+ * Pagination strategy (per Soroban RPC rules — cursor and startLedger are
+ * mutually exclusive):
+ *   - When we hold a cursor from a previous page, page forward with it.
+ *   - Otherwise scan from lastLedger, always clamped inside the retention
+ *     window so the query never gets rejected.
+ * After every successful poll (even with zero events) lastLedger is advanced
+ * toward the chain head so the oracle keeps up and never falls off the
+ * retention window.
  */
 export async function pollRequestEvents(
   server: rpc.Server
@@ -52,6 +81,8 @@ export async function pollRequestEvents(
   const events: VrfRequestEvent[] = [];
 
   try {
+    const health = await server.getHealth();
+
     const filters: rpc.Api.EventFilter[] = [
       {
         type: "contract",
@@ -62,16 +93,13 @@ export async function pollRequestEvents(
       },
     ];
 
-    // Build request based on whether we have a cursor or need startLedger
-    const request: any = {
-      filters,
-      limit: 50,
-    };
-
+    // cursor and startLedger are mutually exclusive in the RPC API.
+    let request: any;
     if (lastCursor) {
-      request.cursor = lastCursor;
-    } else if (lastLedger) {
-      request.startLedger = lastLedger;
+      request = { filters, limit: 50, cursor: lastCursor };
+    } else {
+      lastLedger = clampToRetention(lastLedger ?? health.latestLedger, health);
+      request = { filters, limit: 50, startLedger: lastLedger };
     }
 
     const response = await server.getEvents(request);
@@ -95,22 +123,41 @@ export async function pollRequestEvents(
           );
         }
 
-        // Update cursor to the latest event — use `id` field
-        const eventAny = event as any;
-        lastCursor = eventAny.pagingToken || eventAny.id || lastCursor;
-      }
-
-      // Update last ledger for next poll
-      const maxLedger = Math.max(...response.events.map((e) => e.ledger));
-      if (maxLedger > (lastLedger || 0)) {
-        lastLedger = maxLedger;
+        // Track the highest ledger we have actually seen an event on.
+        if (event.ledger > (lastLedger || 0)) {
+          lastLedger = event.ledger;
+        }
       }
     }
+
+    // Advance the pagination cursor to the end of this page. The RPC returns a
+    // `cursor` that points *after* the last event, so the next poll only sees
+    // new events. This works even when there were zero events this round.
+    const respCursor = (response as any).cursor as string | undefined;
+    if (respCursor) {
+      lastCursor = respCursor;
+    } else if (!lastCursor) {
+      // No cursor available yet (older RPCs): keep advancing the ledger head so
+      // we never fall behind the retention window on quiet chains.
+      lastLedger = clampToRetention(health.latestLedger, health);
+    }
   } catch (err: unknown) {
-    // Don't crash on transient RPC errors
-    log.warn(
-      `Event poll error: ${err instanceof Error ? err.message : err}`
-    );
+    // Don't crash on transient RPC errors. If the cursor became invalid (e.g.
+    // it aged out of the retention window), drop it so the next poll re-syncs
+    // from a fresh, in-window startLedger instead of failing forever.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/cursor|startLedger|ledger|retention|-32600|out of range/i.test(msg)) {
+      log.warn(`Event poll error (resyncing cursor): ${msg}`);
+      lastCursor = undefined;
+      try {
+        const health = await server.getHealth();
+        lastLedger = clampToRetention(health.latestLedger - 100, health);
+      } catch {
+        /* ignore — next poll retries */
+      }
+    } else {
+      log.warn(`Event poll error: ${msg}`);
+    }
   }
 
   return events;
@@ -164,7 +211,7 @@ export async function fetchRequestContext(
       Operation.invokeContractFunction({
         contract: CONTRACT_ADDRESS,
         function: "get_context",
-        args: [xdr.ScVal.scvU64(new xdr.Uint64(requestId.toString()))],
+        args: [nativeToScVal(requestId, { type: "u64" })],
       })
     )
     .setTimeout(30)
@@ -207,7 +254,7 @@ export async function isRequestFulfilled(
         Operation.invokeContractFunction({
           contract: CONTRACT_ADDRESS,
           function: "is_fulfilled",
-          args: [xdr.ScVal.scvU64(new xdr.Uint64(requestId.toString()))],
+          args: [nativeToScVal(requestId, { type: "u64" })],
         })
       )
       .setTimeout(30)
