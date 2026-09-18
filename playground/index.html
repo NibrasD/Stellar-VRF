@@ -320,10 +320,8 @@
         : `<small style="color:#6b7280">Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a></small>`;
 
       // Disable action buttons until reconnected
-      ["random-btn","range-btn"].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = true;
-      });
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = true;
     };
 
     // ── Stellar SDK (UMD global loaded via <script> above) ─────────────────────
@@ -437,11 +435,9 @@
         const isMainnet = NETWORK === NETWORKS.mainnet;
         status.innerHTML = `✅ Connected to <strong>${isMainnet ? "🔴 Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}…</span>`;
         // Enable buttons
-        ["random-btn","range-btn"].forEach(id => {
-          document.getElementById(id).disabled = false;
-        });
+        const btn = document.getElementById("random-btn");
+        if (btn) btn.disabled = false;
         document.getElementById("random-output").textContent = "Ready! Click Generate.";
-        document.getElementById("range-output").textContent = "Ready! Click Generate.";
       } catch(e) {
         status.innerHTML = `<span style="color:#fca5a5">❌ ${e.message}</span>`;
       }
@@ -449,7 +445,7 @@
 
     // ── Tab switch ─────────────────────────────────────────────────────────────
     window.switchTab = function(name) {
-      const names = ["random","range","proof","verify"];
+      const names = ["random","proof","verify"];
       document.querySelectorAll(".tab").forEach((t, i) =>
         t.classList.toggle("active", names[i] === name));
       document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
@@ -518,65 +514,6 @@
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
         addLog("random-log", `Error: ${e.message}`, "error");
-      } finally { btn.disabled = false; }
-    };
-
-    // ── Range Pick ─────────────────────────────────────────────────────────────
-    window.pickRange = async function() {
-      if (!keypair) return;
-      const min = BigInt(document.getElementById("range-min").value || 1);
-      const max = BigInt(document.getElementById("range-max").value || 1000);
-      const ctx = document.getElementById("range-context").value || "range";
-      const btn = document.getElementById("range-btn");
-      const output = document.getElementById("range-output");
-      clearLog("range-log");
-      btn.disabled = true;
-      output.innerHTML = `<span class="spinner"></span> Submitting request…`;
-
-      try {
-        const contextBytes = new TextEncoder().encode(ctx);
-        addLog("range-log", `Submitting request() for range [${min}, ${max}]…`, "info");
-
-        const txResult = await submitTx("request", [
-          nativeToScVal(contextBytes, { type: "bytes" }),
-          nativeToScVal(keypair.publicKey(), { type: "address" }),
-        ], "range-log");
-
-        const rv = extractReturnValue(txResult);
-        const requestId = rv != null ? BigInt(rv) : 1n;
-        addLog("range-log", `Request ID: ${requestId}`, "success");
-        output.innerHTML = `<span class="spinner"></span> #${requestId} waiting for oracle…`;
-
-        // Poll — update a single status line instead of spamming the log.
-        addLog("range-log", "Waiting for oracle to generate the BLS-VRF proof…", "info");
-        let fulfilled = false;
-        for (let i = 0; i < 40; i++) {
-          await sleep(3000);
-          fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
-          if (fulfilled) break;
-          output.innerHTML = `<span class="spinner"></span> #${requestId} — waiting for oracle… (${(i + 1) * 3}s)`;
-        }
-        if (!fulfilled) throw new Error("Timeout waiting for fulfillment");
-        addLog("range-log", `Oracle fulfilled request #${requestId} ✓`, "success");
-
-        // Contract signature: derive_random_in_range(request_id, context, max)
-        // returns [0, max). Map onto inclusive [min, max] via span + offset.
-        const span = max - min + 1n;
-        const raw = await simulate("derive_random_in_range", [
-          nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(contextBytes, { type: "bytes" }),
-          nativeToScVal(span, { type: "u64" }),
-        ]);
-        const result = BigInt(raw) + min;
-
-        addLog("range-log", `Result: ${result} ∈ [${min}, ${max}]`, "success");
-        output.innerHTML = `
-          <div class="result-big">${BigInt(result).toLocaleString()}</div>
-          <div class="result-label">Range: ${min.toLocaleString()} — ${max.toLocaleString()}</div>
-          <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">Request ID: #${requestId}</div>`;
-      } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
-        addLog("range-log", `Error: ${e.message}`, "error");
       } finally { btn.disabled = false; }
     };
 
