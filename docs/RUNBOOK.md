@@ -10,7 +10,7 @@ troubleshooting for the Stellar VRF Oracle.
 | Item | Value |
 |---|---|
 | Contract (Testnet) | `CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE` |
-| Contract (Mainnet) | TBD after deployment |
+| Contract (Mainnet) | `CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57` |
 | Health endpoint | `http://localhost:8080/health` |
 | Metrics endpoint | `http://localhost:8080/metrics` |
 | drand chain | quicknet (`52db9ba7…`) |
@@ -294,17 +294,17 @@ If oracle server is lost entirely:
 
 ## 7. Mainnet Deployment Checklist
 
-- [ ] Generate fresh keypair (`npm run keygen`)
-- [ ] Fund oracle account on mainnet (minimum 5 XLM for fees)
-- [ ] Deploy contract WASM to mainnet
-- [ ] Initialize with production keys and `fee_amount`
-- [ ] Start primary oracle on production server
-- [ ] Start standby oracle on secondary server
-- [ ] Verify health endpoints
-- [ ] Submit test request + verify fulfillment
-- [ ] Enable monitoring alerts
-- [ ] Update dashboard contract address to mainnet
-- [ ] Update playground to mainnet
+- [x] Generate fresh keypair
+- [x] Fund oracle account on mainnet (minimum 5 XLM for fees)
+- [x] Deploy contract WASM to mainnet
+- [x] Initialize with production keys and `fee_amount`
+- [x] Start primary oracle on production server
+- [x] Start standby oracle on secondary server
+- [x] Verify health endpoints
+- [x] Submit test request + verify fulfillment
+- [x] Enable monitoring alerts
+- [x] Update dashboard contract address to mainnet
+- [x] Update playground to mainnet
 
 ---
 
