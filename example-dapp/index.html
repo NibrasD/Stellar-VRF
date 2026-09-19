@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -481,6 +481,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
   <script>
     const SDK = window.StellarSdk;
     const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative, rpc, Networks } = SDK;
+    function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
     const NETWORKS = {
       testnet: {
@@ -540,7 +541,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         document.getElementById("secret-key").value = kp.secret();
         await window.initClient();
       } catch (e) {
-        status.innerHTML = `<span style="color:#fca5a5">âŒ ${e.message}</span>`;
+        status.innerHTML = `<span style="color:#fca5a5">âŒ ${esc(e.message)}</span>`;
       }
     };
 
@@ -555,7 +556,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         document.getElementById("request-btn").disabled = false;
       } catch (e) {
         keypair = null;
-        status.innerHTML = `<span style="color:#fca5a5">âŒ ${e.message}</span>`;
+        status.innerHTML = `<span style="color:#fca5a5">âŒ ${esc(e.message)}</span>`;
         document.getElementById("request-btn").disabled = true;
       }
     };
@@ -654,7 +655,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
           <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} âˆˆ [${rangeMin}, ${rangeMax}]</div></div>`;
         statusArea.innerHTML = `<div class="status success">âœ… Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
       } catch (e) {
-        statusArea.innerHTML = `<div class="status error">âŒ ${e.message}</div>`;
+        statusArea.innerHTML = `<div class="status error">âŒ ${esc(e.message)}</div>`;
       } finally {
         btn.disabled = false;
       }

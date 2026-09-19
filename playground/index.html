@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -265,8 +265,9 @@
        window.StellarSdk. (Dynamic import() of a UMD file returns an empty module
        and breaks everything.) -->
   <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
-  <script>
-    // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    <script>
+    function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+    // -- Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const NETWORKS = {
       testnet: {
         contract: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
@@ -439,7 +440,7 @@
         if (btn) btn.disabled = false;
         document.getElementById("random-output").textContent = "Ready! Click Generate.";
       } catch(e) {
-        status.innerHTML = `<span style="color:#fca5a5">âŒ ${e.message}</span>`;
+        status.innerHTML = `<span style="color:#fca5a5">âŒ ${esc(e.message)}</span>`;
       }
     };
 
@@ -512,8 +513,8 @@
           <div class="result-label">Range [${minVal} â€“ ${maxVal}] â€” verified on Stellar</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId} | Context: ${ctx}</div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">âŒ ${e.message}</div>`;
-        addLog("random-log", `Error: ${e.message}`, "error");
+        output.innerHTML = `<div style="color:#fca5a5">âŒ ${esc(e.message)}</div>`;
+        addLog("random-log", `Error: ${esc(e.message)}`, "error");
       } finally { btn.disabled = false; }
     };
 
@@ -565,7 +566,7 @@
             âœ… Pairing check e(Î³, G2) == e(H(Î±), PK) verified on-chain by Soroban host
           </div>`;
       } catch(e) {
-        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">âŒ ${e.message}</div>`;
+        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">âŒ ${esc(e.message)}</div>`;
       }
     };
 
@@ -591,7 +592,7 @@
             The proof is permanently stored in contract storage and can be retrieved with get_proof(${id}).
           </div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">âŒ ${e.message}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">âŒ ${esc(e.message)}</div>`;
       }
     };
 
@@ -616,7 +617,7 @@
             Formula: min + (beta_prefix % range) = ${min} + (${betaVal} % ${range})
           </div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">âŒ ${e.message}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">âŒ ${esc(e.message)}</div>`;
       }
     };
 

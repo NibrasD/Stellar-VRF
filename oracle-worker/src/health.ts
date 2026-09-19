@@ -30,8 +30,8 @@ export function startHealthServer(): void {
     }
   });
 
-  server.listen(HEALTH_PORT, () => {
-    console.log(`[Health] HTTP server listening on port ${HEALTH_PORT}`);
+  server.listen(HEALTH_PORT, "127.0.0.1", () => {
+    console.log(`[Health] HTTP server listening on 127.0.0.1:${HEALTH_PORT}`);
   });
 
   server.on("error", (err) => {
@@ -104,7 +104,6 @@ function handleStatus(res: http.ServerResponse): void {
     role: getLeaderState(),
     uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
     metrics: m,
-    pid: process.pid,
   };
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body, null, 2));
