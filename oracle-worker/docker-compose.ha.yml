@@ -24,12 +24,12 @@ services:
   redis:
     image: redis:7-alpine
     container_name: vrf-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-change-me-in-production}"]
+    expose:
+      - "6379"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change-me-in-production}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -42,13 +42,13 @@ services:
       INSTANCE_ID: oracle-primary
       HEALTH_PORT: "8080"
       # Distributed leader election via Redis (multi-server safe).
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-change-me-in-production}@redis:6379"
       LEADER_REDIS_KEY: vrf-oracle:leader
       LEADER_LOCK_TTL_MS: "30000"
       LEADER_HEARTBEAT_MS: "10000"
       LEADER_POLL_MS: "5000"
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped
     depends_on:
       redis:
@@ -67,13 +67,13 @@ services:
     environment:
       INSTANCE_ID: oracle-standby
       HEALTH_PORT: "8081"
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-change-me-in-production}@redis:6379"
       LEADER_REDIS_KEY: vrf-oracle:leader
       LEADER_LOCK_TTL_MS: "30000"
       LEADER_HEARTBEAT_MS: "10000"
       LEADER_POLL_MS: "5000"
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     restart: unless-stopped
     depends_on:
       redis:
@@ -84,4 +84,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-

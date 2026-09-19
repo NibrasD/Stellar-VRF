@@ -1,16 +1,16 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stellar VRF Oracle — Dashboard</title>
+  <title>Stellar VRF Oracle â€” Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #060b18; color: #e0e6f0; min-height: 100vh; }
 
-    /* ── Header ── */
+    /* â”€â”€ Header â”€â”€ */
     .header {
       background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
       border-bottom: 1px solid rgba(59,130,246,0.2);
@@ -50,7 +50,7 @@
     .net-btn.active { background: #1e40af; color: #fff; box-shadow: 0 2px 8px rgba(30,64,175,0.4); }
     .net-btn:not(.active):hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
 
-    /* ── Stat cards grid ── */
+    /* â”€â”€ Stat cards grid â”€â”€ */
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; padding: 28px 40px 20px; }
     .stat-card {
       background: linear-gradient(135deg, #111827 0%, #0f1a2e 100%);
@@ -70,7 +70,7 @@
     .stat-card .value { font-size: 2rem; font-weight: 700; color: #60a5fa; font-family: 'JetBrains Mono', monospace; letter-spacing: -1px; }
     .stat-card .sub { color: #374151; font-size: 0.7rem; margin-top: 6px; font-weight: 500; }
 
-    /* ── Sections ── */
+    /* â”€â”€ Sections â”€â”€ */
     .section { padding: 0 40px 28px; }
     .section-title {
       color: #475569; font-size: 0.72rem; font-weight: 700;
@@ -79,7 +79,7 @@
     }
     .section-title::after { content:''; flex:1; height:1px; background: rgba(255,255,255,0.05); }
 
-    /* ── drand card ── */
+    /* â”€â”€ drand card â”€â”€ */
     .drand-card {
       background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
       border: 1px solid rgba(59,130,246,0.15); border-radius: 14px;
@@ -90,7 +90,7 @@
     .progress-bar { flex: 1; min-width: 120px; background: rgba(255,255,255,0.05); border-radius: 99px; height: 6px; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); border-radius: 99px; transition: width 0.5s ease; box-shadow: 0 0 8px rgba(139,92,246,0.4); }
 
-    /* ── Activity table ── */
+    /* â”€â”€ Activity table â”€â”€ */
     .table { background: linear-gradient(135deg, #0d1526 0%, #111827 100%); border: 1px solid rgba(59,130,246,0.15); border-radius: 14px; overflow: hidden; }
     .table-header {
       display: grid; grid-template-columns: 70px 80px 1fr 1fr 100px;
@@ -110,10 +110,10 @@
     .hash-link { color: #60a5fa; text-decoration: none; }
     .hash-link:hover { color: #93c5fd; text-decoration: underline; }
 
-    /* ── Footer / error ── */
+    /* â”€â”€ Footer / error â”€â”€ */
     .error-box { background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.3); border-radius: 10px; padding: 12px 16px; color: #fca5a5; font-size: 0.8rem; margin: 0 40px 16px; }
 
-    /* ── Site Navigation ── */
+    /* â”€â”€ Site Navigation â”€â”€ */
     .site-nav {
       background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
       padding: 0 36px; display: flex; gap: 2px; align-items: center;
@@ -131,21 +131,21 @@
 </head>
 <body>
   <div class="header">
-    <h1>📊 Stellar VRF Oracle — Dashboard</h1>
+    <h1>ðŸ“Š Stellar VRF Oracle â€” Dashboard</h1>
     <div style="display:flex;gap:12px;align-items:center">
       <div class="net-switcher">
         <button class="net-btn" id="btn-testnet" onclick="switchNetwork('testnet')">Testnet</button>
         <button class="net-btn active" id="btn-mainnet" onclick="switchNetwork('mainnet')">Mainnet</button>
       </div>
-      <span id="last-updated" style="color:#6b7280;font-size:0.75rem">Loading…</span>
+      <span id="last-updated" style="color:#6b7280;font-size:0.75rem">Loadingâ€¦</span>
       <span class="live-badge">LIVE</span>
     </div>
   </div>
 
   <nav class="site-nav">
-    <a href="../dashboard/" class="nav-link active">📊 Dashboard</a>
-    <a href="../playground/" class="nav-link">🔬 Playground</a>
-    <a href="../example-dapp/" class="nav-link">📘 Integration Guide</a>
+    <a href="../dashboard/" class="nav-link active">ðŸ“Š Dashboard</a>
+    <a href="../playground/" class="nav-link">ðŸ”¬ Playground</a>
+    <a href="../example-dapp/" class="nav-link">ðŸ“˜ Integration Guide</a>
   </nav>
 
   <div id="error-area"></div>
@@ -153,44 +153,44 @@
   <div class="grid">
     <div class="stat-card">
       <div class="label">Total Requests</div>
-      <div class="value" id="stat-total">—</div>
+      <div class="value" id="stat-total">â€”</div>
       <div class="sub">All time on-chain</div>
     </div>
     <div class="stat-card">
       <div class="label">Fulfilled</div>
-      <div class="value" id="stat-fulfilled" style="color:#34d399">—</div>
-      <div class="sub">Success rate: <span id="stat-rate">—</span>%</div>
+      <div class="value" id="stat-fulfilled" style="color:#34d399">â€”</div>
+      <div class="sub">Success rate: <span id="stat-rate">â€”</span>%</div>
     </div>
     <div class="stat-card">
       <div class="label">Avg Fulfill Time</div>
-      <div class="value" id="stat-avg-time">—</div>
+      <div class="value" id="stat-avg-time">â€”</div>
       <div class="sub">seconds (~5s per ledger)</div>
     </div>
     <div class="stat-card">
       <div class="label">drand Round</div>
-      <div class="value" id="stat-drand-round">—</div>
+      <div class="value" id="stat-drand-round">â€”</div>
       <div class="sub">Latest quicknet beacon</div>
     </div>
     <div class="stat-card">
       <div class="label">Latest Ledger</div>
-      <div class="value" id="stat-ledger">—</div>
+      <div class="value" id="stat-ledger">â€”</div>
       <div class="sub" id="stat-ledger-sub">Soroban RPC</div>
     </div>
   </div>
 
   <div class="section">
-    <h2 class="section-title">⚡ drand Chain Status</h2>
+    <h2 class="section-title">âš¡ drand Chain Status</h2>
     <div class="drand-card">
       <div class="drand-info"><div class="label">Chain</div><div class="value">quicknet</div></div>
       <div class="drand-info"><div class="label">Period</div><div class="value">3 seconds</div></div>
-      <div class="drand-info"><div class="label">Current Round</div><div class="value" id="drand-current">—</div></div>
-      <div class="drand-info"><div class="label">Next round in</div><div class="value" id="drand-next">—s</div></div>
+      <div class="drand-info"><div class="label">Current Round</div><div class="value" id="drand-current">â€”</div></div>
+      <div class="drand-info"><div class="label">Next round in</div><div class="value" id="drand-next">â€”s</div></div>
       <div class="progress-bar"><div class="progress-fill" id="drand-progress" style="width:0%"></div></div>
     </div>
   </div>
 
   <div class="section">
-    <h2 class="section-title">📋 Recent VRF Activity</h2>
+    <h2 class="section-title">ðŸ“‹ Recent VRF Activity</h2>
     <div class="table">
       <div class="table-header">
         <span>Req ID</span>
@@ -200,22 +200,22 @@
         <span>Status</span>
       </div>
       <div id="activity-feed">
-        <div style="padding:24px;text-align:center;color:#6b7280">Loading contract events…</div>
+        <div style="padding:24px;text-align:center;color:#6b7280">Loading contract eventsâ€¦</div>
       </div>
     </div>
   </div>
 
   <div class="section">
     <div style="color:#6b7280;font-size:0.72rem">
-      Contract: <span id="contract-display">—</span>
+      Contract: <span id="contract-display">â€”</span>
       &nbsp;|&nbsp;
-      <a id="explorer-link" class="hash-link" href="#" target="_blank">View on Stellar Expert ↗</a>
+      <a id="explorer-link" class="hash-link" href="#" target="_blank" rel="noopener noreferrer">View on Stellar Expert â†—</a>
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
   <script>
-    // ── Config ───────────────────────────────────────────────────────────────
+    // â”€â”€ Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const NETWORKS = {
       testnet: {
         soroban: "https://soroban-testnet.stellar.org",
@@ -239,7 +239,7 @@
     let requestEvents = []; // {requestId, requester, ledger}
     let fulfillEvents = {}; // requestId -> {betaOutput, ledger}
 
-    // ── Network switch ────────────────────────────────────────────────────────
+    // â”€â”€ Network switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function switchNetwork(net) {
       currentNetwork = net;
       cfg = NETWORKS[net];
@@ -260,13 +260,13 @@
 
     function showError(msg) {
       document.getElementById("error-area").innerHTML =
-        `<div class="error-box">⚠️ ${msg}</div>`;
+        `<div class="error-box">âš ï¸ ${msg}</div>`;
     }
     function hideError() {
       document.getElementById("error-area").innerHTML = "";
     }
 
-    // ── Soroban RPC helpers ───────────────────────────────────────────────────
+    // â”€â”€ Soroban RPC helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function rpcCall(method, params) {
       const res = await fetch(cfg.soroban, {
         method: "POST",
@@ -284,7 +284,7 @@
     }
 
     // Encode a Soroban Symbol topic to base64 XDR using the official SDK.
-    // (ScVal::Symbol has discriminant 15 and requires XDR 4-byte alignment —
+    // (ScVal::Symbol has discriminant 15 and requires XDR 4-byte alignment â€”
     //  hand-rolling this is error-prone, so we delegate to stellar-sdk.)
     function encodeSymbolTopic(sym) {
       return StellarSdk.xdr.ScVal.scvSymbol(sym).toXDR("base64");
@@ -293,7 +293,7 @@
     // Soroban RPC only scans a bounded window (~12k ledgers) per call, so a
     // single getEvents call starting at the oldest retained ledger will NOT
     // reach events that are further ahead. We must follow the returned cursor
-    // page-by-page until we reach the latest ledger — even across empty pages.
+    // page-by-page until we reach the latest ledger â€” even across empty pages.
     async function getContractEvents(topicSymbol, fromLedger) {
       const topicBase64 = encodeSymbolTopic(topicSymbol);
       const out = [];
@@ -320,7 +320,7 @@
       return out;
     }
 
-    // ── XDR parsing via the official SDK ──────────────────────────────────────
+    // â”€â”€ XDR parsing via the official SDK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // The VRF contract emits:
     //   request: value = (request_id: u64, requester: Address, required_round: u64)
     //   fulfill: value = (request_id: u64, beta_output: Bytes<32>)
@@ -346,7 +346,7 @@
       return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    // ── Event fetching ────────────────────────────────────────────────────────
+    // â”€â”€ Event fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function fetchEvents() {
       if (!cfg.contract) return;
 
@@ -404,7 +404,7 @@
     function renderActivity() {
       const feed = document.getElementById("activity-feed");
       if (requestEvents.length === 0) {
-        feed.innerHTML = '<div style="padding:28px;text-align:center;color:#374151;font-size:0.82rem">No VRF requests found in the current retention window.<br>Submit one via the <a class="hash-link" href="../playground/">Playground ↗</a></div>';
+        feed.innerHTML = '<div style="padding:28px;text-align:center;color:#374151;font-size:0.82rem">No VRF requests found in the current retention window.<br>Submit one via the <a class="hash-link" href="../playground/">Playground â†—</a></div>';
         return;
       }
 
@@ -412,7 +412,7 @@
       const sorted = [...requestEvents].reverse().slice(0, 20);
       feed.innerHTML = sorted.map(req => {
         const fulfilled   = fulfillEvents[req.requestId];
-        const betaHex     = fulfilled?.betaOutput ? (fulfilled.betaOutput.slice(0, 8) + "…") : "—";
+        const betaHex     = fulfilled?.betaOutput ? (fulfilled.betaOutput.slice(0, 8) + "â€¦") : "â€”";
         const explorerBase = cfg.explorer;
         const reqTxLink   = req.txHash       ? `${explorerBase}/tx/${req.txHash}`       : null;
         const fillTxLink  = fulfilled?.txHash ? `${explorerBase}/tx/${fulfilled.txHash}` : null;
@@ -420,18 +420,18 @@
         return `
           <div class="table-row">
             <span>${reqTxLink
-              ? `<a class="hash-link" href="${reqTxLink}" target="_blank">#${req.requestId} ↗</a>`
+              ? `<a class="hash-link" href="${reqTxLink}" target="_blank" rel="noopener noreferrer">#${req.requestId} â†—</a>`
               : `<span style="color:#93c5fd">#${req.requestId}</span>`}</span>
             <span style="color:#475569">${req.ledger}</span>
             <span>
-              <a class="hash-link" href="${acctLink}" target="_blank" title="${req.requester}">
-                ${req.requester.slice(0, 10)}…
+              <a class="hash-link" href="${acctLink}" target="_blank" rel="noopener noreferrer" title="${req.requester}">
+                ${req.requester.slice(0, 10)}â€¦
               </a>
             </span>
             <span style="color:${fulfilled ? '#34d399' : '#374151'};font-size:0.72rem">${betaHex}</span>
             <span>${fillTxLink
-              ? `<a class="hash-link" href="${fillTxLink}" target="_blank"><span class="badge-ok">✓ Fulfilled ↗</span></a>`
-              : `<span class="badge-pending">⏳ Pending</span>`}</span>
+              ? `<a class="hash-link" href="${fillTxLink}" target="_blank" rel="noopener noreferrer"><span class="badge-ok">âœ“ Fulfilled â†—</span></a>`
+              : `<span class="badge-pending">â³ Pending</span>`}</span>
           </div>`;
       }).join("");
     }
@@ -441,14 +441,14 @@
       const fulfilled = Object.keys(fulfillEvents).length;
       const rate = total > 0 ? Math.round((fulfilled / total) * 100) : 100;
 
-      document.getElementById("stat-total").textContent = total || "—";
-      document.getElementById("stat-fulfilled").textContent = fulfilled || "—";
-      document.getElementById("stat-rate").textContent = total > 0 ? rate : "—";
+      document.getElementById("stat-total").textContent = total || "â€”";
+      document.getElementById("stat-fulfilled").textContent = fulfilled || "â€”";
+      document.getElementById("stat-rate").textContent = total > 0 ? rate : "â€”";
       document.getElementById("last-updated").textContent =
         "Updated " + new Date().toLocaleTimeString();
     }
 
-    // ── drand ─────────────────────────────────────────────────────────────────
+    // â”€â”€ drand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function fetchDrand() {
       try {
         const r = await fetch(`${cfg.drand}/public/latest`);
@@ -464,7 +464,7 @@
       } catch {}
     }
 
-    // ── Init ──────────────────────────────────────────────────────────────────
+    // â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     async function refresh() {
       try {
         await fetchDrand();

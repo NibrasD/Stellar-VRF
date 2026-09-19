@@ -1,16 +1,16 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stellar VRF — Randomness Playground</title>
+  <title>Stellar VRF â€” Randomness Playground</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #060b18; color: #e0e6f0; min-height: 100vh; }
 
-    /* ── Header ── */
+    /* â”€â”€ Header â”€â”€ */
     .header {
       background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
       border-bottom: 1px solid rgba(96,165,250,0.15);
@@ -23,10 +23,10 @@
     }
     .header p { color: #475569; font-size: 0.83rem; margin-top: 4px; }
 
-    /* ── Layout ── */
+    /* â”€â”€ Layout â”€â”€ */
     .container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
 
-    /* ── Network switcher (header) ── */
+    /* â”€â”€ Network switcher (header) â”€â”€ */
     #btn-testnet, #btn-mainnet {
       font-family: 'Inter', sans-serif !important;
       font-weight: 500 !important;
@@ -34,7 +34,7 @@
       cursor: pointer;
     }
 
-    /* ── Tabs ── */
+    /* â”€â”€ Tabs â”€â”€ */
     .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; padding: 4px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; width: fit-content; }
     .tab {
       padding: 8px 18px; border-radius: 8px; cursor: pointer;
@@ -47,7 +47,7 @@
     .panel { display: none; }
     .panel.active { display: block; }
 
-    /* ── Cards ── */
+    /* â”€â”€ Cards â”€â”€ */
     .card {
       background: linear-gradient(145deg, #111827 0%, #0d1a2e 100%);
       border: 1px solid rgba(59,130,246,0.15);
@@ -61,14 +61,14 @@
     .card h2 { color: #93c5fd; margin-bottom: 10px; font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
     .card p { color: #475569; font-size: 0.82rem; margin-bottom: 16px; line-height: 1.65; }
 
-    /* ── Info box ── */
+    /* â”€â”€ Info box â”€â”€ */
     .info-box {
       background: rgba(30,58,95,0.3); border: 1px solid rgba(59,130,246,0.2);
       border-radius: 10px; padding: 12px 16px;
       color: #60a5fa; font-size: 0.8rem; margin-bottom: 16px; line-height: 1.6;
     }
 
-    /* ── Form elements ── */
+    /* â”€â”€ Form elements â”€â”€ */
     label { display: block; color: #64748b; font-size: 0.78rem; font-weight: 600; margin-bottom: 6px; margin-top: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
     input, select, textarea {
       background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.2);
@@ -78,7 +78,7 @@
     }
     input:focus, select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
 
-    /* ── Buttons ── */
+    /* â”€â”€ Buttons â”€â”€ */
     button.primary {
       background: linear-gradient(135deg, #1e40af, #2563eb);
       color: #fff; border: none; padding: 11px 24px;
@@ -90,7 +90,7 @@
     button.primary:hover { background: linear-gradient(135deg, #2563eb, #3b82f6); box-shadow: 0 6px 20px rgba(37,99,235,0.45); transform: translateY(-1px); }
     button.primary:disabled { background: #1f2937; color: #374151; cursor: not-allowed; box-shadow: none; transform: none; }
 
-    /* ── Output / Results ── */
+    /* â”€â”€ Output / Results â”€â”€ */
     .output {
       background: rgba(0,0,0,0.25); border: 1px solid rgba(59,130,246,0.15);
       border-radius: 10px; padding: 16px; margin-top: 16px; min-height: 72px;
@@ -103,7 +103,7 @@
     }
     .result-label { color: #374151; font-size: 0.72rem; text-align: center; margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 
-    /* ── Log ── */
+    /* â”€â”€ Log â”€â”€ */
     .log {
       background: rgba(0,0,0,0.4); border: 1px solid rgba(59,130,246,0.1);
       border-radius: 10px; padding: 12px 16px; margin-top: 12px;
@@ -119,7 +119,7 @@
     .log-line.warn { color: #fbbf24; }
     .log-line.error { color: #f87171; }
 
-    /* ── Proof grid ── */
+    /* â”€â”€ Proof grid â”€â”€ */
     .proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
     .pf {
       background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.12);
@@ -129,15 +129,15 @@
     .pf .val { color: #34d399; font-size: 0.68rem; word-break: break-all; font-family: 'JetBrains Mono', monospace; }
     .pf .desc { color: #374151; font-size: 0.65rem; margin-top: 4px; }
 
-    /* ── Spinner ── */
+    /* â”€â”€ Spinner â”€â”€ */
     .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(59,130,246,0.3); border-top-color: #60a5fa; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── Links ── */
+    /* â”€â”€ Links â”€â”€ */
     .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; transition: color 0.15s; }
     .tx-link:hover { color: #93c5fd; text-decoration: underline; }
 
-    /* ── Site Navigation ── */
+    /* â”€â”€ Site Navigation â”€â”€ */
     .site-nav {
       background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
       padding: 0 36px; display: flex; gap: 2px; align-items: center;
@@ -156,7 +156,7 @@
 <body>
   <div class="header">
     <div style="flex:1">
-      <h1>🔬 VRF Randomness Playground</h1>
+      <h1>ðŸ”¬ VRF Randomness Playground</h1>
       <p id="header-desc">Submit real on-chain VRF requests and watch the oracle fulfill them live.</p>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
@@ -172,44 +172,44 @@
   </div>
 
   <nav class="site-nav">
-    <a href="../dashboard/" class="nav-link">📊 Dashboard</a>
-    <a href="../playground/" class="nav-link active">🔬 Playground</a>
-    <a href="../example-dapp/" class="nav-link">📘 Integration Guide</a>
+    <a href="../dashboard/" class="nav-link">ðŸ“Š Dashboard</a>
+    <a href="../playground/" class="nav-link active">ðŸ”¬ Playground</a>
+    <a href="../example-dapp/" class="nav-link">ðŸ“˜ Integration Guide</a>
   </nav>
 
   <div class="container">
 
     <div class="info-box" id="network-info-box">
-      ⚠️ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+      âš ï¸ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
       Need a funded testnet account?
-      <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
+      <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab â†—</a>
     </div>
 
     <div class="card" style="margin-bottom:24px">
-      <h2 id="keypair-title">🔑 Testnet Keypair</h2>
+      <h2 id="keypair-title">ðŸ”‘ Testnet Keypair</h2>
       <form onsubmit="return false;">
         <label>Secret Key (S...)</label>
-        <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
+        <input type="password" id="secret-key" placeholder="Sâ€¦ (signs locally, never sent to any server)" autocomplete="off" />
         <div id="keypair-hint" style="margin-top:6px">
           <small style="color:#6b7280">
-            Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>
+            Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab â†—</a>
           </small>
         </div>
-        <button type="button" class="primary" onclick="initClient()">🔗 Connect</button>
+        <button type="button" class="primary" onclick="initClient()">ðŸ”— Connect</button>
       </form>
       <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
     </div>
 
     <div class="tabs">
-      <div class="tab active" onclick="switchTab('random')">🔢 Random Number</div>
-      <div class="tab" onclick="switchTab('proof')">🔍 Proof Explorer</div>
-      <div class="tab" onclick="switchTab('verify')">✅ Verify On-Chain</div>
+      <div class="tab active" onclick="switchTab('random')">ðŸ”¢ Random Number</div>
+      <div class="tab" onclick="switchTab('proof')">ðŸ” Proof Explorer</div>
+      <div class="tab" onclick="switchTab('verify')">âœ… Verify On-Chain</div>
     </div>
 
     <!-- RANDOM NUMBER GENERATOR -->
     <div class="panel active" id="panel-random">
       <div class="card">
-        <h2>🔢 Verifiable Random Number</h2>
+        <h2>ðŸ”¢ Verifiable Random Number</h2>
         <p>Generates a cryptographically verifiable random number on-chain using BLS12-381 VRF. Useful for fair selection, audit sampling, NFT trait assignment, or any use case requiring transparent, tamper-proof randomness.</p>
         <label>From (inclusive)</label>
         <input type="number" id="random-sides" value="1" min="1" />
@@ -217,7 +217,7 @@
         <input type="number" id="random-max" value="1000" min="2" />
         <label>Context / Purpose</label>
         <input type="text" id="random-context" value="random-selection" placeholder="e.g. audit-sample, nft-trait, team-assignment" />
-        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🔢 Generate Random Number</button>
+        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>ðŸ”¢ Generate Random Number</button>
         <div class="output" id="random-output" style="text-align:center;color:#374151">Connect your keypair above first</div>
         <div class="log" id="random-log" style="display:none"></div>
       </div>
@@ -226,11 +226,11 @@
     <!-- PROOF EXPLORER -->
     <div class="panel" id="panel-proof">
       <div class="card">
-        <h2>🔍 Proof Explorer</h2>
-        <p>Enter a fulfilled request ID to inspect its full BLS-VRF proof. Data is fetched live from the Soroban RPC — no keypair required.</p>
+        <h2>ðŸ” Proof Explorer</h2>
+        <p>Enter a fulfilled request ID to inspect its full BLS-VRF proof. Data is fetched live from the Soroban RPC â€” no keypair required.</p>
         <label>Request ID</label>
         <input type="number" id="proof-id" placeholder="e.g. 1" min="1" />
-        <button class="primary" onclick="exploreProof()">🔍 Fetch Proof</button>
+        <button class="primary" onclick="exploreProof()">ðŸ” Fetch Proof</button>
         <div id="proof-result"></div>
       </div>
     </div>
@@ -238,23 +238,23 @@
     <!-- VERIFY -->
     <div class="panel" id="panel-verify">
       <div class="card">
-        <h2>✅ Verify On-Chain</h2>
-        <p>Check whether a request has been fulfilled and its BLS12-381 pairing proof verified on-chain. The contract permanently stores the proof — no trust in the oracle required.</p>
+        <h2>âœ… Verify On-Chain</h2>
+        <p>Check whether a request has been fulfilled and its BLS12-381 pairing proof verified on-chain. The contract permanently stores the proof â€” no trust in the oracle required.</p>
         <label>Request ID</label>
         <input type="number" id="verify-id" placeholder="e.g. 1" />
-        <button class="primary" onclick="verifyOnChain()">✅ Check Fulfillment Status</button>
+        <button class="primary" onclick="verifyOnChain()">âœ… Check Fulfillment Status</button>
         <div class="output" id="verify-output" style="text-align:center;color:#374151">Enter a request ID to check</div>
       </div>
       <div class="card">
-        <h2>🧮 Client-side Range Derivation</h2>
-        <p>Given a beta output (hex), derive a number in a range without any network call — useful for integrating the result locally.</p>
+        <h2>ðŸ§® Client-side Range Derivation</h2>
+        <p>Given a beta output (hex), derive a number in a range without any network call â€” useful for integrating the result locally.</p>
         <label>Beta Output (hex, 64 chars)</label>
-        <input type="text" id="cs-beta" placeholder="7f3ea1b2…" maxlength="64" />
+        <input type="text" id="cs-beta" placeholder="7f3ea1b2â€¦" maxlength="64" />
         <label>Min</label>
         <input type="number" id="cs-min" value="1" />
         <label>Max</label>
         <input type="number" id="cs-max" value="100" />
-        <button class="primary" onclick="deriveClientSide()">🧮 Derive</button>
+        <button class="primary" onclick="deriveClientSide()">ðŸ§® Derive</button>
         <div class="output" id="cs-output" style="text-align:center;color:#374151">Enter beta output and range</div>
       </div>
     </div>
@@ -264,9 +264,9 @@
   <!-- Stellar SDK is a UMD bundle: load via a classic <script> so it attaches
        window.StellarSdk. (Dynamic import() of a UMD file returns an empty module
        and breaks everything.) -->
-  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
   <script>
-    // ── Constants ──────────────────────────────────────────────────────────────
+    // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const NETWORKS = {
       testnet: {
         contract: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
@@ -288,7 +288,7 @@
     const SOROBAN_RPC = () => NETWORK.soroban;
     const EXPLORER   = () => NETWORK.explorer;
 
-    // ── Network Switcher ───────────────────────────────────────────────────────
+    // â”€â”€ Network Switcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.switchNetwork = function(net) {
       NETWORK = NETWORKS[net];
       keypair = null;
@@ -306,25 +306,25 @@
 
       // Update info box
       document.getElementById("network-info-box").innerHTML = isMainnet
-        ? `🔴 <strong>Stellar Mainnet</strong> — Real XLM will be spent on transactions.
+        ? `ðŸ”´ <strong>Stellar Mainnet</strong> â€” Real XLM will be spent on transactions.
            Your secret key signs locally and is <strong>never sent to any server</strong>.
            Contract: <code style="color:#86efac;font-size:0.78rem">CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57</code>`
-        : `⚠️ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+        : `âš ï¸ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
            Need a funded testnet account?
-           <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a>`;
+           <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab â†—</a>`;
 
       // Update keypair section
-      document.getElementById("keypair-title").textContent = isMainnet ? "🔑 Mainnet Keypair" : "🔑 Testnet Keypair";
+      document.getElementById("keypair-title").textContent = isMainnet ? "ðŸ”‘ Mainnet Keypair" : "ðŸ”‘ Testnet Keypair";
       document.getElementById("keypair-hint").innerHTML = isMainnet
-        ? `<small style="color:#fbbf24">⚠️ Use a dedicated oracle/app keypair with a small XLM balance. Never enter a wallet with large funds.</small>`
-        : `<small style="color:#6b7280">Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank">Create on Stellar Lab ↗</a></small>`;
+        ? `<small style="color:#fbbf24">âš ï¸ Use a dedicated oracle/app keypair with a small XLM balance. Never enter a wallet with large funds.</small>`
+        : `<small style="color:#6b7280">Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab â†—</a></small>`;
 
       // Disable action buttons until reconnected
       const btn = document.getElementById("random-btn");
       if (btn) btn.disabled = true;
     };
 
-    // ── Stellar SDK (UMD global loaded via <script> above) ─────────────────────
+    // â”€â”€ Stellar SDK (UMD global loaded via <script> above) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const SDK = window.StellarSdk;
     const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative,
             xdr, rpc, Networks } = SDK;
@@ -337,7 +337,7 @@
     let keypair = null;
 
 
-    // ── Helpers ────────────────────────────────────────────────────────────────
+    // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function addLog(logId, msg, type = "info", link = null) {
       const el = document.getElementById(logId);
       if (!el) return;
@@ -348,7 +348,7 @@
       if (link) {
         const a = document.createElement("a");
         a.href = link.href;
-        a.textContent = link.label || "view ↗";
+        a.textContent = link.label || "view â†—";
         a.target = "_blank";
         a.rel = "noopener";
         a.style.cssText = "color:#86efac;margin-left:6px;text-decoration:underline";
@@ -413,18 +413,18 @@
         await sleep(2000);
         const result = await server.getTransaction(sent.hash);
         if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
-          addLog(logId, `TX confirmed ✓`, "success", { href: `${EXPLORER()}/tx/${sent.hash}`, label: "view on stellar.expert ↗" });
+          addLog(logId, `TX confirmed âœ“`, "success", { href: `${EXPLORER()}/tx/${sent.hash}`, label: "view on stellar.expert â†—" });
           return result;
         }
         if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
           throw new Error(`TX failed: ${sent.hash}`);
         }
-        addLog(logId, `Confirming… (${i * 2}s)`, "info");
+        addLog(logId, `Confirmingâ€¦ (${i * 2}s)`, "info");
       }
       throw new Error("TX confirmation timeout");
     }
 
-    // ── Connect ────────────────────────────────────────────────────────────────
+    // â”€â”€ Connect â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.initClient = async function() {
       const secret = document.getElementById("secret-key").value.trim();
       const status = document.getElementById("connect-status");
@@ -433,17 +433,17 @@
         server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
         const account = await server.getAccount(keypair.publicKey());
         const isMainnet = NETWORK === NETWORKS.mainnet;
-        status.innerHTML = `✅ Connected to <strong>${isMainnet ? "🔴 Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}…</span>`;
+        status.innerHTML = `âœ… Connected to <strong>${isMainnet ? "ðŸ”´ Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}â€¦</span>`;
         // Enable buttons
         const btn = document.getElementById("random-btn");
         if (btn) btn.disabled = false;
         document.getElementById("random-output").textContent = "Ready! Click Generate.";
       } catch(e) {
-        status.innerHTML = `<span style="color:#fca5a5">❌ ${e.message}</span>`;
+        status.innerHTML = `<span style="color:#fca5a5">âŒ ${e.message}</span>`;
       }
     };
 
-    // ── Tab switch ─────────────────────────────────────────────────────────────
+    // â”€â”€ Tab switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.switchTab = function(name) {
       const names = ["random","proof","verify"];
       document.querySelectorAll(".tab").forEach((t, i) =>
@@ -452,7 +452,7 @@
       document.getElementById("panel-" + name).classList.add("active");
     };
 
-    // ── Random Number Generator ────────────────────────────────────────────────
+    // â”€â”€ Random Number Generator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.rollRandom = async function() {
       if (!keypair) return;
       const minVal = BigInt(document.getElementById("random-sides").value || 1);
@@ -463,13 +463,13 @@
       const output = document.getElementById("random-output");
       clearLog("random-log");
       btn.disabled = true;
-      output.innerHTML = `<span class="spinner"></span> Submitting request to network…`;
+      output.innerHTML = `<span class="spinner"></span> Submitting request to networkâ€¦`;
 
       try {
         const contextBytes = new TextEncoder().encode(ctx);
-        addLog("random-log", `Submitting request(context="${ctx}") to VRF contract…`, "info");
+        addLog("random-log", `Submitting request(context="${ctx}") to VRF contractâ€¦`, "info");
 
-        // request()  (contextBytes is a Uint8Array — nativeToScVal accepts it directly)
+        // request()  (contextBytes is a Uint8Array â€” nativeToScVal accepts it directly)
         const txResult = await submitTx("request", [
           nativeToScVal(contextBytes, { type: "bytes" }),
           nativeToScVal(keypair.publicKey(), { type: "address" }),
@@ -479,23 +479,23 @@
         const rv = extractReturnValue(txResult);
         const requestId = rv != null ? BigInt(rv) : 1n;
         addLog("random-log", `Request ID: ${requestId}`, "success");
-        output.innerHTML = `<span class="spinner"></span> Request #${requestId} submitted. Waiting for oracle…`;
+        output.innerHTML = `<span class="spinner"></span> Request #${requestId} submitted. Waiting for oracleâ€¦`;
 
-        // Poll is_fulfilled — show a single, updating "waiting" status rather
+        // Poll is_fulfilled â€” show a single, updating "waiting" status rather
         // than spamming raw boolean results.
-        addLog("random-log", "Waiting for oracle to generate the BLS-VRF proof…", "info");
+        addLog("random-log", "Waiting for oracle to generate the BLS-VRF proofâ€¦", "info");
         let fulfilled = false;
         for (let i = 0; i < 40; i++) {
           await sleep(3000);
           fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
           if (fulfilled) break;
-          output.innerHTML = `<span class="spinner"></span> Request #${requestId} — waiting for oracle… (${(i + 1) * 3}s)`;
+          output.innerHTML = `<span class="spinner"></span> Request #${requestId} â€” waiting for oracleâ€¦ (${(i + 1) * 3}s)`;
         }
 
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
-        addLog("random-log", `Oracle fulfilled request #${requestId} ✓`, "success");
+        addLog("random-log", `Oracle fulfilled request #${requestId} âœ“`, "success");
 
-        // derive_random_in_range(request_id, context, max) → [0, max).
+        // derive_random_in_range(request_id, context, max) â†’ [0, max).
         // The contract returns [0, span); we shift by minVal to map onto
         // the inclusive range [minVal, maxVal].
         const span = maxVal - minVal + 1n;
@@ -505,23 +505,23 @@
           nativeToScVal(span, { type: "u64" }),
         ]);
         const resultNum = Number(BigInt(raw) + minVal);
-        addLog("random-log", `derive_random_in_range → ${resultNum} ∈ [${minVal}, ${maxVal}]`, "success");
+        addLog("random-log", `derive_random_in_range â†’ ${resultNum} âˆˆ [${minVal}, ${maxVal}]`, "success");
 
         output.innerHTML = `
           <div class="result-big">${resultNum}</div>
-          <div class="result-label">Range [${minVal} – ${maxVal}] — verified on Stellar</div>
+          <div class="result-label">Range [${minVal} â€“ ${maxVal}] â€” verified on Stellar</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId} | Context: ${ctx}</div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">âŒ ${e.message}</div>`;
         addLog("random-log", `Error: ${e.message}`, "error");
       } finally { btn.disabled = false; }
     };
 
-    // ── Proof Explorer ─────────────────────────────────────────────────────────
+    // â”€â”€ Proof Explorer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.exploreProof = async function() {
       const id = BigInt(document.getElementById("proof-id").value || 1);
       const result = document.getElementById("proof-result");
-      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${id} from Soroban RPC…</div>`;
+      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${id} from Soroban RPCâ€¦</div>`;
       try {
         if (!server) {
           server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
@@ -544,36 +544,36 @@
           <div class="proof-grid">
             <div class="pf"><div class="name">Alpha Seed (32 bytes)</div>
               <div class="val">${toHex(proof.alpha_seed)}</div>
-              <div class="desc">sha256(request_id ‖ context ‖ drand_round ‖ sha256(drand_sig))</div></div>
+              <div class="desc">sha256(request_id â€– context â€– drand_round â€– sha256(drand_sig))</div></div>
             <div class="pf"><div class="name">Beta Output (32 bytes)</div>
               <div class="val">${toHex(proof.beta_output)}</div>
-              <div class="desc">The verifiable random output: sha256(BETA_DOMAIN ‖ gamma)</div></div>
+              <div class="desc">The verifiable random output: sha256(BETA_DOMAIN â€– gamma)</div></div>
             <div class="pf"><div class="name">Gamma Point G1 (96 bytes)</div>
-              <div class="val">${toHex(proof.gamma_point).slice(0,40)}…</div>
-              <div class="desc">sk × H(alpha) — oracle's VRF output point</div></div>
+              <div class="val">${toHex(proof.gamma_point).slice(0,40)}â€¦</div>
+              <div class="desc">sk Ã— H(alpha) â€” oracle's VRF output point</div></div>
             <div class="pf"><div class="name">drand Round</div>
               <div class="val">${proof.drand_round}</div>
               <div class="desc">BLS12-381 quicknet beacon round used</div></div>
             <div class="pf"><div class="name">Oracle Public Key (192 bytes)</div>
-              <div class="val">${toHex(proof.public_key).slice(0,40)}…</div>
-              <div class="desc">G2 point — verifiable identity of oracle</div></div>
+              <div class="val">${toHex(proof.public_key).slice(0,40)}â€¦</div>
+              <div class="desc">G2 point â€” verifiable identity of oracle</div></div>
             <div class="pf"><div class="name">drand Signature (96 bytes)</div>
-              <div class="val">${toHex(proof.drand_signature).slice(0,40)}…</div>
+              <div class="val">${toHex(proof.drand_signature).slice(0,40)}â€¦</div>
               <div class="desc">BLS signature from drand quicknet chain</div></div>
           </div>
           <div style="color:#86efac;font-size:0.78rem;margin-top:12px">
-            ✅ Pairing check e(γ, G2) == e(H(α), PK) verified on-chain by Soroban host
+            âœ… Pairing check e(Î³, G2) == e(H(Î±), PK) verified on-chain by Soroban host
           </div>`;
       } catch(e) {
-        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">❌ ${e.message}</div>`;
+        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">âŒ ${e.message}</div>`;
       }
     };
 
-    // ── Verify (on-chain via is_fulfilled + get_proof) ─────────────────────────
+    // â”€â”€ Verify (on-chain via is_fulfilled + get_proof) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.verifyOnChain = async function() {
       const id = BigInt(document.getElementById("verify-id").value || 1);
       const output = document.getElementById("verify-output");
-      output.innerHTML = `<span class="spinner"></span> Checking request #${id}…`;
+      output.innerHTML = `<span class="spinner"></span> Checking request #${id}â€¦`;
       try {
         if (!server) {
           server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
@@ -582,27 +582,27 @@
         }
         const fulfilled = await simulate("is_fulfilled", [nativeToScVal(id, { type: "u64" })]);
         if (!fulfilled) {
-          output.innerHTML = `<div style="color:#fbbf24">⏳ Request #${id} is not yet fulfilled</div>`;
+          output.innerHTML = `<div style="color:#fbbf24">â³ Request #${id} is not yet fulfilled</div>`;
           return;
         }
-        output.innerHTML = `<div style="color:#86efac;font-size:1rem">✅ Request #${id} is fulfilled</div>
+        output.innerHTML = `<div style="color:#86efac;font-size:1rem">âœ… Request #${id} is fulfilled</div>
           <div style="color:#6b7280;font-size:0.78rem;margin-top:8px">
-            The BLS12-381 pairing check e(γ, G2) == e(H(α), PK) was verified on-chain at fulfillment time.
+            The BLS12-381 pairing check e(Î³, G2) == e(H(Î±), PK) was verified on-chain at fulfillment time.
             The proof is permanently stored in contract storage and can be retrieved with get_proof(${id}).
           </div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">âŒ ${e.message}</div>`;
       }
     };
 
-    // ── Client-side derivation ─────────────────────────────────────────────────
+    // â”€â”€ Client-side derivation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.deriveClientSide = function() {
       const betaHex = document.getElementById("cs-beta").value.trim();
       const min = BigInt(document.getElementById("cs-min").value || 1);
       const max = BigInt(document.getElementById("cs-max").value || 100);
       const output = document.getElementById("cs-output");
       if (!betaHex || betaHex.length < 16) {
-        output.innerHTML = `<div style="color:#fca5a5">❌ Enter at least 8 bytes (16 hex chars) of beta output</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">âŒ Enter at least 8 bytes (16 hex chars) of beta output</div>`;
         return;
       }
       try {
@@ -611,12 +611,12 @@
         const betaVal = BigInt("0x" + betaHex.slice(0, 16));
         const result = min + (betaVal % range);
         output.innerHTML = `<div class="result-big">${result.toLocaleString()}</div>
-          <div class="result-label">Range: ${min} — ${max}</div>
+          <div class="result-label">Range: ${min} â€” ${max}</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">
             Formula: min + (beta_prefix % range) = ${min} + (${betaVal} % ${range})
           </div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">❌ ${e.message}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">âŒ ${e.message}</div>`;
       }
     };
 
