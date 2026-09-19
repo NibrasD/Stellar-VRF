@@ -1,7 +1,6 @@
 # Instruction Budget Profiling
 
-This document records measured instruction costs for all VRF contract code paths,
-addressing the SCF requirement to profile the nonzero-fee SAC path and G1 negation.
+This document records measured instruction costs for all VRF contract code paths.
 
 ## Testnet measurements
 
@@ -34,8 +33,8 @@ transaction envelope:
 | Fee charged | 1,284,508 stroops |
 | **Instructions (measured)** | **58,641,186** |
 | Soroban mainnet limit | 100,000,000 |
-| SCF requirement | < 75,000,000 |
-| **Headroom under SCF limit** | **21.8%** |
+| Target budget | < 75,000,000 |
+| **Headroom under target** | **21.8%** |
 | **Headroom under Soroban limit** | **41.4%** |
 
 Breakdown by component:

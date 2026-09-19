@@ -15,9 +15,9 @@ import { VrfClient, Networks } from "@stellar-vrf/sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
-  contractId: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
-  rpcUrl: "https://soroban-testnet.stellar.org",
-  networkPassphrase: Networks.TESTNET,
+  contractId: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+  rpcUrl: "https://mainnet.sorobanrpc.com",
+  networkPassphrase: Networks.MAINNET,
   keypair: Keypair.fromSecret("S..."),
 });
 

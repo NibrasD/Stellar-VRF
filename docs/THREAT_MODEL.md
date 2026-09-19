@@ -1,8 +1,7 @@
 # Threat Model
 
-This document covers the security assumptions and known risks for the Stellar VRF Oracle
-as deployed on testnet (Tranche 2). It is meant to be a living document — we'll update it
-as the protocol matures toward mainnet.
+This document covers the security assumptions and known risks for the Stellar VRF Oracle.
+It is a living document updated as the protocol evolves.
 
 ## Architecture
 
@@ -36,8 +35,7 @@ uses one oracle node. This means:
   this with a timeout mechanism: after `TIMEOUT_ROUNDS` (20 drand rounds, ~60s), the requester
   can call `timeout_refund()` to reclaim their escrowed fee. The fee is held in the VRF contract
   itself (not sent to the oracle) until fulfillment, so the requester is always protected
-  financially. This is an acceptable trade-off for testnet. A multi-oracle threshold scheme
-  is planned for mainnet.
+  financially. A multi-oracle threshold scheme is a future improvement under consideration.
 
 - *Censorship is possible.* The oracle could refuse to fulfill specific requests. Again, the
   timeout protects the requester from being stuck forever. A decentralized oracle committee
@@ -124,12 +122,11 @@ The trade-off is higher per-request gas for writes (~8 entries vs 1). This is ac
 VRF requests are infrequent (not high-throughput) and the gas cost is dominated by BLS pairing
 verification (~56M instructions), not storage operations.
 
-## Known limitations (deferred to mainnet)
+## Known limitations
 
-- **Single oracle** — planned to be replaced with a threshold committee.
+- **Single oracle** — a future improvement is a multi-oracle threshold committee for stronger liveness guarantees.
 - **Fee economics** — the `fee_amount` parameter and escrow mechanism are fully implemented and
   tested (fees are escrowed in the VRF contract on request, released to oracle on fulfill,
-  refunded to requester on timeout). Testnet deploys with `fee_amount = 0`; mainnet fee
-  economics require separate design work.
-- **No formal verification** — the contract has 33 unit tests and has been manually reviewed,
-  but has not undergone a formal audit. This is expected before mainnet deployment.
+  refunded to requester on timeout). Currently deployed with `fee_amount = 0`.
+- **No formal audit** — the contract has 33 unit tests and has been manually reviewed,
+  but has not undergone a formal third-party audit.

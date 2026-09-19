@@ -12,8 +12,8 @@ Consumer ──request()──▶ VRF Contract ◀──fulfill()── Oracle W
                         on_vrf() callback
 ```
 
-**Contract:** `CAQFZI4IVZ35YODWSYWRKZE7WARBXKPQ3M5PA66R3PPR6M775K67FHQR` (Testnet)
-**Oracle address:** `GARPMPBJ5H43UNYHLIC46MSYRDGF4ZNKUYTZYDYVW5S2TUORAMBZRAMI`
+**Contract:** `CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57` (Mainnet)
+**Oracle address:** `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`
 
 ---
 
@@ -164,8 +164,8 @@ the oracle to spend gas on `fulfill()` for each one.
 **Remediation (Denial_of_Service.2.R.1):** The `fee_token` and `fee_amount` parameters
 in `init()` charge per-request fees via SAC token transfer into escrow. The fee is held
 in the VRF contract and released to the oracle only upon successful fulfillment, or
-refunded to the requester on timeout. Currently set to 0 for testnet; will be configured
-for mainnet to make spam economically costly.
+refunded to the requester on timeout. Currently deployed with `fee_amount = 0`;
+this can be configured to make spam economically costly.
 
 ### Denial_of_Service.3 — Storage entries expire before oracle can fulfill
 

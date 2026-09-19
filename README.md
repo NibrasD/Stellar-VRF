@@ -1,103 +1,147 @@
 # Stellar VRF Oracle
 
-A production-grade Verifiable Random Function (VRF) system for the Stellar/Soroban blockchain, using BLS12-381 cryptography and the drand distributed randomness beacon.
+A production-grade **Verifiable Random Function (VRF)** oracle for the Stellar/Soroban blockchain. Uses BLS12-381 cryptography with the [drand](https://drand.love) distributed randomness beacon to deliver tamper-proof, publicly auditable on-chain randomness.
 
-## Architecture
+## How It Works
 
 ```
-soroban-contract/   — On-chain VRF Oracle (Rust/Soroban)
-oracle-worker/      — Off-chain Oracle Node (TypeScript)
-consumer-example/   — Example consumer contract (Rust/Soroban)
-docs/               — Security documentation
+Your dApp  ──request()──▶  VRF Contract  ◀──fulfill()──  Oracle
+                                │                          │
+                                │                    drand beacon
+                                │                    BLS-VRF proof
+                                ▼
+                      ✓ Pairing check verified on-chain
+                      ✓ Random output stored permanently
+                                │
+Your dApp  ◀─derive_random_in_range()──┘
 ```
 
-## Tranche 1 ✅ — Core VRF & Oracle Pipeline
+1. Your dApp calls `request()` on the VRF smart contract
+2. The oracle fetches a **future** drand quicknet beacon (`round_offset ≥ 2` — prevents prediction)
+3. Oracle generates a BLS12-381 VRF proof bound to your context + drand randomness
+4. The contract verifies the proof with **on-chain BLS12-381 pairing checks** (~58M CPU instructions)
+5. The verified random output is stored permanently on-chain
+6. Anyone can independently re-verify — no trust required
 
-- BLS-VRF on-chain verification (CAP-0059: `bls12_381_pairing_check`, `bls12_381_hash_to_g1`)
-- drand quicknet binding with `round_offset ≥ 2` (future-round enforcement)
-- Storage TTL extension on all persistent entries
-- Oracle worker: event listener → drand beacon → BLS-VRF proof → `fulfill()`
-- E2E validated on Stellar Testnet: 58.2M CPU instructions (< 70M target)
-
-**Contract:** `CBBLOMK4ZYEO4IVVUBDBFHEZVYUOWWXN43Y5TBH6MAWCV23QAIMKGCEN`
-
-## Tranche 2 ✅ — Composability & Security Hardening
-
-- `fulfill()` implements full Checks-Effects-Interactions (CEI) pattern
-- Re-entrancy guard via `DataKey::Fulfilling(request_id)` transient lock
-- `rotate_oracle_keys()` — atomic rotation of BLS PK, Stellar address, Ed25519 key
-- `rotate_drand_pk()` — drand chain key rotation support
-- Consumer authorization model documented (VRF contract as caller)
-- Consumer contract example library (`consumer-example/`)
-- 27 unit tests: 14 core + 13 failure/rotation/edge-case scenarios
-- Threat model documented (`docs/THREAT_MODEL.md`)
-
-## Tranche 3 ✅ — Mainnet Deployment & Production Operations
-
-### Mainnet Contract
+## Live
 
 | | |
 |---|---|
 | **Contract** | [`CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57`](https://stellar.expert/explorer/public/contract/CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57) |
-| **Oracle** | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` (current, after key rotation) |
+| **Oracle** | [`GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`](https://stellar.expert/explorer/public/account/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P) |
 | **Network** | Stellar Mainnet |
+| **Dashboard** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/dashboard/) |
+| **Playground** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/playground/) |
+| **Integration Guide** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/example-dapp/) |
 
-### Public Mainnet Transactions (Proof of Operation)
+## Quick Start — JavaScript SDK
 
-| Transaction | Hash | Explorer |
-|---|---|---|
-| WASM Upload | `296bbf77...` | [View ↗](https://stellar.expert/explorer/public/tx/296bbf779514e69e0e9731f3a22018fc31153f5fcc9bf29131311c839716790e) |
-| Contract Deploy | `5febbea8...` | [View ↗](https://stellar.expert/explorer/public/tx/5febbea86e59a315c7d3ab80647cadab06c37def85bc247d764d1d8713dce181) |
-| Contract Init | `bbcb6a1a...` | [View ↗](https://stellar.expert/explorer/public/tx/bbcb6a1a048ebc1aa1bd8915c80d6e727c21b940a60c6e34878114c3430222b9) |
-| First `request()` | `fae15bdd...` | [View ↗](https://stellar.expert/explorer/public/tx/fae15bdd8e8b38163b69ed0c7df87150870aefb92078141fbdcef2bdc7d7846e) |
-| First `fulfill()` | `5190ba03...` | [View ↗](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) |
+```bash
+npm install @stellar-vrf/sdk @stellar/stellar-sdk
+```
 
-### Instruction Budget
+```typescript
+import { VrfClient, Networks } from "@stellar-vrf/sdk";
+import { Keypair } from "@stellar/stellar-sdk";
 
-`fulfill()` measured at **58,641,186 CPU instructions** on mainnet — 21.8% headroom under 75M SCF target. See [`docs/PROFILING.md`](docs/PROFILING.md).
+const client = new VrfClient({
+  contractId: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+  rpcUrl:     "https://mainnet.sorobanrpc.com",
+  networkPassphrase: Networks.MAINNET,
+  keypair:    Keypair.fromSecret("S..."),
+});
 
-### Deliverables
+// Request verifiable randomness
+const context = new TextEncoder().encode("audit-round-42");
+const requestId = await client.request(context);
 
-- **Oracle HA:** Primary + hot-standby with file-based leader election and on-chain idempotency guard
-- **Developer SDKs:** [JS SDK](sdk/js/) (`@stellar-vrf/sdk`) • [Rust SDK](sdk/rust/) (`stellar-vrf-sdk`)
-- **Example dApp:** [example-dapp/](example-dapp/) — integration reference with neutral use cases
-- **Dashboard:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/dashboard/) — real-time oracle activity
-- **Playground:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/playground/) — interactive Testnet/Mainnet switcher
-- **Operational Docs:** [OPERATIONS.md](docs/OPERATIONS.md) • [RUNBOOK.md](docs/RUNBOOK.md) • [HA_DEPLOYMENT.md](docs/HA_DEPLOYMENT.md) • [INCIDENT_RESPONSE.md](docs/INCIDENT_RESPONSE.md)
+// Wait for oracle fulfillment (~10-30s)
+const proof = await client.waitForFulfillment(requestId, 120_000);
 
-## Quick Start
+// Derive a random number in range [1, 1000]
+const result = await client.deriveRandomInRange(requestId, 1n, 1000n);
+```
 
-### Run contract tests
+## Quick Start — Soroban Consumer Contract (Rust)
+
+Your Soroban contract can request randomness and receive results via callback:
+
+```rust
+// Request: your contract calls the VRF contract
+let request_id: u64 = env.invoke_contract(
+    &vrf_contract,
+    &Symbol::new(&env, "request_with_callback"),
+    vec![&env, context, self_addr.clone(), self_addr, Symbol::new(&env, "on_vrf")],
+);
+
+// Callback: VRF contract calls your on_vrf() after fulfillment
+pub fn on_vrf(env: Env, request_id: u64, beta_output: BytesN<32>, _alpha_seed: BytesN<32>) {
+    let vrf_contract: Address = /* stored at init */;
+    vrf_contract.require_auth(); // CRITICAL: verify caller is the VRF contract
+    // Use beta_output as your random value
+}
+```
+
+See [`consumer-example/`](consumer-example/) for a complete working example.
+
+## Repository Structure
+
+```
+soroban-contract/   — On-chain VRF Oracle smart contract (Rust/Soroban)
+oracle-worker/      — Off-chain Oracle Node (TypeScript)
+consumer-example/   — Example consumer contract with callback (Rust/Soroban)
+sdk/js/             — JavaScript/TypeScript SDK (@stellar-vrf/sdk)
+sdk/rust/           — Rust SDK (stellar-vrf-sdk)
+dashboard/          — Real-time oracle activity dashboard
+playground/         — Interactive VRF testing interface
+example-dapp/       — Integration guide with live demo
+docs/               — Operational and security documentation
+```
+
+## Key Features
+
+- **On-chain BLS12-381 verification** via Soroban host functions (CAP-0059)
+- **drand quicknet binding** with future-round enforcement — oracle cannot predict input
+- **Callback support** — `request_with_callback()` for fully on-chain composability
+- **Oracle key rotation** — atomic BLS + Stellar + Ed25519 key rotation
+- **High availability** — primary + hot-standby with leader election and on-chain idempotency
+- **Re-entrancy protection** — transient lock per request ID
+- **Storage TTL extension** — automatic TTL renewal on all persistent entries
+
+## Performance
+
+`fulfill()` measured at **58,641,186 CPU instructions** on mainnet — well within the 75M Soroban limit with 21.8% headroom. See [`docs/PROFILING.md`](docs/PROFILING.md).
+
+## Running the Oracle
+
+```bash
+cd oracle-worker
+cp .env.example .env   # configure your keys
+npx tsc --outDir dist
+node dist/index.js
+```
+
+## Running Contract Tests
+
 ```bash
 cd soroban-contract
 cargo test
-```
-
-### Run oracle worker (mainnet)
-```bash
-cd oracle-worker
-cp .env.mainnet .env   # configure keys
-npx tsc --outDir dist
-node dist/index.js
-```
-
-### Run oracle worker (testnet)
-```bash
-cd oracle-worker
-cp .env.example .env   # fill in testnet keys
-npx tsc --outDir dist
-node dist/index.js
 ```
 
 ## Documentation
 
 | Document | Description |
 |---|---|
+| [Integration Guide](https://nibrasd.github.io/Stellar-VRF/example-dapp/) | How to integrate VRF into your dApp |
+| [`sdk/js/README.md`](sdk/js/README.md) | JavaScript SDK API reference |
+| [`docs/CONSUMER_AUTHORIZATION.md`](docs/CONSUMER_AUTHORIZATION.md) | Consumer contract authorization model |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Day-to-day operational procedures |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Step-by-step runbook for common tasks |
 | [`docs/HA_DEPLOYMENT.md`](docs/HA_DEPLOYMENT.md) | High-availability deployment guide |
 | [`docs/INCIDENT_RESPONSE.md`](docs/INCIDENT_RESPONSE.md) | Incident response playbook |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Security threat model |
-| [`docs/STRIDE_THREAT_MODEL.md`](docs/STRIDE_THREAT_MODEL.md) | STRIDE analysis |
-| [`docs/CONSUMER_AUTHORIZATION.md`](docs/CONSUMER_AUTHORIZATION.md) | Consumer contract auth model |
 | [`docs/PROFILING.md`](docs/PROFILING.md) | Instruction budget measurements |
+
+## License
+
+MIT
