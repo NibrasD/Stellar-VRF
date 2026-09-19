@@ -55,7 +55,9 @@ pub struct VrfSamplingContract;
 #[contractimpl]
 impl VrfSamplingContract {
     /// Initialize with the trusted VRF contract address.
-    pub fn init(env: Env, vrf_contract: Address) {
+    /// Only the deployer (admin) should call this.
+    pub fn init(env: Env, admin: Address, vrf_contract: Address) {
+        admin.require_auth();
         if env.storage().instance().has(&ConsumerKey::VrfContract) {
             panic!("already initialized");
         }
@@ -72,6 +74,9 @@ impl VrfSamplingContract {
     /// Returns the `sample_id` for tracking the request.
     pub fn request_sample(env: Env, requester: Address, range_max: u64) -> u64 {
         requester.require_auth();
+        if range_max == 0 {
+            panic!("range_max must be greater than zero");
+        }
 
         let vrf_contract: Address = env
             .storage()
