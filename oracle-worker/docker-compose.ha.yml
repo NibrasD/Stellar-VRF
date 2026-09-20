@@ -29,7 +29,7 @@ services:
       - "6379"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in environment}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli ping"]
       interval: 10s
       timeout: 3s
       retries: 5

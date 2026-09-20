@@ -127,8 +127,15 @@ async function startListening(): Promise<void> {
   if (listenerActive) return;
   listenerActive = true;
   log.info(`[${getInstanceId()}] Became LEADER — starting event listener.`);
-  const server = createServer();
-  await startListenerLoop(server, handleRequest, () => listenerActive);
+  try {
+    const server = createServer();
+    await startListenerLoop(server, handleRequest, () => listenerActive);
+  } finally {
+    // Reset flag so the listener can restart if it crashes or exits.
+    // Without this, a crash leaves listenerActive = true permanently,
+    // and the guard above prevents any restart attempt (zombie state).
+    listenerActive = false;
+  }
 }
 
 function onLoseLeadership(): void {

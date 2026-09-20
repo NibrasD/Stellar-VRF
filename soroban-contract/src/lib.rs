@@ -391,7 +391,8 @@ impl VRFOracleContract {
     /// # Re-entrancy protection
     /// `DataKey::Fulfilling(request_id)` is set to `true` before callback invocation
     /// and cleared after. Any re-entrant call to `fulfill()` for the same request_id
-    /// will see `Fulfilled = true` and panic with "already fulfilled".
+    /// will see `Fulfilling = true` and panic with "fulfill already in progress".
+    /// This provides defense-in-depth alongside the `Fulfilled = true` check.
     pub fn fulfill(env: Env, request_id: u64, proof: BlsVrfProof, signature: BytesN<64>) {
         // ── CHECKS ────────────────────────────────────────────────────────────────
 
@@ -402,6 +403,16 @@ impl VRFOracleContract {
             .unwrap_or(false);
         if refunded {
             panic!("request refunded");
+        }
+
+        // Re-entrancy guard: reject if a callback is currently in-flight for this request.
+        let fulfilling: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Fulfilling(request_id))
+            .unwrap_or(false);
+        if fulfilling {
+            panic!("fulfill already in progress");
         }
 
         let oracle_addr: Address = env
