@@ -274,18 +274,21 @@ export async function isRequestFulfilled(
 
 /**
  * Start the event polling loop. Calls the handler for each new request.
+ * Exits gracefully when isActive() returns false.
  */
 export async function startListenerLoop(
   server: rpc.Server,
-  handler: (event: VrfRequestEvent) => Promise<void>
-): Promise<never> {
+  handler: (event: VrfRequestEvent) => Promise<void>,
+  isActive?: () => boolean
+): Promise<void> {
   await initListener(server);
   log.info(`Polling for VRF request events every ${POLL_INTERVAL_MS}ms…`);
 
-  while (true) {
+  while (!isActive || isActive()) {
     const events = await pollRequestEvents(server);
 
     for (const event of events) {
+      if (isActive && !isActive()) break;
       try {
         await handler(event);
       } catch (err) {
@@ -299,4 +302,5 @@ export async function startListenerLoop(
 
     await sleep(POLL_INTERVAL_MS);
   }
+  log.info("Event listener loop stopped (leadership lost).");
 }

@@ -128,7 +128,7 @@ async function startListening(): Promise<void> {
   listenerActive = true;
   log.info(`[${getInstanceId()}] Became LEADER — starting event listener.`);
   const server = createServer();
-  await startListenerLoop(server, handleRequest);
+  await startListenerLoop(server, handleRequest, () => listenerActive);
 }
 
 function onLoseLeadership(): void {

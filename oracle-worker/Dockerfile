@@ -29,4 +29,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
 
 EXPOSE 8080
 
+USER node
+
 CMD ["node", "dist/index.js"]

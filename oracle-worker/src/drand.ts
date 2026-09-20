@@ -43,7 +43,7 @@ export async function fetchDrandBeacon(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
       if (res.ok) {
         const data = (await res.json()) as DrandBeacon;
         log.success(`Fetched drand round ${data.round} (sig: ${data.signature.slice(0, 16)}…)`);
