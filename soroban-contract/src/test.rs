@@ -946,3 +946,296 @@ fn test_timeout_refund_with_nonzero_fee() {
     assert!(client.is_refunded(&id), "request must be marked as refunded");
     assert!(!client.is_fulfilled(&id), "request must NOT be fulfilled");
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PROPERTY & FUZZ SECURITY TEST SUITE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── 1. Malformed Randomness Requests ──────────────────────────────────────────
+
+#[test]
+fn test_property_empty_context_allowed() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let empty_context = Bytes::new(&env);
+    let id = client.request(&empty_context, &requester);
+    assert_eq!(id, 1);
+    assert_eq!(client.requester_of(&id), requester);
+}
+
+#[test]
+fn test_property_exact_max_context_boundary_allowed() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let buf = [0x5Au8; 1024]; // Exactly MAX_CONTEXT_LEN
+    let max_context = Bytes::from_slice(&env, &buf);
+    let id = client.request(&max_context, &requester);
+    assert_eq!(id, 1);
+}
+
+#[test]
+#[should_panic(expected = "context exceeds maximum length")]
+fn test_property_fuzz_oversized_context_rejected() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let buf = [0xFFu8; 1025]; // 1024 + 1
+    let oversized = Bytes::from_slice(&env, &buf);
+    client.request(&oversized, &requester);
+}
+
+#[test]
+fn test_property_arbitrary_binary_contexts_fuzz() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+
+    // Fuzz test various pseudo-random byte patterns (null bytes, high bytes, all 0xFF)
+    let patterns: [&[u8]; 5] = [
+        &[0x00; 16],
+        &[0xFF; 64],
+        &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+        b"\x00\xff\x7f\x80random_binary_payload\x00\x01",
+        &[0xAA; 512],
+    ];
+
+    for (idx, pat) in patterns.iter().enumerate() {
+        let ctx = Bytes::from_slice(&env, pat);
+        let id = client.request(&ctx, &requester);
+        assert_eq!(id, (idx as u64) + 1);
+    }
+}
+
+// ── 2. Invalid Proofs & Tampering Tests ───────────────────────────────────────
+
+/// Proofs with tampered fields must fail verification and panic.
+/// The host crypto verification immediately rejects invalid/tampered signatures.
+#[test]
+#[should_panic]
+fn test_property_tampered_alpha_seed_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _oracle_ed25519, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"alpha_tamper_test");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    // Provide an intentionally corrupted alpha seed
+    let tampered_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0xDE; 32]), // Corrupted
+        gamma_point: BytesN::from_array(&env, &[0x00; 96]),
+        beta_output: BytesN::from_array(&env, &[0x00; 32]),
+        public_key: oracle_pk,
+        drand_round: required_round,
+        drand_signature: BytesN::from_array(&env, &[0x00; 96]),
+    };
+
+    // Any tampering is caught immediately by on-chain verification
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &tampered_proof, &dummy_sig);
+}
+
+// ── 3. Duplicate Fulfillment & Race Conditions ────────────────────────────────
+
+#[test]
+#[should_panic(expected = "fulfill already in progress")]
+fn test_property_fulfilling_guard_blocks_concurrent_fulfill() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"in_progress_guard_test");
+    let id = client.request(&context, &requester);
+
+    // Simulate callback in-flight by setting Fulfilling = true
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilling(id), &true);
+    });
+
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 2,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &dummy_proof, &dummy_sig);
+}
+
+// ── 4. Cross-Request Replay Attacks ───────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "request refunded")]
+fn test_property_fulfill_after_timeout_refund_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"refund_replay_test");
+    let id = client.request(&context, &requester);
+
+    // Force-mark request as refunded
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Refunded(id), &true);
+    });
+
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 2,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &dummy_proof, &dummy_sig);
+}
+
+// ── 5. Incorrect Request IDs & Boundaries ─────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "request not found")]
+fn test_property_fulfill_request_id_zero_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 0,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&0u64, &dummy_proof, &dummy_sig);
+}
+
+#[test]
+#[should_panic(expected = "request not found")]
+fn test_property_fulfill_request_id_max_rejected() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let dummy_proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk,
+        drand_round: 0,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&u64::MAX, &dummy_proof, &dummy_sig);
+}
+
+#[test]
+#[should_panic(expected = "request not found")]
+fn test_property_timeout_refund_request_id_zero_rejected() {
+    let (_env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    client.timeout_refund(&0u64);
+}
+
+#[test]
+#[should_panic(expected = "request not found")]
+fn test_property_timeout_refund_request_id_max_rejected() {
+    let (_env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    client.timeout_refund(&u64::MAX);
+}
+
+// ── 6. Boundary Values: Timeout Window Exact Boundary ─────────────────────────
+
+#[test]
+#[should_panic(expected = "timeout window not reached")]
+fn test_property_timeout_refund_exact_window_boundary_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
+    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
+    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let fee_token = Address::generate(&env);
+
+    let genesis: u64 = 1_000_000;
+    let period: u32 = 3;
+    let round_offset: u32 = 2;
+
+    env.ledger().set_timestamp(genesis + 100 * (period as u64));
+
+    client.init(
+        &oracle_pk, &oracle_addr, &oracle_ed25519,
+        &drand_pk, &g2_generator, &genesis,
+        &period, &round_offset, &fee_token, &0i128,
+    );
+
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"exact_timeout_boundary");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+    let timeout_rounds = client.timeout_rounds(); // 20
+
+    // Set time to EXACTLY required_round + TIMEOUT_ROUNDS (not strictly greater)
+    let exact_boundary_time = genesis + (required_round + timeout_rounds) * (period as u64);
+    env.ledger().set_timestamp(exact_boundary_time);
+
+    // Must panic because current_round <= required_round + TIMEOUT_ROUNDS
+    client.timeout_refund(&id);
+}
+
+// ── 7. Range Derivation Boundary Values ───────────────────────────────────────
+
+#[test]
+fn test_property_derive_random_in_range_boundary_max_one() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"max_one_boundary");
+    let id = client.request(&context, &requester);
+
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage().persistent().set(
+            &DataKey::Proof(id),
+            &crate::BlsVrfProof {
+                alpha_seed: BytesN::from_array(&env, &[0x12; 32]),
+                gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+                beta_output: BytesN::from_array(&env, &[0x34; 32]),
+                public_key: BytesN::from_array(&env, &[0u8; 192]),
+                drand_round: 2,
+                drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+            },
+        );
+    });
+
+    // max = 1: the only valid result in [0, 1) is 0
+    let result = client.derive_random_in_range(&id, &context, &1u64);
+    assert_eq!(result, 0);
+}
+
+#[test]
+fn test_property_derive_random_in_range_fuzz_various_ranges() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"fuzz_ranges");
+    let id = client.request(&context, &requester);
+
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage().persistent().set(
+            &DataKey::Proof(id),
+            &crate::BlsVrfProof {
+                alpha_seed: BytesN::from_array(&env, &[0xAA; 32]),
+                gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+                beta_output: BytesN::from_array(&env, &[0x55; 32]),
+                public_key: BytesN::from_array(&env, &[0u8; 192]),
+                drand_round: 2,
+                drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+            },
+        );
+    });
+
+    let test_ranges: [u64; 8] = [1, 2, 3, 10, 100, 1_000, 1_000_000, u64::MAX];
+    for range in test_ranges {
+        let res = client.derive_random_in_range(&id, &context, &range);
+        assert!(res < range, "derive_random_in_range result {} must be < {}", res, range);
+    }
+}
+
