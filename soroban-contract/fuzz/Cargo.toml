@@ -1,0 +1,30 @@
+[package]
+name = "soroban-vrf-oracle-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+soroban-sdk = { version = "=26.1.0", features = ["testutils"] }
+
+[dependencies.soroban-vrf-oracle]
+path = ".."
+features = ["testutils"]
+
+[[bin]]
+name = "fuzz_vrf_range"
+path = "fuzz_targets/fuzz_vrf_range.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_vrf_request"
+path = "fuzz_targets/fuzz_vrf_request.rs"
+test = false
+doc = false
+bench = false
