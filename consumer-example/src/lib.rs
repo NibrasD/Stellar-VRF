@@ -27,16 +27,27 @@
 //! - The `beta_output` is deterministic given the same `alpha_seed` and oracle key.
 
 #![no_std]
+#![allow(unknown_lints)]
+#![allow(deprecated)]
+#![allow(unnecessary_admin_parameter)]
+#![allow(missing_new_admin_auth)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
     Symbol,
 };
 
+const INSTANCE_TTL_THRESHOLD: u32 = 17_280;
+const INSTANCE_TTL_EXTEND: u32 = 518_400;
+const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
+const PERSISTENT_TTL_EXTEND: u32 = 518_400;
+
 /// Storage keys for the consumer contract.
 #[contracttype]
 #[derive(Clone)]
 pub enum ConsumerKey {
+    /// Contract administrator
+    Admin,
     /// The trusted VRF oracle contract address (set at initialization).
     VrfContract,
     /// Pending sample requests: sample_id → range_max.
@@ -54,7 +65,7 @@ pub struct VrfSamplingContract;
 
 #[contractimpl]
 impl VrfSamplingContract {
-    /// Initialize with the trusted VRF contract address.
+    /// Initialize with the trusted VRF contract address and admin.
     /// Only the deployer (admin) should call this.
     pub fn init(env: Env, admin: Address, vrf_contract: Address) {
         admin.require_auth();
@@ -63,7 +74,18 @@ impl VrfSamplingContract {
         }
         env.storage()
             .instance()
+            .set(&ConsumerKey::Admin, &admin);
+        env.storage()
+            .instance()
             .set(&ConsumerKey::VrfContract, &vrf_contract);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
+        env.events().publish(
+            (symbol_short!("init"),),
+            (admin, vrf_contract),
+        );
     }
 
     /// Request a verifiable random sample in the range [0, range_max).
@@ -109,6 +131,19 @@ impl VrfSamplingContract {
         env.storage()
             .persistent()
             .set(&ConsumerKey::PendingSample(sample_id), &range_max);
+        env.storage().persistent().extend_ttl(
+            &ConsumerKey::PendingSample(sample_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
+        );
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+
+        env.events().publish(
+            (symbol_short!("req_smpl"),),
+            (sample_id, requester, range_max),
+        );
 
         sample_id
     }
@@ -160,11 +195,20 @@ impl VrfSamplingContract {
         env.storage()
             .persistent()
             .set(&ConsumerKey::SampleResult(sample_id), &sample);
+        env.storage().persistent().extend_ttl(
+            &ConsumerKey::SampleResult(sample_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
+        );
 
         // Clean up pending marker.
         env.storage()
             .persistent()
             .remove(&ConsumerKey::PendingSample(sample_id));
+
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         // Emit event with the sample result.
         env.events().publish(
@@ -177,17 +221,42 @@ impl VrfSamplingContract {
     ///
     /// Returns the random value ∈ [0, range_max) for the given `sample_id`.
     pub fn get_sample(env: Env, sample_id: u64) -> u64 {
-        env.storage()
+        let sample = env
+            .storage()
             .persistent()
             .get(&ConsumerKey::SampleResult(sample_id))
-            .unwrap_or_else(|| panic!("sample not available"))
+            .unwrap_or_else(|| panic!("sample not available"));
+        env.storage().persistent().extend_ttl(
+            &ConsumerKey::SampleResult(sample_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
+        );
+        sample
+    }
+
+    /// Query the admin address.
+    pub fn admin(env: Env) -> Address {
+        let admin_addr: Address = env
+            .storage()
+            .instance()
+            .get(&ConsumerKey::Admin)
+            .unwrap_or_else(|| panic!("not initialized"));
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        admin_addr
     }
 
     /// Query the VRF contract address.
     pub fn vrf_contract(env: Env) -> Address {
-        env.storage()
+        let vrf: Address = env
+            .storage()
             .instance()
             .get(&ConsumerKey::VrfContract)
-            .unwrap_or_else(|| panic!("not initialized"))
+            .unwrap_or_else(|| panic!("not initialized"));
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        vrf
     }
 }

@@ -1,5 +1,7 @@
 #![no_std]
+#![allow(unknown_lints)]
 #![allow(deprecated)]
+#![allow(dos_unexpected_revert_with_storage)]
 
 #[cfg(test)]
 mod test;
@@ -224,11 +226,23 @@ impl VRFOracleContract {
             panic!("already refunded");
         }
 
-        let required_round: u64 = env.storage().persistent().get(&DataKey::RequestRound(request_id)).unwrap();
-        let genesis: u64 = env.storage().instance().get(&DataKey::DrandGenesis).unwrap();
-        let period: u32 = env.storage().instance().get(&DataKey::DrandPeriod).unwrap();
+        let required_round: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RequestRound(request_id))
+            .unwrap_or_else(|| panic!("request round missing"));
+        let genesis: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DrandGenesis)
+            .unwrap_or_else(|| panic!("genesis missing"));
+        let period: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DrandPeriod)
+            .unwrap_or_else(|| panic!("period missing"));
         let current_round = compute_current_round(env.ledger().timestamp(), genesis, period);
-        if current_round <= required_round + TIMEOUT_ROUNDS {
+        if current_round <= required_round.saturating_add(TIMEOUT_ROUNDS) {
             panic!("timeout window not reached");
         }
 
@@ -242,7 +256,11 @@ impl VRFOracleContract {
         // Refund escrowed fee back to requester.
         let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
         if fee_amount > 0 {
-            let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
+            let fee_token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::FeeToken)
+                .unwrap_or_else(|| panic!("fee token missing"));
             let contract_addr = env.current_contract_address();
             let transfer_fn = Symbol::new(&env, "transfer");
             let mut args = Vec::<Val>::new(&env);
@@ -299,12 +317,12 @@ impl VRFOracleContract {
             .storage()
             .persistent()
             .get(&DataKey::CallbackContract(request_id))
-            .unwrap();
+            .unwrap_or_else(|| panic!("callback contract missing"));
         let cb_fn: Symbol = env
             .storage()
             .persistent()
             .get(&DataKey::CallbackFn(request_id))
-            .unwrap();
+            .unwrap_or_else(|| panic!("callback fn missing"));
         env.storage().persistent().extend_ttl(
             &DataKey::CallbackContract(request_id),
             PERSISTENT_TTL_THRESHOLD,
@@ -342,7 +360,11 @@ impl VRFOracleContract {
             panic!("request refunded");
         }
 
-        let oracle_addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
+        let oracle_addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::OracleAddr)
+            .unwrap_or_else(|| panic!("oracle address missing"));
         oracle_addr.require_auth();
 
         if !env.storage().persistent().has(&DataKey::RequestContext(request_id)) {
@@ -358,7 +380,11 @@ impl VRFOracleContract {
             panic!("already fulfilled");
         }
 
-        let stored_pk: BytesN<192> = env.storage().instance().get(&DataKey::OraclePK).unwrap();
+        let stored_pk: BytesN<192> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OraclePK)
+            .unwrap_or_else(|| panic!("oracle pk missing"));
         if proof.public_key != stored_pk {
             panic!("oracle key mismatch");
         }
@@ -367,7 +393,7 @@ impl VRFOracleContract {
             .storage()
             .persistent()
             .get(&DataKey::RequestRound(request_id))
-            .unwrap();
+            .unwrap_or_else(|| panic!("request round missing"));
         if proof.drand_round != required_round {
             panic!("drand round mismatch");
         }
@@ -377,7 +403,7 @@ impl VRFOracleContract {
             .storage()
             .instance()
             .get(&DataKey::OracleEd25519)
-            .unwrap();
+            .unwrap_or_else(|| panic!("oracle ed25519 missing"));
         let mut message = Bytes::new(&env);
         message.append(&u64_be_bytes(&env, request_id));
         message.append(&Bytes::from_slice(&env, &proof.alpha_seed.to_array()));
@@ -436,7 +462,11 @@ impl VRFOracleContract {
         // Release escrowed fee to oracle upon successful fulfillment.
         let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
         if fee_amount > 0 {
-            let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
+            let fee_token: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::FeeToken)
+                .unwrap_or_else(|| panic!("fee token missing"));
             let contract_addr = env.current_contract_address();
             let transfer_fn = Symbol::new(&env, "transfer");
             let mut args = Vec::<Val>::new(&env);
@@ -492,7 +522,11 @@ impl VRFOracleContract {
     }
 
     pub fn oracle_pk(env: Env) -> BytesN<192> {
-        let pk: BytesN<192> = env.storage().instance().get(&DataKey::OraclePK).unwrap();
+        let pk: BytesN<192> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OraclePK)
+            .unwrap_or_else(|| panic!("oracle pk missing"));
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
@@ -500,7 +534,11 @@ impl VRFOracleContract {
     }
 
     pub fn oracle_address(env: Env) -> Address {
-        let addr: Address = env.storage().instance().get(&DataKey::OracleAddr).unwrap();
+        let addr: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::OracleAddr)
+            .unwrap_or_else(|| panic!("oracle address missing"));
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
@@ -569,7 +607,7 @@ impl VRFOracleContract {
             .storage()
             .persistent()
             .get(&DataKey::Proof(request_id))
-            .unwrap();
+            .unwrap_or_else(|| panic!("proof missing"));
 
         let mut input = Bytes::new(&env);
         input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
@@ -607,10 +645,10 @@ impl VRFOracleContract {
             .storage()
             .persistent()
             .get(&DataKey::Proof(request_id))
-            .unwrap();
+            .unwrap_or_else(|| panic!("proof missing"));
 
         // Rejection-sampling–style derivation to eliminate modulo bias.
-        let threshold = u64::MAX - (u64::MAX % max);
+        let threshold = u64::MAX.saturating_sub(u64::MAX % max);
         let mut attempt: u32 = 0;
         loop {
             let mut input = Bytes::new(&env);
@@ -668,7 +706,7 @@ impl VRFOracleContract {
             .storage()
             .instance()
             .get(&DataKey::OracleAddr)
-            .unwrap();
+            .unwrap_or_else(|| panic!("oracle address missing"));
 
         if caller != requester && caller != oracle_addr {
             panic!("only requester or oracle can cleanup");
@@ -727,14 +765,14 @@ impl VRFOracleContract {
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 fn compute_required_round(now_ts: u64, genesis: u64, period: u32, offset: u32) -> u64 {
-    compute_current_round(now_ts, genesis, period) + (offset as u64)
+    compute_current_round(now_ts, genesis, period).saturating_add(offset as u64)
 }
 
 fn compute_current_round(now_ts: u64, genesis: u64, period: u32) -> u64 {
-    if now_ts <= genesis {
+    if now_ts <= genesis || period == 0 {
         return 0;
     }
-    (now_ts - genesis) / (period as u64)
+    now_ts.saturating_sub(genesis) / (period as u64)
 }
 
 fn u64_be_bytes(env: &Env, value: u64) -> Bytes {
@@ -751,7 +789,7 @@ fn derive_expected_alpha(
         .storage()
         .persistent()
         .get(&DataKey::RequestContext(request_id))
-        .unwrap();
+        .unwrap_or_else(|| panic!("context missing"));
     let mut input = Bytes::new(env);
     input.append(&u64_be_bytes(env, request_id));
     input.append(&context);
@@ -779,8 +817,11 @@ fn verify_bls_vrf_proof(env: &Env, proof: &BlsVrfProof) -> bool {
     let h = bls.hash_to_g1(&alpha_bytes, &dst);
     let gamma = Bls12381G1Affine::from_bytes(proof.gamma_point.clone());
 
-    let g2_generator_bytes: BytesN<192> =
-        env.storage().instance().get(&DataKey::G2Generator).unwrap();
+    let g2_generator_bytes: BytesN<192> = env
+        .storage()
+        .instance()
+        .get(&DataKey::G2Generator)
+        .unwrap_or_else(|| panic!("g2 generator missing"));
     let g2_generator = Bls12381G2Affine::from_bytes(g2_generator_bytes);
     let pk = Bls12381G2Affine::from_bytes(proof.public_key.clone());
 
@@ -799,10 +840,17 @@ fn verify_drand_signature(env: &Env, proof: &BlsVrfProof) -> bool {
     let bls = env.crypto().bls12_381();
 
     let drand_sig = Bls12381G1Affine::from_bytes(proof.drand_signature.clone());
-    let drand_pk_bytes: BytesN<192> = env.storage().instance().get(&DataKey::DrandPK).unwrap();
+    let drand_pk_bytes: BytesN<192> = env
+        .storage()
+        .instance()
+        .get(&DataKey::DrandPK)
+        .unwrap_or_else(|| panic!("drand pk missing"));
     let drand_pk = Bls12381G2Affine::from_bytes(drand_pk_bytes);
-    let g2_generator_bytes: BytesN<192> =
-        env.storage().instance().get(&DataKey::G2Generator).unwrap();
+    let g2_generator_bytes: BytesN<192> = env
+        .storage()
+        .instance()
+        .get(&DataKey::G2Generator)
+        .unwrap_or_else(|| panic!("g2 generator missing"));
     let g2_generator = Bls12381G2Affine::from_bytes(g2_generator_bytes);
 
     let round_be = u64_be_bytes(env, proof.drand_round);
@@ -835,7 +883,11 @@ fn request_internal(
     // Fee is held in escrow until fulfill() (released to oracle) or timeout_refund() (returned to requester).
     let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
     if fee_amount > 0 {
-        let fee_token: Address = env.storage().instance().get(&DataKey::FeeToken).unwrap();
+        let fee_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeToken)
+            .unwrap_or_else(|| panic!("fee token missing"));
         let contract_addr = env.current_contract_address();
         // SAC token transfer: requester → VRF contract (escrow).
         let transfer_fn = Symbol::new(env, "transfer");
@@ -851,24 +903,26 @@ fn request_internal(
         .instance()
         .get(&DataKey::Counter)
         .unwrap_or(0);
-    let id = counter + 1;
+    let id = counter
+        .checked_add(1)
+        .unwrap_or_else(|| panic!("counter overflow"));
     env.storage().instance().set(&DataKey::Counter, &id);
 
     let genesis: u64 = env
         .storage()
         .instance()
         .get(&DataKey::DrandGenesis)
-        .unwrap();
+        .unwrap_or_else(|| panic!("genesis missing"));
     let period: u32 = env
         .storage()
         .instance()
         .get(&DataKey::DrandPeriod)
-        .unwrap();
+        .unwrap_or_else(|| panic!("period missing"));
     let offset: u32 = env
         .storage()
         .instance()
         .get(&DataKey::RoundOffset)
-        .unwrap();
+        .unwrap_or_else(|| panic!("round offset missing"));
     let required_round =
         compute_required_round(env.ledger().timestamp(), genesis, period, offset);
 
@@ -966,12 +1020,12 @@ pub(crate) fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &
         .storage()
         .persistent()
         .get(&DataKey::CallbackContract(request_id))
-        .unwrap();
+        .unwrap_or_else(|| panic!("callback contract missing"));
     let callback_fn: Symbol = env
         .storage()
         .persistent()
         .get(&DataKey::CallbackFn(request_id))
-        .unwrap();
+        .unwrap_or_else(|| panic!("callback fn missing"));
 
     let mut args = Vec::<Val>::new(env);
     args.push_back(request_id.into_val(env));
