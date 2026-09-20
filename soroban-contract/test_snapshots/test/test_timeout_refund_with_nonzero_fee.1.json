@@ -301,33 +301,6 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "RequestContext"
-                  },
-                  {
-                    "u64": "1"
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "bytes": "6665655f726566756e645f74657374"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 518400
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "key": {
-                "vec": [
-                  {
                     "symbol": "RequestRound"
                   },
                   {

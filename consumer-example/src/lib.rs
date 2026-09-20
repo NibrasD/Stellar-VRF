@@ -190,13 +190,33 @@ impl VrfSamplingContract {
             .get(&ConsumerKey::PendingSample(sample_id))
             .unwrap_or_else(|| panic!("unknown sample_id"));
 
-        // Derive a random value in [0, range_max) from the VRF output.
-        // Using the first 8 bytes of beta_output as a u64 seed.
-        let arr = beta_output.to_array();
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(&arr[0..8]);
-        let raw = u64::from_be_bytes(buf);
-        let sample = raw % range_max;
+        // Derive an unbiased random value in [0, range_max) using rejection sampling.
+        // Direct modulo reduction (raw % range_max) introduces bias unless range_max divides 2^64.
+        // We reject any raw value >= zone, where zone is the largest multiple of range_max <= u64::MAX.
+        let zone = u64::MAX.saturating_sub(u64::MAX % range_max);
+        let mut sample_val: Option<u64> = None;
+        let mut entropy = beta_output;
+
+        loop {
+            let arr = entropy.to_array();
+            for chunk in arr.chunks_exact(8) {
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(chunk);
+                let raw = u64::from_be_bytes(buf);
+                if raw < zone {
+                    sample_val = Some(raw % range_max);
+                    break;
+                }
+            }
+            if sample_val.is_some() {
+                break;
+            }
+            // In the astronomically rare event all 4 slices fall in the rejection zone,
+            // re-hash entropy with SHA-256 to produce an unbiased 32-byte pseudo-random block.
+            let input = Bytes::from_slice(&env, &arr);
+            entropy = env.crypto().sha256(&input).into();
+        }
+        let sample = sample_val.unwrap();
 
         // Store the result.
         env.storage()
@@ -227,18 +247,36 @@ impl VrfSamplingContract {
     /// Query the random sample result for a fulfilled request.
     ///
     /// Returns the random value ∈ [0, range_max) for the given `sample_id`.
+    /// Does not extend TTL on read to prevent unprivileged callers from pinning state.
     pub fn get_sample(env: Env, sample_id: u64) -> u64 {
-        let sample = env
-            .storage()
+        env.storage()
             .persistent()
             .get(&ConsumerKey::SampleResult(sample_id))
-            .unwrap_or_else(|| panic!("sample not available"));
-        env.storage().persistent().extend_ttl(
-            &ConsumerKey::SampleResult(sample_id),
-            PERSISTENT_TTL_THRESHOLD,
-            PERSISTENT_TTL_EXTEND,
-        );
-        sample
+            .unwrap_or_else(|| panic!("sample not available"))
+    }
+
+    /// Delete a fulfilled sample result to reclaim contract storage rent.
+    /// Restricted to the admin.
+    pub fn cleanup_sample(env: Env, caller: Address, sample_id: u64) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ConsumerKey::Admin)
+            .unwrap_or_else(|| panic!("not initialized"));
+        if caller != admin {
+            panic!("not authorized");
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&ConsumerKey::SampleResult(sample_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&ConsumerKey::SampleResult(sample_id));
+        }
     }
 
     /// Query the admin address.

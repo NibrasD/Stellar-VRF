@@ -23,6 +23,7 @@ const BETA_DOMAIN: &[u8] = b"VREP_BETA_V1";
 const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V1";
 const MIN_ROUND_OFFSET: u32 = 2;
 const TIMEOUT_ROUNDS: u64 = 20;
+const MAX_CONTEXT_LEN: u32 = 1024;
 
 #[contracttype]
 #[derive(Clone)]
@@ -197,7 +198,6 @@ impl VRFOracleContract {
         if requester != callback_contract {
             panic!("callback_contract must match requester");
         }
-        callback_contract.require_auth();
         if callback_fn != Symbol::new(&env, "on_vrf") {
             panic!("callback_fn must be on_vrf");
         }
@@ -212,7 +212,16 @@ impl VRFOracleContract {
     }
 
     pub fn timeout_refund(env: Env, request_id: u64) {
-        if !env.storage().persistent().has(&DataKey::RequestContext(request_id)) {
+        let refunded: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Refunded(request_id))
+            .unwrap_or(false);
+        if refunded {
+            panic!("already refunded");
+        }
+
+        if !env.storage().persistent().has(&DataKey::Requester(request_id)) {
             panic!("request not found");
         }
 
@@ -230,15 +239,6 @@ impl VRFOracleContract {
             .unwrap_or(false);
         if fulfilled {
             panic!("already fulfilled");
-        }
-
-        let refunded: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Refunded(request_id))
-            .unwrap_or(false);
-        if refunded {
-            panic!("already refunded");
         }
 
         let required_round: u64 = env
@@ -267,6 +267,35 @@ impl VRFOracleContract {
             PERSISTENT_TTL_THRESHOLD,
             PERSISTENT_TTL_EXTEND,
         );
+
+        // Delete obsolete transient request storage to immediately reclaim storage rent.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::RequestContext(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::RequestContext(request_id));
+        }
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::CallbackContract(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::CallbackContract(request_id));
+        }
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::CallbackFn(request_id))
+        {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::CallbackFn(request_id));
+        }
 
         // Refund escrowed fee back to requester.
         let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
@@ -893,6 +922,10 @@ fn request_internal(
     callback_fn: Option<Symbol>,
 ) -> u64 {
     requester.require_auth();
+
+    if context.len() > MAX_CONTEXT_LEN {
+        panic!("context exceeds maximum length");
+    }
 
     // Charge per-request fee via SAC token transfer (requester → contract escrow).
     // Fee is held in escrow until fulfill() (released to oracle) or timeout_refund() (returned to requester).

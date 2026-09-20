@@ -141,18 +141,38 @@ fn test_request_stores_requester() {
 #[test]
 fn test_request_with_callback_stores_callback() {
     let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
-    let requester = Address::generate(&env);
     let callback_contract = Address::generate(&env);
     let callback_fn = Symbol::new(&env, "on_vrf");
     let context = Bytes::from_slice(&env, b"callback_context");
 
-    let id = client.request_with_callback(&context, &requester, &callback_contract, &callback_fn);
+    let id = client.request_with_callback(&context, &callback_contract, &callback_contract, &callback_fn);
     let cb = client.callback_of(&id);
 
     assert!(cb.is_some());
     let (stored_contract, stored_fn) = cb.unwrap();
     assert_eq!(stored_contract, callback_contract);
     assert_eq!(stored_fn, callback_fn);
+}
+
+#[test]
+#[should_panic(expected = "callback_contract must match requester")]
+fn test_request_with_callback_mismatched_requester_rejected() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let callback_contract = Address::generate(&env);
+    let callback_fn = Symbol::new(&env, "on_vrf");
+    let context = Bytes::from_slice(&env, b"callback_context");
+    client.request_with_callback(&context, &requester, &callback_contract, &callback_fn);
+}
+
+#[test]
+#[should_panic(expected = "context exceeds maximum length")]
+fn test_request_oversized_context_rejected() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let buf = [0u8; 1025];
+    let context = Bytes::from_slice(&env, &buf);
+    client.request(&context, &requester);
 }
 
 #[test]
@@ -654,11 +674,10 @@ fn test_reentancy_guard_blocks_during_callback() {
     malicious_client.init(&vrf_id);
 
     // request_with_callback — consumer = MaliciousConsumer, fn = on_vrf
-    let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"reentrant_cross_contract");
     let id = vrf_client.request_with_callback(
         &context,
-        &requester,
+        &malicious_id,
         &malicious_id,
         &soroban_sdk::symbol_short!("on_vrf"),
     );
