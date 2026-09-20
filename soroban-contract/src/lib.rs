@@ -180,6 +180,13 @@ impl VRFOracleContract {
         request_internal(&env, context, requester, None, None)
     }
 
+    /// Request verifiable randomness with an on-chain callback.
+    ///
+    /// # Confused-Deputy Security Model
+    /// - `callback_contract` must equal `requester`: only contracts requesting
+    ///   randomness for themselves may receive callbacks.
+    /// - `callback_contract.require_auth()` is enforced to ensure authorization.
+    /// - `callback_fn` is restricted to `on_vrf` to prevent arbitrary dispatch.
     pub fn request_with_callback(
         env: Env,
         context: Bytes,
@@ -187,6 +194,14 @@ impl VRFOracleContract {
         callback_contract: Address,
         callback_fn: Symbol,
     ) -> u64 {
+        if requester != callback_contract {
+            panic!("callback_contract must match requester");
+        }
+        callback_contract.require_auth();
+        if callback_fn != Symbol::new(&env, "on_vrf") {
+            panic!("callback_fn must be on_vrf");
+        }
+
         request_internal(
             &env,
             context,

@@ -90,12 +90,19 @@ impl VrfSamplingContract {
 
     /// Request a verifiable random sample in the range [0, range_max).
     ///
-    /// Calls `request_with_callback` on the VRF contract, which will invoke
-    /// `on_vrf(sample_id, beta_output, alpha_seed)` when randomness is ready.
-    ///
-    /// Returns the `sample_id` for tracking the request.
-    pub fn request_sample(env: Env, requester: Address, range_max: u64) -> u64 {
-        requester.require_auth();
+    /// # Authorization
+    /// Restricted to the contract `admin` to prevent unauthorized callers from
+    /// triggering paid requests funded by this contract's balance.
+    pub fn request_sample(env: Env, caller: Address, range_max: u64) -> u64 {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ConsumerKey::Admin)
+            .unwrap_or_else(|| panic!("not initialized"));
+        if caller != admin {
+            panic!("not authorized");
+        }
         if range_max == 0 {
             panic!("range_max must be greater than zero");
         }
@@ -142,7 +149,7 @@ impl VrfSamplingContract {
 
         env.events().publish(
             (symbol_short!("req_smpl"),),
-            (sample_id, requester, range_max),
+            (sample_id, caller, range_max),
         );
 
         sample_id

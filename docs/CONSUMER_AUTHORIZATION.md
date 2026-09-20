@@ -5,21 +5,23 @@ and what you need to do to handle it safely.
 
 ## How callbacks work
 
-When you call `request_with_callback()`, you're telling the VRF contract: "after the oracle
-fulfills my request, call `on_vrf()` on my contract." The important thing to understand is
-that the VRF contract itself is the one making that call — not the oracle, and not the user
-who originally sent the request.
+When your consumer contract calls `request_with_callback()`, it registers itself to receive
+the verifiable randomness callback. The VRF contract enforces strict confused-deputy protection:
+- **Binding to Requester**: `callback_contract` must equal `requester`. A third party cannot
+  designate your contract as a callback target.
+- **Requester Authorization**: `callback_contract.require_auth()` is enforced by the VRF contract.
+- **Fixed Callback Method**: The callback method is strictly restricted to `on_vrf`.
 
 ```
-User  ───request_with_callback()───▶  VRF Contract
-                                           │
-Oracle  ───fulfill()───▶  VRF Contract     │
-                               │           │
-                               └─on_vrf()─▶  Your Contract
-                                              (caller = VRF contract)
+Consumer Contract ───request_with_callback(on_vrf)───▶ VRF Contract
+                                                              │
+Oracle Worker ──────────fulfill()───────────────────▶ VRF Contract
+                                                              │
+                                                              └─on_vrf()─▶ Consumer Contract
+                                                                           (caller = VRF contract)
 ```
 
-This matters because it determines how you should authorize the callback.
+This guarantees that callbacks are only ever delivered to the contract that initiated the request.
 
 ## Authorizing the callback
 
