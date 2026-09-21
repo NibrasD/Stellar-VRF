@@ -128,9 +128,14 @@ impl VRFOracleContract {
     /// attacker who obtains a new keypair from hijacking the oracle role.
     ///
     /// # Security note
-    /// Only rotate keys after the new oracle node is running and ready to fulfill
-    /// requests. Any unfulfilled requests locked to the old PK will fail verification
-    /// after rotation — they must be refunded via `timeout_refund()`.
+    /// Pending requests are **not** locked to the oracle key that was active at
+    /// request time. At fulfillment, `fulfill()` checks the **currently configured**
+    /// oracle key in instance storage. This means:
+    /// - The **new** oracle can fulfill requests created before rotation.
+    /// - The **old** oracle (or an attacker with old keys) cannot fulfill after rotation.
+    ///
+    /// Best practice: rotate keys only after the new oracle node is running and
+    /// ready to fulfill requests, to avoid a gap where no oracle is active.
     pub fn rotate_oracle_keys(
         env: Env,
         new_oracle_pk: BytesN<192>,

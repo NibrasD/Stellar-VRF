@@ -203,8 +203,8 @@ stellar contract invoke \
 # Step 4: Restart oracle worker
 docker compose -f docker-compose.ha.yml restart
 
-# Note: pending requests submitted before rotation will fail verification
-# Requesters should call timeout_refund() for those requests
+# Note: pending requests are NOT locked to the old key — the new oracle
+# can fulfill them. The old oracle (or attacker) cannot fulfill after rotation.
 ```
 
 ### 4.2 Rotate drand public key

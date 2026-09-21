@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "keygen": "tsx src/keygen.ts"
+    "keygen": "tsx src/keygen.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@noble/curves": "^1.8.0",
@@ -16,8 +17,9 @@
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^5.0.1"
   }
 }

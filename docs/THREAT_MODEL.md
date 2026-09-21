@@ -93,9 +93,11 @@ atomically replace all three key fields (BLS PK, Stellar address, Ed25519 PK). T
 must authorize the rotation — an attacker who only has the BLS key but not the Stellar account
 cannot rotate keys.
 
-After rotation, any pending requests that were locked to the old oracle PK will fail verification
-when the (now-compromised) attacker tries to fulfill them. Requesters should call `timeout_refund()`
-for these.
+After rotation, pending requests are **not** locked to the old oracle PK. The contract checks
+the **currently configured** oracle key at fulfillment time. This means:
+- The **new** oracle node can fulfill requests that were created before rotation.
+- The attacker (with old/compromised keys) **cannot** fulfill any request after rotation,
+  because `fulfill()` compares `proof.public_key` against the updated `OraclePK` in instance storage.
 
 ### Storage expiration
 

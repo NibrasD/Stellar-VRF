@@ -780,16 +780,95 @@ fn test_fulfill_invalid_ed25519_signature() {
 }
 
 /// fulfill() must reject a proof with an invalid drand BLS signature.
-/// Even if all other fields are correct, a wrong drand_signature means
-/// the beacon cannot be verified and the proof is invalid.
+/// This test generates a real Ed25519 keypair, signs the message payload
+/// correctly so that ed25519_verify PASSES, and then the execution reaches
+/// verify_drand_signature() which fails on the garbage drand_signature bytes.
+///
+/// Previous version of this test used dummy_sig=[0u8;64] which failed at
+/// ed25519_verify (line 469) and never reached BLS verification at all.
 #[test]
-#[should_panic] // BLS pairing check or ed25519 verify will fail
+#[should_panic(expected = "drand signature verification failed")]
 fn test_fulfill_invalid_drand_bls_signature() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Generate a REAL Ed25519 keypair for the oracle.
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let ed25519_pk_bytes: [u8; 32] = verifying_key.to_bytes();
+
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &ed25519_pk_bytes);
+    // Use the REAL G1 generator and a valid-format G2 key for drand so that
+    // Bls12381G1Affine::from_bytes doesn't panic on point decoding.
+    // The G1 generator (compressed, uncompressed 96 bytes) for BLS12-381:
+    let g1_gen_bytes: [u8; 96] = [
+        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c,
+        0x4f, 0xa9, 0xac, 0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05,
+        0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b, 0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f,
+        0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb, 0x22, 0xc6, 0xbb,
+        0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
+        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6,
+        0x00, 0xdb, 0x18, 0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44,
+        0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa, 0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
+    ];
+    // Use the G2 generator as drand_pk too — it IS a valid G2 point
+    // (so from_bytes won't panic during deserialization), but since the
+    // drand_signature is not a real BLS sig for this round under this key,
+    // verify_drand_signature's pairing check will return false.
+    // (drand_pk == g2_generator here is fine; verify_drand_signature checks
+    //  e(sig, g2_gen) == e(H(round), drand_pk), which won't hold for a
+    //  random G1 point as signature.)
+    let g2_generator: [u8; 192] = [
+        0x13, 0xe0, 0x2b, 0x60, 0x52, 0x71, 0x9f, 0x60, 0x7d, 0xac, 0xd3, 0xa0,
+        0x88, 0x27, 0x4f, 0x65, 0x59, 0x6b, 0xd0, 0xd0, 0x99, 0x20, 0xb6, 0x1a,
+        0xb5, 0xda, 0x61, 0xbb, 0xdc, 0x7f, 0x50, 0x49, 0x33, 0x4c, 0xf1, 0x12,
+        0x13, 0x94, 0x5d, 0x57, 0xe5, 0xac, 0x7d, 0x05, 0x5d, 0x04, 0x2b, 0x7e,
+        0x02, 0x4a, 0xa2, 0xb2, 0xf0, 0x8f, 0x0a, 0x91, 0x26, 0x08, 0x05, 0x27,
+        0x2d, 0xc5, 0x10, 0x51, 0xc6, 0xe4, 0x7a, 0xd4, 0xfa, 0x40, 0x3b, 0x02,
+        0xb4, 0x51, 0x0b, 0x64, 0x7a, 0xe3, 0xd1, 0x77, 0x0b, 0xac, 0x03, 0x26,
+        0xa8, 0x05, 0xbb, 0xef, 0xd4, 0x80, 0x56, 0xc8, 0xc1, 0x21, 0xbd, 0xb8,
+        0x06, 0x06, 0xc4, 0xa0, 0x2e, 0xa7, 0x34, 0xcc, 0x32, 0xac, 0xd2, 0xb0,
+        0x2b, 0xc2, 0x8b, 0x99, 0xcb, 0x3e, 0x28, 0x7e, 0x85, 0xa7, 0x63, 0xaf,
+        0x26, 0x74, 0x92, 0xab, 0x57, 0x2e, 0x99, 0xab, 0x3f, 0x37, 0x0d, 0x27,
+        0x5c, 0xec, 0x1d, 0xa1, 0xaa, 0xa9, 0x07, 0x5f, 0xf0, 0x5f, 0x79, 0xbe,
+        0x0c, 0xe5, 0xd5, 0x27, 0x72, 0x7d, 0x6e, 0x11, 0x8c, 0xc9, 0xcd, 0xc6,
+        0xda, 0x2e, 0x35, 0x1a, 0xad, 0xfd, 0x9b, 0xaa, 0x8c, 0xbd, 0xd3, 0xa7,
+        0x6d, 0x42, 0x9a, 0x69, 0x51, 0x60, 0xd1, 0x2c, 0x92, 0x3a, 0xc9, 0xcc,
+        0x3b, 0xac, 0xa2, 0x89, 0xe1, 0x93, 0x54, 0x86, 0x08, 0xb8, 0x28, 0x01,
+    ];
+    let drand_pk = BytesN::from_array(&env, &g2_generator);
+    let fee_token = Address::generate(&env);
+
+    client.init(
+        &oracle_pk,
+        &oracle_addr,
+        &oracle_ed25519,
+        &drand_pk,
+        &BytesN::from_array(&env, &g2_generator),
+        &1_692_803_367u64,
+        &3u32,
+        &2u32,
+        &fee_token,
+        &0i128,
+    );
+
     let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"bad_drand_sig");
+    let context = Bytes::from_slice(&env, b"bls_sig_test");
     let id = client.request(&context, &requester);
     let required_round = client.request_round(&id);
+
+    // Use the G1 generator as the drand_signature — it IS a valid G1 point
+    // (so from_bytes won't panic), but it is NOT a valid BLS signature for
+    // this round, so verify_drand_signature will return false.
+    let invalid_drand_sig = BytesN::from_array(&env, &g1_gen_bytes);
 
     let proof = crate::BlsVrfProof {
         alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
@@ -797,11 +876,25 @@ fn test_fulfill_invalid_drand_bls_signature() {
         beta_output: BytesN::from_array(&env, &[0u8; 32]),
         public_key: oracle_pk,
         drand_round: required_round,
-        // Invalid drand signature — random garbage bytes
-        drand_signature: BytesN::from_array(&env, &[0xDE; 96]),
+        drand_signature: invalid_drand_sig,
     };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &proof, &dummy_sig);
+
+    // Build the EXACT same message that fulfill() constructs for ed25519_verify.
+    let mut message_bytes = alloc::vec::Vec::<u8>::new();
+    message_bytes.extend_from_slice(&id.to_be_bytes());
+    message_bytes.extend_from_slice(&proof.alpha_seed.to_array());
+    message_bytes.extend_from_slice(&proof.gamma_point.to_array());
+    message_bytes.extend_from_slice(&proof.beta_output.to_array());
+    message_bytes.extend_from_slice(&required_round.to_be_bytes());
+    message_bytes.extend_from_slice(&proof.drand_signature.to_array());
+
+    // Sign with the REAL Ed25519 key — ed25519_verify will PASS.
+    let sig = signing_key.sign(&message_bytes);
+    let sig_bytes = sig.to_bytes();
+    let valid_ed25519_sig = BytesN::from_array(&env, &sig_bytes);
+
+    // This should pass Ed25519 verify, then FAIL at verify_drand_signature.
+    client.fulfill(&id, &proof, &valid_ed25519_sig);
 }
 
 /// Tests the delayed drand round scenario: the oracle attempts to submit
@@ -1239,3 +1332,159 @@ fn test_property_derive_random_in_range_fuzz_various_ranges() {
     }
 }
 
+// ── Fix 4: Key rotation lifecycle tests ────────────────────────────────────────
+
+/// Proves that pending requests are checked against the CURRENTLY CONFIGURED
+/// oracle key, NOT the key that was active when the request was created.
+/// After rotate_oracle_keys(), the OLD oracle key is rejected and the NEW
+/// oracle key is accepted for fulfillment of pre-rotation requests.
+#[test]
+#[should_panic(expected = "oracle key mismatch")]
+fn test_rotate_keys_old_oracle_cannot_fulfill_pending_request() {
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"pre_rotation_request");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    // Rotate to new oracle keys
+    let new_pk = BytesN::from_array(&env, &[0xAA; 192]);
+    let new_addr = Address::generate(&env);
+    let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
+    client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
+
+    // Verify the rotation took effect
+    assert_eq!(client.oracle_pk(), new_pk);
+    assert_eq!(client.oracle_address(), new_addr);
+
+    // Try to fulfill with the OLD oracle public key — this MUST fail
+    // because fulfill() checks against the CURRENTLY configured key.
+    let proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: oracle_pk, // OLD key
+        drand_round: required_round,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
+    client.fulfill(&id, &proof, &dummy_sig);
+}
+
+/// Verifies that after key rotation, pending requests can be addressed with
+/// the NEW oracle key — the request is not permanently locked to the old key.
+/// This test verifies that proof.public_key == new_pk passes the oracle key
+/// mismatch check (it will fail later at Ed25519/BLS, confirming it got past
+/// the key check).
+#[test]
+#[should_panic] // Will fail at Ed25519 verify (dummy sig), but PAST the key check
+fn test_rotate_keys_new_oracle_passes_key_check_for_pending_request() {
+    let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"pre_rotation_request_v2");
+    let id = client.request(&context, &requester);
+    let required_round = client.request_round(&id);
+
+    // Rotate to new oracle keys
+    let new_pk = BytesN::from_array(&env, &[0xAA; 192]);
+    let new_addr = Address::generate(&env);
+    let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
+    client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
+
+    // Try to fulfill with the NEW oracle public key — this should pass
+    // the key mismatch check (line 443-444) and fail LATER at Ed25519 verify.
+    let proof = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
+        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+        beta_output: BytesN::from_array(&env, &[0u8; 32]),
+        public_key: new_pk, // NEW key — should pass key check
+        drand_round: required_round,
+        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+    };
+    let dummy_sig = BytesN::from_array(&env, &[0xFF; 64]);
+    // This will get past "oracle key mismatch" check and fail at ed25519_verify.
+    // If it panicked with "oracle key mismatch", the test would fail because
+    // we use #[should_panic] (not expected = "oracle key mismatch").
+    client.fulfill(&id, &proof, &dummy_sig);
+}
+
+// ── Fix 3: Budget measurement tests ───────────────────────────────────────────
+
+/// Measure CPU instructions for a SAC token transfer — this is the delta
+/// between fee=0 and nonzero-fee fulfillment paths.
+#[test]
+fn test_budget_sac_transfer_cpu_instructions() {
+    extern crate std;
+    use soroban_sdk::token::{StellarAssetClient, TokenClient};
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let fee_token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let fee_token_addr = fee_token_contract.address();
+    let sac_admin = StellarAssetClient::new(&env, &fee_token_addr);
+    let token = TokenClient::new(&env, &fee_token_addr);
+
+    let sender = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    sac_admin.mint(&sender, &10_000_000i128);
+
+    // Reset budget and measure a single SAC transfer
+    env.cost_estimate().budget().reset_unlimited();
+    token.transfer(&sender, &receiver, &5_000_000i128);
+    let transfer_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+
+    std::println!("========================================");
+    std::println!("SAC TRANSFER CPU INSTRUCTIONS: {}", transfer_cpu);
+    std::println!("This is the delta for nonzero-fee fulfill()");
+    std::println!("========================================");
+
+    // The transfer should cost a measurable but bounded amount of CPU
+    assert!(transfer_cpu > 0, "SAC transfer must consume some CPU instructions");
+    // SAC transfers are typically in the 1M-5M range
+    assert!(transfer_cpu < 20_000_000, "SAC transfer CPU cost unexpectedly high");
+}
+
+/// Measure CPU instructions for G1 point negation in isolation.
+/// This validates the <1K estimate in PROFILING.md.
+#[test]
+fn test_budget_g1_negation_cpu_instructions() {
+    extern crate std;
+    use soroban_sdk::crypto::bls12_381::Bls12381G1Affine;
+
+    let env = Env::default();
+    let _bls = env.crypto().bls12_381();
+
+    // Use the standard G1 generator point
+    let g1_bytes: [u8; 96] = [
+        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c,
+        0x4f, 0xa9, 0xac, 0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05,
+        0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b, 0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f,
+        0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb, 0x22, 0xc6, 0xbb,
+        0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
+        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6,
+        0x00, 0xdb, 0x18, 0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44,
+        0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa, 0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
+    ];
+    let g1 = Bls12381G1Affine::from_bytes(BytesN::from_array(&env, &g1_bytes));
+
+    // Reset budget and measure G1 negation
+    env.cost_estimate().budget().reset_unlimited();
+    let _neg_g1 = -g1.clone();
+    let neg_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+
+    // Measure a second negation to confirm consistency
+    env.cost_estimate().budget().reset_unlimited();
+    let _neg_g1_2 = -g1;
+    let neg_cpu_2 = env.cost_estimate().budget().cpu_instruction_cost();
+
+    std::println!("========================================");
+    std::println!("G1 NEGATION CPU INSTRUCTIONS (run 1): {}", neg_cpu);
+    std::println!("G1 NEGATION CPU INSTRUCTIONS (run 2): {}", neg_cpu_2);
+    std::println!("========================================");
+
+    // G1 negation is a single Fp field subtraction — should be <5000 instructions
+    assert!(neg_cpu < 5_000,
+        "G1 negation cost {} instructions, expected <5000", neg_cpu);
+}

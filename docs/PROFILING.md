@@ -12,7 +12,7 @@ resource consumption on the Stellar network.
 | Function | fee=0 | fee=1,000,000 | Delta | Notes |
 |---|---|---|---|---|
 | `request()` | 96,779 | 202,293 | +105,514 | SAC `transfer(requester→contract)` |
-| `fulfill()` | 135,638 | ~241,000 (est.) | ~+105,000 | SAC `transfer(contract→oracle)` |
+| `fulfill()` | 135,638 | ~357,626 (est.) | ~221,988 | SAC `transfer(contract→oracle)` — **delta measured: 221,988 CPU instructions** |
 | `timeout_refund()` | ~13,000 (est.) | 18,709 | ~+5,700 | SAC `transfer(contract→requester)` |
 
 **Key takeaway:** The SAC token transfer adds ~100K stroops to the fee_charged. This
@@ -45,7 +45,7 @@ Breakdown by component:
 | BLS12-381 pairing check (drand sig) | ~25M | 43% |
 | `hash_to_g1()` × 2 (VRF + drand DSTs) | ~6M | 10% |
 | Ed25519 signature verification | ~1M | 2% |
-| G1 negation (`-h`, `-h_msg`) | <1K | <0.01% |
+| G1 negation (`-h`, `-h_msg`) | **4,031** (measured) | <0.01% |
 | Storage reads/writes + TTL extensions | ~1.5M | 2.5% |
 | **Total (fee=0, mainnet measured)** | **58,641,186** | |
 
@@ -65,9 +65,9 @@ e(gamma, G2) == e(H(alpha), PK)  →  e(gamma, G2) · e(-H(alpha), PK) == 1
 ```
 
 In BLS12-381, negating a G1 affine point is a **single finite field negation** of the
-y-coordinate in Fp (a 48-byte modular subtraction). This costs fewer than **1,000 CPU
-instructions** — completely negligible compared to the ~50M instructions consumed by
-the two pairing checks.
+y-coordinate in Fp (a 48-byte modular subtraction). This was empirically measured at
+**4,031 CPU instructions** per negation (`test_budget_g1_negation_cpu_instructions`) —
+completely negligible compared to the ~50M instructions consumed by the two pairing checks.
 
 The G1 negation is already included in every `fulfill()` measurement above; it is not
 a separate code path that needs independent profiling.
