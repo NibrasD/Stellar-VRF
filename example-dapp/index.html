@@ -605,7 +605,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       btn.disabled = true;
       try {
         const netName = NETWORK === NETWORKS.mainnet ? "Mainnet" : "Testnet";
-        statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar ${netName}â€¦</div>`;
+        statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar ${esc(netName)}â€¦</div>`;
 
         const contextBytes = new TextEncoder().encode(ctx);
         const { result: reqResult, hash } = await submitTx("request", [

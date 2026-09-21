@@ -506,11 +506,11 @@
           nativeToScVal(span, { type: "u64" }),
         ]);
         const resultNum = Number(BigInt(raw) + minVal);
-        addLog("random-log", `derive_random_in_range â†’ ${resultNum} âˆˆ [${minVal}, ${maxVal}]`, "success");
+        addLog("random-log", `derive_random_in_range â†’ ${resultNum} âˆˆ [${minVal}, ${esc(String(maxVal))}]`, "success");
 
         output.innerHTML = `
           <div class="result-big">${esc(String(resultNum))}</div>
-          <div class="result-label">Range [${esc(String(minVal))} â€“ ${maxVal}] â€” verified on Stellar</div>
+          <div class="result-label">Range [${esc(String(minVal))} â€“ ${esc(String(maxVal))}] â€” verified on Stellar</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${esc(String(requestId))} | Context: ${esc(ctx)}</div>`;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">â Œ ${esc(e.message)}</div>`;
