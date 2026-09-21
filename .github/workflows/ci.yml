@@ -100,6 +100,9 @@ jobs:
       - name: Build (tsc)
         working-directory: sdk/js
         run: npm run build
+      - name: Verify package is publishable (public access, correct contents)
+        working-directory: sdk/js
+        run: npm publish --dry-run
 
   docker:
     name: Oracle worker Docker image
