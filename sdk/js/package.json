@@ -12,10 +12,13 @@
   "keywords": ["stellar", "soroban", "vrf", "randomness", "oracle"],
   "license": "MIT",
   "dependencies": {
-    "@stellar/stellar-sdk": "^13.0.0"
+    "@stellar/stellar-sdk": "^17.1.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

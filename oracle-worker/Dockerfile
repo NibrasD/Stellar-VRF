@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -14,7 +14,8 @@ COPY src/ ./src/
 RUN npm run build
 
 # ── Production image ─────────────────────────────────────────────────────────
-FROM node:20-alpine
+# Node 22 is required: @stellar/stellar-sdk v17 declares "engines.node": ">=22.12.0".
+FROM node:22-alpine
 
 WORKDIR /app
 

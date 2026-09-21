@@ -14,7 +14,9 @@ Consumer Contract  ──request()──▶  VRF Oracle Contract  ◀──fulfi
 ```
 
 The system has three principals: the consumer (any Soroban contract), the VRF oracle contract
-(on-chain), and a single oracle worker node that listens for events and submits proofs.
+(on-chain), and the oracle worker — a **single logical oracle identity** (one BLS keypair and
+one Ed25519 keypair) that is operated by **multiple worker instances in HA mode**. Exactly one
+instance holds the leader lease at a time and submits transactions; the others stand by.
 
 ## Trust assumptions
 
@@ -23,8 +25,10 @@ The quicknet chain uses a BLS threshold scheme across a geographically distribut
 Historical uptime is >99.9%. If the chain rotates its group key, the oracle admin must call
 `rotate_drand_pk()` to update the on-chain verification key.
 
-**Single oracle.** This is the most important trust boundary to understand. The current design
-uses one oracle node. This means:
+**Single oracle identity.** This is the most important trust boundary to understand. The design
+uses **one oracle key** (a single logical oracle), even though it is run by a primary plus a
+hot-standby worker instance for liveness. HA removes the *availability* single-point-of-failure,
+but it does **not** distribute *trust* — all instances share the same oracle key. This means:
 
 - *Bias resistance is cryptographic.* The oracle cannot choose which VRF output to produce —
   it must use its BLS secret key on a deterministic input. The pairing check on-chain enforces
@@ -126,7 +130,9 @@ verification (~56M instructions), not storage operations.
 
 ## Known limitations
 
-- **Single oracle** — a future improvement is a multi-oracle threshold committee for stronger liveness guarantees.
+- **Single oracle identity** — liveness is addressed by HA (primary + hot-standby sharing one
+  oracle key via a Redis leader lease), but *trust* is not distributed. A future improvement is a
+  multi-oracle threshold committee so that no single key can withhold service.
 - **Fee economics** — the `fee_amount` parameter and escrow mechanism are fully implemented and
   tested (fees are escrowed in the VRF contract on request, released to oracle on fulfill,
   refunded to requester on timeout). Currently deployed with `fee_amount = 0`.

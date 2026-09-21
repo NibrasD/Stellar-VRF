@@ -85,11 +85,11 @@ export class VrfClient {
     }
 
     const txResult = await this.submitTx(fnName, args);
-    // Return value is u64 request ID
-    const retval = txResult.resultMetaXdr
-      .v3()
-      .sorobanMeta()
-      ?.returnValue();
+    // Return value is the u64 request ID. Use the SDK's `returnValue` accessor
+    // rather than reaching into `resultMetaXdr.v3()`: the meta union arm varies
+    // by protocol version (v3 under Protocol 21/22, v4 under Protocol 23), so
+    // hard-coding `.v3()` throws "Bad union switch" on current networks.
+    const retval = txResult.returnValue;
     if (retval) {
       const native = scValToNative(retval);
       return BigInt(native as string | number | bigint);

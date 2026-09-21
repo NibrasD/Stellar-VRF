@@ -36,7 +36,19 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 ## Quick Start — JavaScript SDK
 
+> **Registry status:** `@stellar-vrf/sdk` is **not yet published to npm**. Install it
+> directly from this repository until the registry release is cut. Requires
+> **Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
+
 ```bash
+# Install from the repo (works today)
+npm install github:NibrasD/Stellar-VRF#main --prefix ./tmp   # or:
+git clone https://github.com/NibrasD/Stellar-VRF.git
+cd Stellar-VRF/sdk/js && npm install && npm run build
+```
+
+```bash
+# Once published to npm:
 npm install @stellar-vrf/sdk @stellar/stellar-sdk
 ```
 

@@ -26,7 +26,7 @@ on mainnet.
 
 ### Prerequisites
 
-- Node.js ≥ 20
+- Node.js ≥ 22.12.0 (required by `@stellar/stellar-sdk` v17 `engines.node`)
 - Oracle account funded with XLM on mainnet
 - `.env` file configured (see `.env.mainnet` template)
 
@@ -41,21 +41,29 @@ node dist/index.js
 
 The worker will:
 1. Print configuration
-2. Start leader election (file-based lock)
+2. Start leader election. The backend is auto-selected by `src/leader.ts`:
+   - **Production (multi-host):** Redis distributed lease (`SET NX PX` + fenced
+     Lua renew/release) — used when `REDIS_URL` is set.
+   - **Development (single host):** file-based lock — fallback when `REDIS_URL`
+     is unset. Do **not** use this for production HA across two hosts.
 3. If elected leader, begin polling for VRF request events
 4. Automatically fulfill pending requests with BLS-VRF proofs
 5. Health endpoint available at `http://localhost:8080/health`
 
 ### Start Hot-Standby Replica
 
-Run a second instance on the same server (or shared filesystem):
+**Production:** run the standby on a **separate host**, pointing at the same Redis
+instance via `REDIS_URL`. See [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md) for the
+two-host topology. Running both instances on one server is a development-only
+configuration and does not satisfy hot-standby requirements.
 
 ```bash
+# On HOST B (standby) — same REDIS_URL as HOST A
 node dist/index.js
 ```
 
 The replica will:
-1. Detect the existing leader lock
+1. Detect the existing leader lease
 2. Enter standby mode, monitoring the lock heartbeat
 3. Automatically take over if the primary's heartbeat is stale (>30s)
 4. On-chain idempotency check (`is_fulfilled()`) prevents double-submission
@@ -92,7 +100,8 @@ Returns JSON with:
 
 1. **XLM Balance** — Oracle account needs XLM for transaction fees
    - Alert if balance < 5 XLM
-   - Each fulfill() costs ~1.3 XLM in fees
+   - Each `fulfill()` costs ~0.13 XLM in fees (mainnet measured: 1,284,508 stroops
+     = 0.1284508 XLM on TX `5190ba03...`). Budget ~0.15 XLM per fulfillment.
 
 2. **Fulfill Latency** — Time from request event to fulfill TX confirmation
    - Normal: 5–15 seconds

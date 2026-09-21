@@ -2,22 +2,47 @@
 
 This document records measured instruction costs for all VRF contract code paths.
 
-## Testnet measurements
+> **Units notice.** This document reports two *different* metrics. They are never
+> mixed within a single table:
+> - **Network fees** — `fee_charged` in **stroops** (1 XLM = 10,000,000 stroops),
+>   read from the Horizon API.
+> - **CPU cost** — **instructions**, read from the Soroban budget
+>   (`env.cost_estimate().budget().cpu_instruction_cost()` in tests, or the
+>   `SorobanTransactionData.resources.instructions` field on-chain).
 
-All values are `fee_charged` (stroops) from Horizon API, which reflects actual
-resource consumption on the Stellar network.
+## A. Network fee measurements (stroops)
 
-### Comparison: fee=0 vs fee=1,000,000 stroops
+All values in this section are `fee_charged` (**stroops**) from the Horizon API.
+
+### Comparison: fee_amount=0 vs fee_amount=1,000,000 stroops
 
 | Function | fee=0 | fee=1,000,000 | Delta | Notes |
 |---|---|---|---|---|
 | `request()` | 96,779 | 202,293 | +105,514 | SAC `transfer(requester→contract)` |
-| `fulfill()` | 135,638 | ~357,626 (est.) | ~221,988 | SAC `transfer(contract→oracle)` — **delta measured: 221,988 CPU instructions** |
+| `fulfill()` | 135,638 | ~357,626 (est.) | ~221,988 | SAC `transfer(contract→oracle)` |
 | `timeout_refund()` | ~13,000 (est.) | 18,709 | ~+5,700 | SAC `transfer(contract→requester)` |
 
-**Key takeaway:** The SAC token transfer adds ~100K stroops to the fee_charged. This
-is well within Soroban's transaction limits and does not affect the 70M CPU instruction
-budget for `fulfill()`.
+**Key takeaway:** enabling a non-zero `fee_amount` adds ~100–222K **stroops** to
+`fee_charged` because of the extra SAC token transfer. This is a *fee* delta, not a
+CPU delta, and it does not affect the CPU instruction budget for `fulfill()`.
+
+## B. CPU instruction measurements (instructions)
+
+All values in this section are **CPU instructions** from the Soroban budget.
+
+| Measurement | Instructions | Source |
+|---|---|---|
+| `fulfill()` total (mainnet) | **58,641,186** | `SorobanTransactionData.resources.instructions`, mainnet TX `5190ba03...` |
+| G1 negation (single) | **4,031** | `test_budget_g1_negation_cpu_instructions` |
+| SAC transfer (escrow release) | measured by test (see note) | `test_budget_sac_transfer_cpu_instructions` — budget delta measured with `reset_unlimited()` around the SAC `transfer` call |
+
+> **Do not confuse the two SAC transfer numbers.** The `~221,988` in section A is a
+> **stroops** `fee_charged` delta between the `fee_amount=0` and
+> `fee_amount=1,000,000` fulfillment paths. The CPU cost of the SAC transfer is a
+> separate quantity, printed by `test_budget_sac_transfer_cpu_instructions`
+> (asserted to be `> 0` and `< 20,000,000` instructions). Run
+> `cargo test test_budget_sac_transfer_cpu_instructions -- --nocapture` to print the
+> exact instruction count on your toolchain.
 
 ### Fulfill() CPU instruction count — MEASURED from **Mainnet** TX
 

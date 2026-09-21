@@ -944,7 +944,10 @@ mod tests {
             contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE"
                 .into(),
             network: Network::Testnet,
-            // NOTE: Use a test-only key, never a real secret
+            // NOTE: Not a real key. This is a syntactic placeholder that fails
+            // StrKey checksum validation, so it cannot control any Stellar
+            // account on any network. Verified: `Keypair.fromSecret()` rejects
+            // it with "invalid checksum". Never put a real secret here.
             secret_key: ""
                 .into(),
         });
