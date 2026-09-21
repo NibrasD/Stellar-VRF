@@ -624,10 +624,14 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
           }
         } catch (_) {}
 
+        const safeReqId = esc(String(requestId));
+        const safeHash = esc(String(hash));
+        const safeHashUrl = `${NETWORK.explorer}/tx/${encodeURIComponent(String(hash))}`;
+
         statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>
-          Request #${requestId} submitted (<a class="tx-link" href="${NETWORK.explorer}/tx/${hash}" target="_blank" rel="noopener noreferrer">tx â†—</a>).
-          Waiting for oracle fulfillmentâ€¦
-          <br><small style="color:#475569">The oracle generates a BLS-VRF proof (~10â€“30s)</small></div>`;
+          Request #${safeReqId} submitted (<a class="tx-link" href="${esc(safeHashUrl)}" target="_blank" rel="noopener noreferrer">tx ↗</a>).
+          Waiting for oracle fulfillment…
+          <br><small style="color:#475569">The oracle generates a BLS-VRF proof (~10–30s)</small></div>`;
 
         let fulfilled = false;
         for (let i = 0; i < 40; i++) {
@@ -648,14 +652,14 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         document.getElementById("result-card").style.display = "block";
         document.getElementById("result-number").textContent = result.toString();
         document.getElementById("result-label").textContent =
-          `Range [${rangeMin} â€“ ${rangeMax}] Â· Context: "${ctx}" Â· Request #${requestId}`;
+          `Range [${rangeMin} – ${rangeMax}] · Context: "${ctx}" · Request #${safeReqId}`;
         document.getElementById("proof-display").innerHTML = `
-          <div class="field"><div class="field-label">Request ID</div><div class="field-value">${requestId}</div></div>
-          <div class="field"><div class="field-label">Request TX</div><div class="field-value"><a class="tx-link" href="${NETWORK.explorer}/tx/${hash}" target="_blank" rel="noopener noreferrer">${hash}</a></div></div>
-          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} âˆˆ [${rangeMin}, ${rangeMax}]</div></div>`;
+          <div class="field"><div class="field-label">Request ID</div><div class="field-value">${safeReqId}</div></div>
+          <div class="field"><div class="field-label">Request TX</div><div class="field-value"><a class="tx-link" href="${esc(safeHashUrl)}" target="_blank" rel="noopener noreferrer">${safeHash}</a></div></div>
+          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} ∈ [${rangeMin}, ${rangeMax}]</div></div>`;
         statusArea.innerHTML = `<div class="status success">âœ… Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
       } catch (e) {
-        statusArea.innerHTML = `<div class="status error">âŒ ${esc(e.message)}</div>`;
+        statusArea.innerHTML = `<div class="status error">â Œ ${esc(e.message)}</div>`;
       } finally {
         btn.disabled = false;
       }

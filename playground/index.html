@@ -511,9 +511,9 @@
         output.innerHTML = `
           <div class="result-big">${resultNum}</div>
           <div class="result-label">Range [${minVal} â€“ ${maxVal}] â€” verified on Stellar</div>
-          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId} | Context: ${ctx}</div>`;
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId} | Context: ${esc(ctx)}</div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">âŒ ${esc(e.message)}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">â Œ ${esc(e.message)}</div>`;
         addLog("random-log", `Error: ${esc(e.message)}`, "error");
       } finally { btn.disabled = false; }
     };

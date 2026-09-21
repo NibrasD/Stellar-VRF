@@ -413,26 +413,31 @@
       const sorted = [...requestEvents].reverse().slice(0, 20);
       feed.innerHTML = sorted.map(req => {
         const fulfilled   = fulfillEvents[req.requestId];
-        const betaHex     = fulfilled?.betaOutput ? (fulfilled.betaOutput.slice(0, 8) + "â€¦") : "â€”";
+        const betaHex     = fulfilled?.betaOutput ? (fulfilled.betaOutput.slice(0, 8) + "…") : "—";
         const explorerBase = cfg.explorer;
-        const reqTxLink   = req.txHash       ? `${explorerBase}/tx/${req.txHash}`       : null;
-        const fillTxLink  = fulfilled?.txHash ? `${explorerBase}/tx/${fulfilled.txHash}` : null;
-        const acctLink    = `${explorerBase}/account/${req.requester}`;
+        const safeReqId   = esc(req.requestId);
+        const safeLedger  = esc(String(req.ledger));
+        const safeReq     = esc(req.requester);
+        const safeReqShort = esc(req.requester.slice(0, 10));
+        const safeBetaHex = esc(betaHex);
+        const reqTxLink   = req.txHash       ? `${explorerBase}/tx/${encodeURIComponent(req.txHash)}`       : null;
+        const fillTxLink  = fulfilled?.txHash ? `${explorerBase}/tx/${encodeURIComponent(fulfilled.txHash)}` : null;
+        const acctLink    = `${explorerBase}/account/${encodeURIComponent(req.requester)}`;
         return `
           <div class="table-row">
             <span>${reqTxLink
-              ? `<a class="hash-link" href="${reqTxLink}" target="_blank" rel="noopener noreferrer">#${req.requestId} â†—</a>`
-              : `<span style="color:#93c5fd">#${req.requestId}</span>`}</span>
-            <span style="color:#475569">${req.ledger}</span>
+              ? `<a class="hash-link" href="${esc(reqTxLink)}" target="_blank" rel="noopener noreferrer">#${safeReqId} ↗</a>`
+              : `<span style="color:#93c5fd">#${safeReqId}</span>`}</span>
+            <span style="color:#475569">${safeLedger}</span>
             <span>
-              <a class="hash-link" href="${acctLink}" target="_blank" rel="noopener noreferrer" title="${req.requester}">
-                ${req.requester.slice(0, 10)}â€¦
+              <a class="hash-link" href="${esc(acctLink)}" target="_blank" rel="noopener noreferrer" title="${safeReq}">
+                ${safeReqShort}…
               </a>
             </span>
-            <span style="color:${fulfilled ? '#34d399' : '#374151'};font-size:0.72rem">${betaHex}</span>
+            <span style="color:${fulfilled ? '#34d399' : '#374151'};font-size:0.72rem">${safeBetaHex}</span>
             <span>${fillTxLink
-              ? `<a class="hash-link" href="${fillTxLink}" target="_blank" rel="noopener noreferrer"><span class="badge-ok">âœ“ Fulfilled â†—</span></a>`
-              : `<span class="badge-pending">â³ Pending</span>`}</span>
+              ? `<a class="hash-link" href="${esc(fillTxLink)}" target="_blank" rel="noopener noreferrer"><span class="badge-ok">✓ Fulfilled ↗</span></a>`
+              : `<span class="badge-pending">⏳ Pending</span>`}</span>
           </div>`;
       }).join("");
     }
