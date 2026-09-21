@@ -1371,13 +1371,24 @@ fn test_rotate_keys_old_oracle_cannot_fulfill_pending_request() {
     client.fulfill(&id, &proof, &dummy_sig);
 }
 
-/// Verifies that after key rotation, pending requests can be addressed with
-/// the NEW oracle key — the request is not permanently locked to the old key.
-/// This test verifies that proof.public_key == new_pk passes the oracle key
-/// mismatch check (it will fail later at Ed25519/BLS, confirming it got past
-/// the key check).
+/// Verifies that after key rotation, pending requests are validated against the
+/// **currently configured** oracle key rather than being locked to the key that
+/// was configured when the request was created.
+///
+/// Proof strategy (no reliance on a bare `#[should_panic]`, which would also
+/// accept an "oracle key mismatch" failure and therefore prove nothing):
+///
+/// 1. `oracle_pk()` must report the NEW key after rotation, even though the
+///    request predates the rotation — i.e. nothing pinned the old key to it.
+/// 2. Submitting a proof carrying the OLD key must fail with exactly
+///    `"oracle key mismatch"` (see `test_rotate_keys_old_oracle_cannot_...`).
+/// 3. Submitting a proof carrying the NEW key must get **past** that check.
+///    We assert this precisely by making the round deliberately wrong, so the
+///    only two reachable panics are `"oracle key mismatch"` (key was pinned —
+///    bug) or `"drand round mismatch"` (key check passed — correct). Expecting
+///    the latter makes the test fail loudly if the key check were the blocker.
 #[test]
-#[should_panic] // Will fail at Ed25519 verify (dummy sig), but PAST the key check
+#[should_panic(expected = "drand round mismatch")]
 fn test_rotate_keys_new_oracle_passes_key_check_for_pending_request() {
     let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
     let requester = Address::generate(&env);
@@ -1391,20 +1402,29 @@ fn test_rotate_keys_new_oracle_passes_key_check_for_pending_request() {
     let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
     client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
 
-    // Try to fulfill with the NEW oracle public key — this should pass
-    // the key mismatch check (line 443-444) and fail LATER at Ed25519 verify.
+    // (1) The pending request is NOT pinned to the old key: the contract now
+    // reports the newly configured key as the one that will be checked.
+    assert_eq!(
+        client.oracle_pk(),
+        new_pk,
+        "after rotation the contract must check against the CURRENT oracle key"
+    );
+
+    // (3) Submit with the NEW key but a deliberately WRONG round. Because
+    // fulfill() checks the oracle key BEFORE the round (lib.rs: key check at
+    // ~448, round check at ~457), the panic message tells us exactly which
+    // check rejected us:
+    //   "oracle key mismatch"  -> request was pinned to the old key (BUG)
+    //   "drand round mismatch" -> key check PASSED (correct behaviour)
     let proof = crate::BlsVrfProof {
         alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
         gamma_point: BytesN::from_array(&env, &[0u8; 96]),
         beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: new_pk, // NEW key — should pass key check
-        drand_round: required_round,
+        public_key: new_pk, // NEW key — must pass the key check
+        drand_round: required_round + 7, // deliberately wrong round
         drand_signature: BytesN::from_array(&env, &[0u8; 96]),
     };
     let dummy_sig = BytesN::from_array(&env, &[0xFF; 64]);
-    // This will get past "oracle key mismatch" check and fail at ed25519_verify.
-    // If it panicked with "oracle key mismatch", the test would fail because
-    // we use #[should_panic] (not expected = "oracle key mismatch").
     client.fulfill(&id, &proof, &dummy_sig);
 }
 
