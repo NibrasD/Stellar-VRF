@@ -34,15 +34,28 @@ All values in this section are **CPU instructions** from the Soroban budget.
 |---|---|---|
 | `fulfill()` total (mainnet) | **58,641,186** | `SorobanTransactionData.resources.instructions`, mainnet TX `5190ba03...` |
 | G1 negation (single) | **4,031** | `test_budget_g1_negation_cpu_instructions` |
-| SAC transfer (escrow release) | measured by test (see note) | `test_budget_sac_transfer_cpu_instructions` — budget delta measured with `reset_unlimited()` around the SAC `transfer` call |
+| SAC transfer (escrow release) | **221,988** | `test_budget_sac_transfer_cpu_instructions` — budget delta measured with `reset_unlimited()` around the SAC `transfer` call |
 
-> **Do not confuse the two SAC transfer numbers.** The `~221,988` in section A is a
-> **stroops** `fee_charged` delta between the `fee_amount=0` and
-> `fee_amount=1,000,000` fulfillment paths. The CPU cost of the SAC transfer is a
-> separate quantity, printed by `test_budget_sac_transfer_cpu_instructions`
-> (asserted to be `> 0` and `< 20,000,000` instructions). Run
-> `cargo test test_budget_sac_transfer_cpu_instructions -- --nocapture` to print the
-> exact instruction count on your toolchain.
+> **Why `221,988` appears in both sections.** These are two independent
+> measurements that coincide closely, *not* one number reused:
+> - Section A: the `fee_charged` **stroops** delta between the `fee_amount=0` and
+>   `fee_amount=1,000,000` fulfillment paths (Horizon).
+> - Section B: the **CPU instruction** cost of the SAC `transfer` call, measured by
+>   the Soroban budget.
+>
+> Reproduce the CPU figure locally:
+>
+> ```bash
+> cargo test --lib test::test_budget_sac_transfer_cpu_instructions -- --exact --nocapture
+> # SAC TRANSFER CPU INSTRUCTIONS: 221988
+> ```
+>
+> And the G1 negation figure:
+>
+> ```bash
+> cargo test --lib test::test_budget_g1_negation_cpu_instructions -- --exact --nocapture
+> # G1 NEGATION CPU INSTRUCTIONS (run 1): 4031
+> ```
 
 ### Fulfill() CPU instruction count — MEASURED from **Mainnet** TX
 

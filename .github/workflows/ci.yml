@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Soroban contract (test + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            soroban-contract/target
+          key: ${{ runner.os }}-cargo-contract-${{ hashFiles('soroban-contract/Cargo.lock') }}
+
+      - name: cargo test
+        working-directory: soroban-contract
+        run: cargo test --lib
+
+      - name: Reviewer evidence — BLS / drand rejection paths
+        working-directory: soroban-contract
+        run: |
+          cargo test --lib test::test_fulfill_invalid_drand_bls_signature -- --exact --nocapture
+          cargo test --lib test::test_fulfill_delayed_drand_round_rejected -- --exact --nocapture
+
+      - name: Reviewer evidence — CPU instruction measurements
+        working-directory: soroban-contract
+        run: |
+          cargo test --lib test::test_budget_g1_negation_cpu_instructions -- --exact --nocapture
+          cargo test --lib test::test_budget_sac_transfer_cpu_instructions -- --exact --nocapture
+
+      - name: Reviewer evidence — key rotation vs pending requests
+        working-directory: soroban-contract
+        run: cargo test --lib rotate_keys -- --nocapture
+
+      - name: cargo clippy
+        working-directory: soroban-contract
+        run: cargo clippy --lib -- -D warnings
+
+  rust-sdk:
+    name: Rust SDK (test + package)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test
+        working-directory: sdk/rust
+        run: cargo test
+      - name: Verify crate is publishable
+        working-directory: sdk/rust
+        run: cargo package --list
+
+  oracle-worker:
+    name: Oracle worker (test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+      - name: Install dependencies
+        working-directory: oracle-worker
+        run: npm ci
+      - name: Unit tests (drand delay/retry/backoff, listener)
+        working-directory: oracle-worker
+        run: npm test
+      - name: TypeScript build
+        working-directory: oracle-worker
+        run: npm run build
+
+  js-sdk:
+    name: JS SDK (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+      - name: Install dependencies
+        working-directory: sdk/js
+        run: npm install
+      - name: Build (tsc)
+        working-directory: sdk/js
+        run: npm run build
+
+  docker:
+    name: Oracle worker Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        working-directory: oracle-worker
+        run: docker build -t stellar-vrf-oracle:ci .
+
+  secret-scan:
+    name: Secret scan (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
