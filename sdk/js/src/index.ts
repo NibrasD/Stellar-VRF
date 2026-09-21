@@ -1,8 +1,8 @@
 /**
- * @stellar-vrf/sdk — JavaScript/TypeScript SDK for the Stellar VRF Oracle
+ * @nibrasd/stellar-vrf-sdk — JavaScript/TypeScript SDK for the Stellar VRF Oracle
  *
  * Usage:
- *   import { VrfClient, Networks } from "@stellar-vrf/sdk";
+ *   import { VrfClient, Networks } from "@nibrasd/stellar-vrf-sdk";
  *
  *   const client = new VrfClient({
  *     contractId: "C...",

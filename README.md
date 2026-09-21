@@ -36,7 +36,7 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 ## Quick Start — JavaScript SDK
 
-> **Registry status:** `@stellar-vrf/sdk` is **not yet published to npm**. Install it
+> **Registry status:** `@nibrasd/stellar-vrf-sdk` is **not yet published to npm**. Install it
 > directly from this repository until the registry release is cut. Requires
 > **Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
 
@@ -49,11 +49,11 @@ cd Stellar-VRF/sdk/js && npm install && npm run build
 
 ```bash
 # Once published to npm:
-npm install @stellar-vrf/sdk @stellar/stellar-sdk
+npm install @nibrasd/stellar-vrf-sdk @stellar/stellar-sdk
 ```
 
 ```typescript
-import { VrfClient, Networks } from "@stellar-vrf/sdk";
+import { VrfClient, Networks } from "@nibrasd/stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
@@ -102,7 +102,7 @@ See [`consumer-example/`](consumer-example/) for a complete working example.
 soroban-contract/   — On-chain VRF Oracle smart contract (Rust/Soroban)
 oracle-worker/      — Off-chain Oracle Node (TypeScript)
 consumer-example/   — Example consumer contract with callback (Rust/Soroban)
-sdk/js/             — JavaScript/TypeScript SDK (@stellar-vrf/sdk)
+sdk/js/             — JavaScript/TypeScript SDK (@nibrasd/stellar-vrf-sdk)
 sdk/rust/           — Rust SDK (stellar-vrf-sdk)
 dashboard/          — Real-time oracle activity dashboard
 playground/         — Interactive VRF testing interface

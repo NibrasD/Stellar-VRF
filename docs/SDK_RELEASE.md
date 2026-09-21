@@ -1,13 +1,43 @@
 # SDK Release Procedure
 
-> **Status: NOT YET PUBLISHED.** Verified on the dates below:
-> - `npm view @stellar-vrf/sdk` → registry returns **404**
-> - `https://crates.io/api/v1/crates/stellar-vrf-sdk` → `crate does not exist`
+> **Status: BLOCKED ON 2FA — one command away.**
 >
-> Both packages are **publish-ready** (dry runs pass), but publishing requires
-> registry credentials and must be done by the maintainer. Until then, the
-> Tranche 3 criterion *"Developer SDK released (JS and Rust)"* is **not met**, and
-> the README states plainly that the package is not on npm.
+> The package was renamed to the **`@nibrasd`** scope (owned by the maintainer);
+> the previous `@stellar-vrf` scope did not exist. A real `npm publish` was then
+> attempted and got as far as the registry accepting the name and auth token,
+> failing **only** on two-factor authentication:
+>
+> ```
+> npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
+> npm error code E403
+> npm error 403 Forbidden - PUT https://registry.npmjs.org/@nibrasd%2fstellar-vrf-sdk
+> npm error Two-factor authentication or granular access token with bypass 2fa
+> npm error enabled is required to publish packages.
+> ```
+>
+> This confirms: name available, token valid, package contents valid, public
+> access configured. **The only missing input is an OTP from the maintainer's
+> authenticator**, which cannot be automated.
+>
+> Until published, the Tranche 3 criterion *"Developer SDK released (JS and
+> Rust)"* is **not met**, and the README says plainly that the package is not yet
+> on npm.
+
+## Publish it (maintainer, ~2 minutes)
+
+```powershell
+cd sdk/js
+npm publish --otp=123456      # 6-digit code from your authenticator app
+```
+
+Alternatively create a **granular access token** with "bypass 2FA" at
+<https://www.npmjs.com/settings/nibrasd/tokens> and then plain `npm publish` works.
+
+```powershell
+cd sdk/rust
+cargo login                   # token from https://crates.io/settings/tokens
+cargo publish
+```
 
 ## Pre-flight (already verified)
 
@@ -20,7 +50,7 @@
 
 ## 1. Publish the JavaScript SDK
 
-`@stellar-vrf/sdk` is a **scoped** package, so it would default to restricted
+`@nibrasd/stellar-vrf-sdk` is a **scoped** package, so it would default to restricted
 access. `publishConfig.access = "public"` is set in `package.json` to prevent a
 paid-org error. `prepublishOnly` rebuilds `dist/` so a stale build can't ship.
 
@@ -34,8 +64,8 @@ npm publish               # access:public comes from publishConfig
 Verify:
 
 ```bash
-npm view @stellar-vrf/sdk version
-cd /tmp && npm install @stellar-vrf/sdk @stellar/stellar-sdk
+npm view @nibrasd/stellar-vrf-sdk version
+cd /tmp && npm install @nibrasd/stellar-vrf-sdk @stellar/stellar-sdk
 ```
 
 > If the `@stellar-vrf` scope is not yet registered, create the org on npm first,
@@ -64,7 +94,7 @@ After both publishes succeed, fill this in and update the README to drop the
 
 | Field | Value |
 |---|---|
-| npm package | `@stellar-vrf/sdk` |
+| npm package | `@nibrasd/stellar-vrf-sdk` |
 | npm version | _TBD_ |
 | npm URL | _TBD_ |
 | npm publish timestamp (UTC) | _TBD_ |
@@ -79,5 +109,5 @@ After both publishes succeed, fill this in and update the README to drop the
 
 `README.md` currently contains an explicit **"Registry status: not yet published
 to npm"** notice plus a from-repo install path. Once published, replace that block
-with the plain `npm install @stellar-vrf/sdk @stellar/stellar-sdk` instruction so
+with the plain `npm install @nibrasd/stellar-vrf-sdk @stellar/stellar-sdk` instruction so
 reviewers are never given a command that fails.

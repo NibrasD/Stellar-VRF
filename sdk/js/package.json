@@ -1,5 +1,5 @@
 {
-  "name": "@stellar-vrf/sdk",
+  "name": "@nibrasd/stellar-vrf-sdk",
   "version": "1.0.0",
   "description": "JavaScript/TypeScript SDK for the Stellar VRF Oracle",
   "main": "dist/index.js",
