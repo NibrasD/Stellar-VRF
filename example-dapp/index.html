@@ -552,7 +552,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         keypair = Keypair.fromSecret(secret);
         server = new rpc.Server(NETWORK.soroban, { allowHttp: false });
         await server.getAccount(keypair.publicKey());
-        status.innerHTML = `âœ… Connected: <span style="color:#34d399">${keypair.publicKey().slice(0, 20)}â€¦</span>`;
+        status.innerHTML = `âœ… Connected: <span style="color:#34d399">${esc(keypair.publicKey().slice(0, 20))}â€¦</span>`;
         document.getElementById("request-btn").disabled = false;
       } catch (e) {
         keypair = null;
@@ -656,7 +656,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         document.getElementById("proof-display").innerHTML = `
           <div class="field"><div class="field-label">Request ID</div><div class="field-value">${safeReqId}</div></div>
           <div class="field"><div class="field-label">Request TX</div><div class="field-value"><a class="tx-link" href="${esc(safeHashUrl)}" target="_blank" rel="noopener noreferrer">${safeHash}</a></div></div>
-          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${result} ∈ [${rangeMin}, ${rangeMax}]</div></div>`;
+          <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${esc(String(result))} ∈ [${esc(String(rangeMin))}, ${esc(String(rangeMax))}]</div></div>`;
         statusArea.innerHTML = `<div class="status success">âœ… Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
       } catch (e) {
         statusArea.innerHTML = `<div class="status error">â Œ ${esc(e.message)}</div>`;

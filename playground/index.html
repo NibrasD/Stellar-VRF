@@ -434,7 +434,7 @@
         server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
         const account = await server.getAccount(keypair.publicKey());
         const isMainnet = NETWORK === NETWORKS.mainnet;
-        status.innerHTML = `âœ… Connected to <strong>${isMainnet ? "ðŸ”´ Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${keypair.publicKey().slice(0,20)}â€¦</span>`;
+        status.innerHTML = `âœ… Connected to <strong>${isMainnet ? "ðŸ”´ Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${esc(keypair.publicKey().slice(0,20))}â€¦</span>`;
         // Enable buttons
         const btn = document.getElementById("random-btn");
         if (btn) btn.disabled = false;
@@ -480,7 +480,7 @@
         const rv = extractReturnValue(txResult);
         const requestId = rv != null ? BigInt(rv) : 1n;
         addLog("random-log", `Request ID: ${requestId}`, "success");
-        output.innerHTML = `<span class="spinner"></span> Request #${requestId} submitted. Waiting for oracleâ€¦`;
+        output.innerHTML = `<span class="spinner"></span> Request #${esc(String(requestId))} submitted. Waiting for oracleâ€¦`;
 
         // Poll is_fulfilled â€” show a single, updating "waiting" status rather
         // than spamming raw boolean results.
@@ -490,7 +490,7 @@
           await sleep(3000);
           fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
           if (fulfilled) break;
-          output.innerHTML = `<span class="spinner"></span> Request #${requestId} â€” waiting for oracleâ€¦ (${(i + 1) * 3}s)`;
+          output.innerHTML = `<span class="spinner"></span> Request #${esc(String(requestId))} â€” waiting for oracleâ€¦ (${(i + 1) * 3}s)`;
         }
 
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
@@ -509,9 +509,9 @@
         addLog("random-log", `derive_random_in_range â†’ ${resultNum} âˆˆ [${minVal}, ${maxVal}]`, "success");
 
         output.innerHTML = `
-          <div class="result-big">${resultNum}</div>
-          <div class="result-label">Range [${minVal} â€“ ${maxVal}] â€” verified on Stellar</div>
-          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${requestId} | Context: ${esc(ctx)}</div>`;
+          <div class="result-big">${esc(String(resultNum))}</div>
+          <div class="result-label">Range [${esc(String(minVal))} â€“ ${maxVal}] â€” verified on Stellar</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${esc(String(requestId))} | Context: ${esc(ctx)}</div>`;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">â Œ ${esc(e.message)}</div>`;
         addLog("random-log", `Error: ${esc(e.message)}`, "error");
@@ -522,7 +522,7 @@
     window.exploreProof = async function() {
       const id = BigInt(document.getElementById("proof-id").value || 1);
       const result = document.getElementById("proof-result");
-      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${id} from Soroban RPCâ€¦</div>`;
+      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${esc(String(id))} from Soroban RPCâ€¦</div>`;
       try {
         if (!server) {
           server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
@@ -544,22 +544,22 @@
         result.innerHTML = `
           <div class="proof-grid">
             <div class="pf"><div class="name">Alpha Seed (32 bytes)</div>
-              <div class="val">${toHex(proof.alpha_seed)}</div>
+              <div class="val">${esc(toHex(proof.alpha_seed))}</div>
               <div class="desc">sha256(request_id â€– context â€– drand_round â€– sha256(drand_sig))</div></div>
             <div class="pf"><div class="name">Beta Output (32 bytes)</div>
-              <div class="val">${toHex(proof.beta_output)}</div>
+              <div class="val">${esc(toHex(proof.beta_output))}</div>
               <div class="desc">The verifiable random output: sha256(BETA_DOMAIN â€– gamma)</div></div>
             <div class="pf"><div class="name">Gamma Point G1 (96 bytes)</div>
-              <div class="val">${toHex(proof.gamma_point).slice(0,40)}â€¦</div>
+              <div class="val">${esc(toHex(proof.gamma_point).slice(0,40))}â€¦</div>
               <div class="desc">sk Ã— H(alpha) â€” oracle's VRF output point</div></div>
             <div class="pf"><div class="name">drand Round</div>
-              <div class="val">${proof.drand_round}</div>
+              <div class="val">${esc(String(proof.drand_round))}</div>
               <div class="desc">BLS12-381 quicknet beacon round used</div></div>
             <div class="pf"><div class="name">Oracle Public Key (192 bytes)</div>
-              <div class="val">${toHex(proof.public_key).slice(0,40)}â€¦</div>
+              <div class="val">${esc(toHex(proof.public_key).slice(0,40))}â€¦</div>
               <div class="desc">G2 point â€” verifiable identity of oracle</div></div>
             <div class="pf"><div class="name">drand Signature (96 bytes)</div>
-              <div class="val">${toHex(proof.drand_signature).slice(0,40)}â€¦</div>
+              <div class="val">${esc(toHex(proof.drand_signature).slice(0,40))}â€¦</div>
               <div class="desc">BLS signature from drand quicknet chain</div></div>
           </div>
           <div style="color:#86efac;font-size:0.78rem;margin-top:12px">
@@ -574,7 +574,7 @@
     window.verifyOnChain = async function() {
       const id = BigInt(document.getElementById("verify-id").value || 1);
       const output = document.getElementById("verify-output");
-      output.innerHTML = `<span class="spinner"></span> Checking request #${id}â€¦`;
+      output.innerHTML = `<span class="spinner"></span> Checking request #${esc(String(id))}â€¦`;
       try {
         if (!server) {
           server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
@@ -583,10 +583,10 @@
         }
         const fulfilled = await simulate("is_fulfilled", [nativeToScVal(id, { type: "u64" })]);
         if (!fulfilled) {
-          output.innerHTML = `<div style="color:#fbbf24">â³ Request #${id} is not yet fulfilled</div>`;
+          output.innerHTML = `<div style="color:#fbbf24">â³ Request #${esc(String(id))} is not yet fulfilled</div>`;
           return;
         }
-        output.innerHTML = `<div style="color:#86efac;font-size:1rem">âœ… Request #${id} is fulfilled</div>
+        output.innerHTML = `<div style="color:#86efac;font-size:1rem">âœ… Request #${esc(String(id))} is fulfilled</div>
           <div style="color:#6b7280;font-size:0.78rem;margin-top:8px">
             The BLS12-381 pairing check e(Î³, G2) == e(H(Î±), PK) was verified on-chain at fulfillment time.
             The proof is permanently stored in contract storage and can be retrieved with get_proof(${id}).
@@ -611,10 +611,10 @@
         const range = max - min + 1n;
         const betaVal = BigInt("0x" + betaHex.slice(0, 16));
         const result = min + (betaVal % range);
-        output.innerHTML = `<div class="result-big">${result.toLocaleString()}</div>
-          <div class="result-label">Range: ${min} â€” ${max}</div>
+        output.innerHTML = `<div class="result-big">${esc(result.toLocaleString())}</div>
+          <div class="result-label">Range: ${esc(String(min))} â€” ${esc(String(max))}</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">
-            Formula: min + (beta_prefix % range) = ${min} + (${betaVal} % ${range})
+            Formula: min + (beta_prefix % range) = ${esc(String(min))} + (${esc(String(betaVal))} % ${esc(String(range))})
           </div>`;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">âŒ ${esc(e.message)}</div>`;

@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SDK_INDEX = path.resolve(__dirname, "node_modules/@stellar/stellar-sdk/lib/index.js");
+const SDK_INDEX = path.resolve(__dirname, "node_modules/@stellar/stellar-sdk/lib/esm/index.js");
 const stellar = await import(pathToFileURL(SDK_INDEX).href);
 const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal, rpc, xdr, Account } =
   stellar.default || stellar;
@@ -44,7 +44,7 @@ const G2_GEN        = "13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbd
 // Computed via: stellar contract id asset --asset native --network mainnet
 const XLM_SAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 
-const WASM_PATH = path.resolve(__dirname, "../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.wasm");
+const WASM_PATH = path.resolve(__dirname, "../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.optimized.wasm");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function bytesVal(hex) {
