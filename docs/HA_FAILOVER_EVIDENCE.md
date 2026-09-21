@@ -1,15 +1,86 @@
-# HA Failover Evidence — Production Drill
+# HA Failover Evidence
 
-> **Status: PENDING EXECUTION.** This document is the evidence template for the
-> production failover drill required by the Tranche 3 completion criterion
-> *"Primary oracle worker running in production with hot-standby replica and
-> automatic failover."*
+This document has two parts, and they prove **different** things. Please read the
+scope of each before judging the Tranche 3 HA criterion.
+
+| Part | What it proves | Status |
+|---|---|---|
+| **A. Mechanism drill** (automated, real Redis) | Election, split-brain resistance, takeover after hard failure, **fencing of a zombie primary** | ✅ **EXECUTED — 9/9 checks passed** |
+| **B. Production two-host drill** | A standby on a *separate host* restoring real service, proven by a post-failover **Mainnet `fulfill()` TX** | ❌ **PENDING EXECUTION** |
+
+**Part A does not substitute for Part B.** Part A proves the locking mechanism is
+correct; only Part B proves end-to-end production service restoration. The Tranche 3
+criterion is **not** satisfied until Part B is filled in.
+
+---
+
+# Part A — Mechanism drill (EXECUTED)
+
+Automated and repeatable via `oracle-worker/failover_drill.mjs`, exercising the
+**same compiled `RedisLease`** the oracle uses in production (`dist/redisLock.js`)
+against a **real Redis server** (not a mock).
+
+```bash
+docker run -d --name vrf-redis-drill -p 6399:6379 redis:7-alpine
+cd oracle-worker && npm run build && node failover_drill.mjs
+```
+
+This drill now runs on **every CI run** (`oracle-worker` job, with a `redis:7-alpine`
+service container), so a regression in the failover logic fails the build.
+
+### Result
+
+```
+PHASE 1 — initial election
+PASS: HOST_A acquired the lease (leader)
+PASS: HOST_B denied the lease (standby)
+PHASE 2 — split-brain resistance while A renews
+PASS: renew cycle 1: A still leader, B still standby
+PASS: renew cycle 2: A still leader, B still standby
+PASS: renew cycle 3: A still leader, B still standby
+PHASE 3 — simulating kill -9 on HOST_A (renewals stop, lease NOT released)
+PASS: HOST_B took over after stale lease expiry (3025 ms)
+PASS: takeover waited for the TTL (no premature steal while A might still be alive)
+PHASE 4 — HOST_A resumes as a zombie and must NOT reclaim leadership
+PASS: zombie HOST_A fenced out (renew rejected, cannot double-submit)
+PASS: HOST_B retains leadership
+PHASE 5 — graceful release by B, A may reacquire
+PASS: HOST_A reacquired after graceful release
+PASS: HOST_B now standby
+DRILL RESULT: ALL CHECKS PASSED
+{ "takeover_ms": 3025, "ttl_ms": 3000, "failures": 0 }
+```
+
+| Metric | Value |
+|---|---|
+| Checks passed | **9 / 9** |
+| Lease TTL | 3,000 ms (drill value; production default is longer) |
+| **Measured takeover time** | **3,025 ms** (repeat runs: 3,175 / 3,187 / 3,191 ms) |
+| Premature steal while primary alive | **none** (Phase 2) |
+| Zombie primary reclaimed leadership | **no** — fenced (Phase 4) |
+| Redis | real `redis:7-alpine` server |
+
+**Why Phase 4 matters most.** Both instances share one oracle key, so the real risk
+is a *double* `fulfill()`. Phase 4 proves the fenced Lua renew (`GET == instanceId`
+before `PEXPIRE`) makes a resumed primary step down instead of continuing to submit.
+Combined with the on-chain `is_fulfilled()` idempotency check, that is two
+independent defenses against double submission.
+
+---
+
+# Part B — Production two-host drill (PENDING EXECUTION)
+
+> **Status: PENDING EXECUTION.** Required by the Tranche 3 criterion *"Primary
+> oracle worker running in production with hot-standby replica and automatic
+> failover."*
 >
-> Code-level HA is implemented and unit-tested (Redis `SET NX PX` lease with fenced
-> Lua renew/release, fail-closed, automatic takeover — see
-> [`HA_DEPLOYMENT.md`](HA_DEPLOYMENT.md) and `oracle-worker/src/redisLock.ts`).
-> **This file must be filled in with a real two-host drill before Tranche 3 is
-> claimed complete.** Do not mark the criterion satisfied on the basis of code alone.
+> Current production state (verified over SSH): a **single** instance
+> `oracle-primary` is running under PM2 on one 512 MB host, reporting
+> `"role":"leader"`, and **`REDIS_URL` is not set** — so that host is using the
+> single-node file-lock fallback. A second host and a shared Redis endpoint must be
+> provisioned to execute this part.
+>
+> **Do not mark the criterion satisfied on the basis of Part A alone.**
 
 ## Why an on-chain TX is the required artifact
 

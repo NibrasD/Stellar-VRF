@@ -69,8 +69,18 @@ jobs:
         run: cargo package --list
 
   oracle-worker:
-    name: Oracle worker (test + build)
+    name: Oracle worker (test + build + failover drill)
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6399:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -85,6 +95,11 @@ jobs:
       - name: TypeScript build
         working-directory: oracle-worker
         run: npm run build
+      - name: Failover drill (real Redis — election, fencing, takeover)
+        working-directory: oracle-worker
+        env:
+          REDIS_URL: redis://127.0.0.1:6399
+        run: node failover_drill.mjs
 
   js-sdk:
     name: JS SDK (build)
