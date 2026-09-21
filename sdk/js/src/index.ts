@@ -18,7 +18,7 @@
 
 import {
   Keypair,
-  Networks,
+  Networks as StellarNetworks,
   TransactionBuilder,
   Operation,
   Address,
@@ -347,7 +347,20 @@ export function toHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export { Networks, Keypair } from "@stellar/stellar-sdk";
+export { Keypair } from "@stellar/stellar-sdk";
+
+/**
+ * Network passphrases.
+ *
+ * Re-exported from `@stellar/stellar-sdk` with an added `MAINNET` alias for
+ * `PUBLIC`: "mainnet" is the term used throughout this project's docs, while
+ * the upstream SDK calls the live network `PUBLIC`. Both keys are valid.
+ */
+export const Networks = {
+  ...StellarNetworks,
+  /** Alias of `PUBLIC` — the live Stellar network. */
+  MAINNET: StellarNetworks.PUBLIC,
+} as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

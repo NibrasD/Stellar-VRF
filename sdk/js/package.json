@@ -1,6 +1,6 @@
 {
   "name": "stellar-vrf-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "JavaScript/TypeScript SDK for the Stellar VRF Oracle",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

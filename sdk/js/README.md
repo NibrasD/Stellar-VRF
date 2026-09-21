@@ -17,7 +17,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 const client = new VrfClient({
   contractId: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
   rpcUrl: "https://mainnet.sorobanrpc.com",
-  networkPassphrase: Networks.MAINNET,
+  networkPassphrase: Networks.PUBLIC,
   keypair: Keypair.fromSecret("S..."),
 });
 
@@ -81,7 +81,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 6n);
 import { Networks } from "stellar-vrf-sdk";
 
 Networks.TESTNET  // "Test SDF Network ; September 2015"
-Networks.MAINNET  // "Public Global Stellar Network ; September 2015"
+Networks.PUBLIC   // "Public Global Stellar Network ; September 2015"
 ```
 
 ## License

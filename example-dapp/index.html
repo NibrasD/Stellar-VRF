@@ -253,7 +253,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 const client = new VrfClient({
   contractId: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
-  networkPassphrase: Networks.MAINNET,
+  networkPassphrase: Networks.PUBLIC,
   keypair:    Keypair.fromSecret("S..."),  // signs locally, never sent
 });
 

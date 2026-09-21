@@ -36,21 +36,17 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 ## Quick Start — JavaScript SDK
 
-> **Registry status:** the Rust SDK is **published on crates.io**
-> ([`stellar-vrf-sdk v1.0.0`](https://crates.io/crates/stellar-vrf-sdk)). The
-> JavaScript SDK is **not yet on npm** — install it from this repository for now.
-> Requires **Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
+Published on npm as
+[`stellar-vrf-sdk`](https://www.npmjs.com/package/stellar-vrf-sdk). Requires
+**Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
 
 ```bash
-# Install from the repo (works today)
-git clone https://github.com/NibrasD/Stellar-VRF.git
-cd Stellar-VRF/sdk/js && npm install && npm run build
-```
-
-```bash
-# Once published to npm:
 npm install stellar-vrf-sdk @stellar/stellar-sdk
 ```
+
+> **Note for npm v1.0.0:** use `Networks.PUBLIC` instead of `Networks.MAINNET`
+> (the `MAINNET` alias lands in v1.0.1). See
+> [docs/SDK_RELEASE.md](docs/SDK_RELEASE.md).
 
 ```typescript
 import { VrfClient, Networks } from "stellar-vrf-sdk";
@@ -59,7 +55,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 const client = new VrfClient({
   contractId: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
-  networkPassphrase: Networks.MAINNET,
+  networkPassphrase: Networks.PUBLIC,   // Networks.MAINNET also works from v1.0.1
   keypair:    Keypair.fromSecret("S..."),
 });
 

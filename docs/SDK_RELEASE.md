@@ -5,7 +5,44 @@
 | SDK | Registry | Status |
 |---|---|---|
 | Rust — `stellar-vrf-sdk` | crates.io | ✅ **PUBLISHED v1.0.0** |
-| JS — `stellar-vrf-sdk` | npm | ❌ **blocked: token is staging-only** |
+| JS — `stellar-vrf-sdk` | npm | ✅ **PUBLISHED v1.0.0** — ⚠️ **v1.0.1 fix pending** |
+
+### ⚠️ Known issue in the published npm v1.0.0 — fix ready, publish pending
+
+Post-publish verification from a clean directory (`npm install stellar-vrf-sdk`)
+found that `Networks.MAINNET` — the exact expression used in the README and in
+the SDK's own doc comment — evaluated to **`undefined`**:
+
+```js
+import { VrfClient, Networks } from "stellar-vrf-sdk";
+// VrfClient: function          ✔
+// Networks.MAINNET: undefined  ✘  → networkPassphrase would be undefined
+```
+
+Cause: v1.0.0 did `export { Networks } from "@stellar/stellar-sdk"`, and
+upstream names the live network **`PUBLIC`**, not `MAINNET`
+(`PUBLIC,TESTNET,FUTURENET,SANDBOX,STANDALONE`).
+
+**Fixed in the repo** (`sdk/js/src/index.ts`): `Networks` is now re-exported with
+an added `MAINNET` alias for `PUBLIC`, so both spellings work and the documented
+example is correct. Version bumped to **1.0.1**.
+
+`npm publish` for 1.0.1 is blocked by the same staging-only token:
+
+```
+npm error 403 This token can only publish to a staging area.
+npm error Run `npm stage publish` to publish this version, then approve it.
+npm error (E_STAGE_REQUIRED)
+```
+
+**Action required:** publish 1.0.1 with a direct-capable token so npm users get
+the working `Networks.MAINNET`:
+
+```powershell
+cd sdk/js
+npm login
+npm publish --otp=<6-digit-code>
+```
 
 ### Rust SDK — PUBLISHED ✅
 
@@ -26,50 +63,27 @@ cargo init --bin crate_check && cargo add stellar-vrf-sdk
 Registry API confirms: `stellar-vrf-sdk v1.0.0`.
 URL: <https://crates.io/crates/stellar-vrf-sdk>
 
-### JS SDK — NOT PUBLISHED ❌
+### JS SDK — PUBLISHED ✅
 
-Name settled as unscoped **`stellar-vrf-sdk`** (matching the crate name). The
-`@stellar-vrf` scope never existed, and `@nibrasd` is not a registered scope
-either — both returned `404 Not Found` on publish.
+Published by the maintainer as unscoped **`stellar-vrf-sdk`** (matching the crate
+name). The `@stellar-vrf` and `@nibrasd` scopes do not exist, so scoped names
+returned `404 Not Found`; the unscoped name is the one that works.
 
-`npm whoami` with the supplied token resolves to **`nibrasd`**, so auth works,
-but the token is **restricted to a staging area** and cannot create a brand-new
-package:
+URL: <https://www.npmjs.com/package/stellar-vrf-sdk>
 
-```
-npm error code E403
-npm error 403 Forbidden - PUT https://registry.npmjs.org/stellar-vrf-sdk
-npm error Cannot publish "stellar-vrf-sdk": this token can only publish to a
-npm error staging area, and "stellar-vrf-sdk" does not exist yet. Create it
-npm error first with a direct-capable token, then use `npm stage publish`.
-npm error (E_STAGE_REQUIRED)
-```
+Independently verified from a clean directory:
 
-(`npm stage` is not a command in npm 11.12.1, so that hint is a dead end here.)
+```bash
+npm init -y && npm install stellar-vrf-sdk @stellar/stellar-sdk
+# added 42 packages
 
-**What is needed:** a *direct-capable* npm token — i.e. either
-1. an **Automation** token (created at
-   <https://www.npmjs.com/settings/nibrasd/tokens>, type "Automation", which
-   bypasses 2FA), or
-2. an interactive `npm login` followed by `npm publish --otp=<6-digit-code>`.
-
-Then, from the repo:
-
-```powershell
-cd sdk/js
-npm publish            # with an Automation token in ~/.npmrc
-# ── or ──
-npm login
-npm publish --otp=123456
+node -e 'import("stellar-vrf-sdk").then(m => console.log(typeof m.VrfClient))'
+# function
 ```
 
-Everything else is already verified green: `npm run build` (tsc clean),
-`npm publish --dry-run` (8 files, **public access**), correct `files` allowlist,
-`prepublishOnly` rebuild guard.
+Registry API confirms `dist-tags.latest = 1.0.0`.
 
-Until this succeeds, the Tranche 3 criterion *"Developer SDK released (JS and
-Rust)"* is only **half met**, and the README continues to say plainly that the
-npm package is not yet published.
+**See the known issue above — v1.0.1 still needs publishing.**
 
 ## Pre-flight (already verified)
 
