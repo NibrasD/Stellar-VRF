@@ -23,6 +23,6 @@ overflow-checks = true
 debug = 0
 strip = "symbols"
 debug-assertions = false
-panic = "abort"
+panic = "unwind"
 codegen-units = 1
 lto = true

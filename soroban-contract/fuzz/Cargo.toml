@@ -28,3 +28,21 @@ path = "fuzz_targets/fuzz_vrf_request.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_vrf_fulfill"
+path = "fuzz_targets/fuzz_vrf_fulfill.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_vrf_lifecycle"
+path = "fuzz_targets/fuzz_vrf_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+panic = "unwind"
+
