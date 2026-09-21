@@ -7,10 +7,19 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+    "prepublishOnly": "npm run build"
   },
   "keywords": ["stellar", "soroban", "vrf", "randomness", "oracle"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NibrasD/Stellar-VRF.git",
+    "directory": "sdk/js"
+  },
+  "homepage": "https://github.com/NibrasD/Stellar-VRF#readme",
+  "bugs": { "url": "https://github.com/NibrasD/Stellar-VRF/issues" },
+  "files": ["dist", "src", "README.md", "tsconfig.json"],
+  "publishConfig": { "access": "public" },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.1.0"
   },
