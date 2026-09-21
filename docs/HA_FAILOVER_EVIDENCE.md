@@ -6,11 +6,11 @@ scope of each before judging the Tranche 3 HA criterion.
 | Part | What it proves | Status |
 |---|---|---|
 | **A. Mechanism drill** (automated, real Redis) | Election, split-brain resistance, takeover after hard failure, **fencing of a zombie primary** | ✅ **EXECUTED — 9/9 checks passed** |
-| **B. Production two-host drill** | A standby on a *separate host* restoring real service, proven by a post-failover **Mainnet `fulfill()` TX** | ❌ **PENDING EXECUTION** |
+| **B. Production two-host drill** | A standby on a *separate host* restoring real service, proven by a post-failover **Mainnet `fulfill()` TX** | ✅ **EXECUTED — 2026-09-21** |
 
-**Part A does not substitute for Part B.** Part A proves the locking mechanism is
-correct; only Part B proves end-to-end production service restoration. The Tranche 3
-criterion is **not** satisfied until Part B is filled in.
+Both parts are now complete. Part B is the one that satisfies the Tranche 3
+criterion *"Primary oracle worker running in production with hot-standby replica
+and automatic failover"* — see the Mainnet transaction hashes below.
 
 ---
 
@@ -68,19 +68,99 @@ independent defenses against double submission.
 
 ---
 
-# Part B — Production two-host drill (PENDING EXECUTION)
+# Part B — Production two-host drill (EXECUTED ✅)
 
-> **Status: PENDING EXECUTION.** Required by the Tranche 3 criterion *"Primary
-> oracle worker running in production with hot-standby replica and automatic
-> failover."*
->
-> Current production state (verified over SSH): a **single** instance
-> `oracle-primary` is running under PM2 on one 512 MB host, reporting
-> `"role":"leader"`, and **`REDIS_URL` is not set** — so that host is using the
-> single-node file-lock fallback. A second host and a shared Redis endpoint must be
-> provisioned to execute this part.
->
-> **Do not mark the criterion satisfied on the basis of Part A alone.**
+Executed **2026-09-21** on two separate DigitalOcean droplets coordinating
+through a shared, password-protected Redis instance.
+
+## Topology
+
+| Role | Host | Instance ID | Notes |
+|---|---|---|---|
+| Primary (HOST A) | `165.245.245.101` (`fra1`) | `oracle-118262` | also runs Redis 7.0.15 |
+| Standby (HOST B) | `64.226.86.16` (`fra1`) | `oracle-9981` | connects to A's Redis over the network |
+
+Both workers run commit `cde82d9`, Node v22.23.2, under PM2, with
+`REDIS_URL=redis://:<password>@165.245.245.101:6379` and
+`LEADER_REDIS_KEY=vrf-oracle:leader`. Redis is firewalled so **only HOST B** can
+reach port 6379:
+
+```
+[1] 6379/tcp   ALLOW IN    64.226.86.16
+[3] 6379/tcp   DENY IN     Anywhere
+```
+
+Both instances confirmed the distributed backend at startup:
+
+```
+[Leader] Starting election. Instance: oracle-118262, backend: redis (multi-server), TTL: 30000ms
+[Leader] oracle-118262 is now the LEADER.
+```
+
+## Timeline
+
+| # | Time (UTC) | Event |
+|---|---|---|
+| 1 | 20:17:31 | HOST A elected leader (`redis (multi-server)`, TTL 30 s); HOST B reports `"role":"standby"` |
+| 2 | 20:24:01 | **`kill -9` on HOST A** (PID 118262) — lease deliberately *not* released |
+| 3 | ~20:24:31 | Lease TTL expires; **HOST B becomes leader** (`"role":"leader"`) |
+| 4 | 20:29:33 | **New Mainnet `request()`** submitted *after* the failure → request **#18** |
+| 5 | 20:29:39 | HOST B: `Submitting fulfill for request 18 (attempt 1/5)…` |
+| 6 | 20:29:44 | HOST B: `Request 18 fulfilled! TX: fafa522f…` (5,599 ms) |
+| 7 | ~20:31 | HOST A restarted → comes back as **`"role":"standby"`** (fenced, did **not** reclaim) |
+
+## Mainnet transaction evidence
+
+| Item | Value |
+|---|---|
+| Post-failover **request** TX | [`6329d2b7cfc35fb51952d09a48830c2bbc2c51febe2bfd2e1cccc65a7bb77597`](https://stellar.expert/explorer/public/tx/6329d2b7cfc35fb51952d09a48830c2bbc2c51febe2bfd2e1cccc65a7bb77597) |
+| — status / ledger / fee | `successful: true` / `64547359` / 1,121,653 stroops |
+| **Request ID** | **#18** |
+| Post-failover **`fulfill()`** TX (submitted by HOST B) | [`fafa522f31355e755d107eaeabe36c4e37a6b48baf794de42d402188b5de78b0`](https://stellar.expert/explorer/public/tx/fafa522f31355e755d107eaeabe36c4e37a6b48baf794de42d402188b5de78b0) |
+| — status / ledger / fee | `successful: true` / `64547361` / 1,387,682 stroops |
+| End-to-end latency (request → fulfilled) | **10 s** |
+| On-chain `fulfill()` execution time | 5,599 ms |
+
+HOST B's health endpoint after the drill — note `requests_fulfilled: 1`, proving
+the standby (not the dead primary) did the work:
+
+```json
+{
+  "status": "ok",
+  "instance": "oracle-9981",
+  "role": "leader",
+  "requests_fulfilled": 1,
+  "requests_failed": 0,
+  "last_fulfill_at": "2026-09-21T20:29:44.422Z"
+}
+```
+
+## Results
+
+| Check | Result |
+|---|---|
+| Initial roles correct (A leader / B standby) | ✅ |
+| Failover triggered by **hard kill** (not graceful stop) | ✅ |
+| Standby took over automatically | ✅ (lease TTL 30 s) |
+| **Service actually restored** — post-failover Mainnet `fulfill()` | ✅ `fafa522f…` |
+| Restarted primary stepped down (fenced) | ✅ came back as `standby` |
+| Lease owner after drill (`GET vrf-oracle:leader`) | `oracle-9981` (HOST B) |
+| Double submission for the same request | ✅ **none** — `requests_fulfilled: 1` on B, `0` on A |
+| Requests failed | **0** |
+
+## Reproducing
+
+```bash
+# roles
+curl -s http://165.245.245.101:8080/health   # leader
+curl -s http://64.226.86.16:8080/health      # standby
+
+# hard-kill the primary
+ssh root@165.245.245.101 'kill -9 $(pm2 pid oracle-primary)'
+
+# watch the standby take over, then create a new mainnet request
+ssh root@64.226.86.16 'cd /root/Stellar-VRF/oracle-worker && node mainnet_proof_of_operation.mjs'
+```
 
 ## Why an on-chain TX is the required artifact
 

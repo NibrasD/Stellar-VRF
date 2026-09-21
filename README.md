@@ -121,7 +121,7 @@ docs/               — Operational and security documentation
 - **drand quicknet binding** with future-round enforcement — oracle cannot predict input
 - **Callback support** — `request_with_callback()` for fully on-chain composability
 - **Oracle key rotation** — atomic BLS + Stellar + Ed25519 key rotation
-- **High availability** — primary + hot-standby with leader election and on-chain idempotency
+- **High availability** — primary + hot-standby on separate hosts with Redis leader election, validated by a live failover drill on Mainnet ([evidence](docs/HA_FAILOVER_EVIDENCE.md))
 - **Re-entrancy protection** — transient lock per request ID
 - **Storage TTL extension** — automatic TTL renewal on all persistent entries
 
@@ -155,6 +155,8 @@ cargo test
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Day-to-day operational procedures |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Step-by-step runbook for common tasks |
 | [`docs/HA_DEPLOYMENT.md`](docs/HA_DEPLOYMENT.md) | High-availability deployment guide |
+| [`docs/HA_FAILOVER_EVIDENCE.md`](docs/HA_FAILOVER_EVIDENCE.md) | Failover drill evidence (mechanism + two-host Mainnet) |
+| [`docs/SDK_RELEASE.md`](docs/SDK_RELEASE.md) | SDK publishing procedure and release status |
 | [`docs/INCIDENT_RESPONSE.md`](docs/INCIDENT_RESPONSE.md) | Incident response playbook |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Security threat model |
 | [`docs/PROFILING.md`](docs/PROFILING.md) | Instruction budget measurements |
