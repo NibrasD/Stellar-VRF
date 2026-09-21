@@ -243,11 +243,11 @@
 
       <h3>1. Install</h3>
       <span class="code-label">Terminal</span>
-      <pre>npm install @nibrasd/stellar-vrf-sdk @stellar/stellar-sdk</pre>
+      <pre>npm install stellar-vrf-sdk @stellar/stellar-sdk</pre>
 
       <h3>2. Request Randomness</h3>
       <span class="code-label">JavaScript / TypeScript</span>
-      <pre>import { VrfClient, Networks } from "@nibrasd/stellar-vrf-sdk";
+      <pre>import { VrfClient, Networks } from "stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
@@ -275,7 +275,7 @@ console.log("Random number:", result);</pre>
       <h3>4. Client-side Derivation (Optional)</h3>
       <p>You can also derive a number from the beta output without any contract call:</p>
       <span class="code-label">JavaScript / TypeScript</span>
-      <pre>import { deriveRandomFromBeta } from "@nibrasd/stellar-vrf-sdk";
+      <pre>import { deriveRandomFromBeta } from "stellar-vrf-sdk";
 
 // No network call needed â€” works offline
 const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>

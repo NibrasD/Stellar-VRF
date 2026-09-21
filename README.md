@@ -36,24 +36,24 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 ## Quick Start — JavaScript SDK
 
-> **Registry status:** `@nibrasd/stellar-vrf-sdk` is **not yet published to npm**. Install it
-> directly from this repository until the registry release is cut. Requires
-> **Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
+> **Registry status:** the Rust SDK is **published on crates.io**
+> ([`stellar-vrf-sdk v1.0.0`](https://crates.io/crates/stellar-vrf-sdk)). The
+> JavaScript SDK is **not yet on npm** — install it from this repository for now.
+> Requires **Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
 
 ```bash
 # Install from the repo (works today)
-npm install github:NibrasD/Stellar-VRF#main --prefix ./tmp   # or:
 git clone https://github.com/NibrasD/Stellar-VRF.git
 cd Stellar-VRF/sdk/js && npm install && npm run build
 ```
 
 ```bash
 # Once published to npm:
-npm install @nibrasd/stellar-vrf-sdk @stellar/stellar-sdk
+npm install stellar-vrf-sdk @stellar/stellar-sdk
 ```
 
 ```typescript
-import { VrfClient, Networks } from "@nibrasd/stellar-vrf-sdk";
+import { VrfClient, Networks } from "stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
@@ -72,6 +72,15 @@ const proof = await client.waitForFulfillment(requestId, 120_000);
 
 // Derive a random number in range [1, 1000]
 const result = await client.deriveRandomInRange(requestId, 1n, 1000n);
+```
+
+## Quick Start — Rust SDK
+
+Published on crates.io as
+[`stellar-vrf-sdk`](https://crates.io/crates/stellar-vrf-sdk):
+
+```bash
+cargo add stellar-vrf-sdk
 ```
 
 ## Quick Start — Soroban Consumer Contract (Rust)
@@ -102,7 +111,7 @@ See [`consumer-example/`](consumer-example/) for a complete working example.
 soroban-contract/   — On-chain VRF Oracle smart contract (Rust/Soroban)
 oracle-worker/      — Off-chain Oracle Node (TypeScript)
 consumer-example/   — Example consumer contract with callback (Rust/Soroban)
-sdk/js/             — JavaScript/TypeScript SDK (@nibrasd/stellar-vrf-sdk)
+sdk/js/             — JavaScript/TypeScript SDK (stellar-vrf-sdk)
 sdk/rust/           — Rust SDK (stellar-vrf-sdk)
 dashboard/          — Real-time oracle activity dashboard
 playground/         — Interactive VRF testing interface

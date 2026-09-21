@@ -1,17 +1,17 @@
-# @nibrasd/stellar-vrf-sdk
+# stellar-vrf-sdk
 
 JavaScript/TypeScript SDK for the Stellar VRF Oracle.
 
 ## Installation
 
 ```bash
-npm install @nibrasd/stellar-vrf-sdk
+npm install stellar-vrf-sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { VrfClient, Networks } from "@nibrasd/stellar-vrf-sdk";
+import { VrfClient, Networks } from "stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
@@ -69,7 +69,7 @@ const requestId = await client.request(context, {
 ### Utility Functions
 
 ```typescript
-import { deriveRandomFromBeta } from "@nibrasd/stellar-vrf-sdk";
+import { deriveRandomFromBeta } from "stellar-vrf-sdk";
 
 // Client-side derivation without a contract call
 const roll = deriveRandomFromBeta(betaHex, 1n, 6n);
@@ -78,7 +78,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 6n);
 ## Networks
 
 ```typescript
-import { Networks } from "@nibrasd/stellar-vrf-sdk";
+import { Networks } from "stellar-vrf-sdk";
 
 Networks.TESTNET  // "Test SDF Network ; September 2015"
 Networks.MAINNET  // "Public Global Stellar Network ; September 2015"
