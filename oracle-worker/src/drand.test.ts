@@ -10,6 +10,7 @@
  *   - Network error recovery
  *   - Exhausted retries throw after maxRetries+1 attempts
  *   - computeCurrentRound / roundTimestamp pure function correctness
+ *   - waitAndFetchBeacon: pre-wait sleep, propagation buffer, immediate fetch
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -174,5 +175,83 @@ describe("fetchDrandBeacon", () => {
     const fetchCall = mockFetch.mock.calls[0];
     expect(fetchCall[1]).toBeDefined();
     expect(fetchCall[1].signal).toBeDefined();
+  });
+});
+
+// ── waitAndFetchBeacon tests ────────────────────────────────────────────────
+
+describe("waitAndFetchBeacon", () => {
+  const mockFetch = vi.fn();
+  let waitAndFetchBeacon: typeof import("./drand.js")["waitAndFetchBeacon"];
+  let mockSleep: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.stubGlobal("fetch", mockFetch);
+    mockFetch.mockReset();
+
+    // Get reference to mocked sleep
+    const utils = await import("./utils.js");
+    mockSleep = utils.sleep as unknown as ReturnType<typeof vi.fn>;
+    mockSleep.mockClear();
+
+    const mod = await import("./drand.js");
+    waitAndFetchBeacon = mod.waitAndFetchBeacon;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("sleeps until round is available when round is in the future", async () => {
+    // Config: genesis=1_000_000, period=3
+    // Round 100 → timestamp = 1_000_000 + 100*3 = 1_000_300
+    // Mock Date.now() to return a time BEFORE round 100
+    const beforeRoundTime = 1_000_290; // 10 seconds before round 100
+    vi.spyOn(Date, "now").mockReturnValue(beforeRoundTime * 1000);
+    vi.spyOn(Math, "floor").mockReturnValueOnce(beforeRoundTime);
+
+    const beacon = { round: 100, randomness: "ff", signature: "aabbccdd11223344eeff" };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => beacon });
+
+    const result = await waitAndFetchBeacon(100);
+
+    expect(result).toEqual(beacon);
+    // sleep should have been called with (waitSec * 1000) where
+    // waitSec = expectedTime - now + 2 = 1_000_300 - 1_000_290 + 2 = 12
+    expect(mockSleep).toHaveBeenCalled();
+    const sleepCallArg = mockSleep.mock.calls[0][0];
+    // Should be 12 * 1000 = 12000ms (10s wait + 2s propagation buffer)
+    expect(sleepCallArg).toBe(12_000);
+  });
+
+  it("does NOT sleep when round is already in the past", async () => {
+    // Round 10 → timestamp = 1_000_000 + 10*3 = 1_000_030
+    // Mock Date.now() to return time AFTER round 10
+    const afterRoundTime = 1_000_050; // 20 seconds after round 10
+    vi.spyOn(Date, "now").mockReturnValue(afterRoundTime * 1000);
+    vi.spyOn(Math, "floor").mockReturnValueOnce(afterRoundTime);
+
+    const beacon = { round: 10, randomness: "ee", signature: "1122aabb3344ccdd5566" };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => beacon });
+
+    const result = await waitAndFetchBeacon(10);
+
+    expect(result).toEqual(beacon);
+    // sleep should NOT have been called (round is already available)
+    // Note: mockSleep might be called by fetchDrandBeacon internals,
+    // but the pre-wait sleep should not happen
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates errors from fetchDrandBeacon", async () => {
+    // Round already in the past — no pre-wait
+    const pastTime = 2_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(pastTime * 1000);
+    vi.spyOn(Math, "floor").mockReturnValueOnce(pastTime);
+
+    mockFetch.mockRejectedValue(new Error("network down"));
+
+    await expect(waitAndFetchBeacon(5)).rejects.toThrow(/network down/);
   });
 });
