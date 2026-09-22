@@ -3,12 +3,11 @@ const stellar = stellarNs.default || stellarNs;
 const { rpc, scValToNative, Networks, TransactionBuilder, Operation, nativeToScVal } = stellar;
 
 const server = new rpc.Server("https://mainnet.sorobanrpc.com", { allowHttp: false });
-const CONTRACT_ID = "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57";
+const CONTRACT_ID = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
 const ORACLE_PUBLIC = "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P";
 
 const health = await server.getHealth();
-// Look back ~30k ledgers (~last 42h) from the head — well inside retention.
-const start = health.latestLedger - 30000;
+const start = Math.max(1, health.latestLedger - 5000);
 console.log(`Scanning ledgers ${start}..${health.latestLedger} for ALL contract events\n`);
 
 const filters = [{ type: "contract", contractIds: [CONTRACT_ID] }];

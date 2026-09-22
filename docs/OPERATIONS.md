@@ -9,18 +9,18 @@ on mainnet.
 
 | Network | Contract ID | Oracle Account |
 |---|---|---|
-| **Mainnet** | `CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` (current, after rotation; original deployer: `GAQ3XIUK…I5TVU`) |
+| **Mainnet** | `CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` |
 | Testnet | `CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE` | — |
 
 ### Mainnet Transaction Proof
 
 | Transaction | Hash | Explorer |
 |---|---|---|
-| WASM Upload | `296bbf779514e69e0e9731f3a22018fc31153f5fcc9bf29131311c839716790e` | [View](https://stellar.expert/explorer/public/tx/296bbf779514e69e0e9731f3a22018fc31153f5fcc9bf29131311c839716790e) |
-| Contract Deploy | `5febbea86e59a315c7d3ab80647cadab06c37def85bc247d764d1d8713dce181` | [View](https://stellar.expert/explorer/public/tx/5febbea86e59a315c7d3ab80647cadab06c37def85bc247d764d1d8713dce181) |
-| Contract Init | `bbcb6a1a048ebc1aa1bd8915c80d6e727c21b940a60c6e34878114c3430222b9` | [View](https://stellar.expert/explorer/public/tx/bbcb6a1a048ebc1aa1bd8915c80d6e727c21b940a60c6e34878114c3430222b9) |
-| First request() | `fae15bdd8e8b38163b69ed0c7df87150870aefb92078141fbdcef2bdc7d7846e` | [View](https://stellar.expert/explorer/public/tx/fae15bdd8e8b38163b69ed0c7df87150870aefb92078141fbdcef2bdc7d7846e) |
-| First fulfill() | `5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2` | [View](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) |
+| WASM Upload | `0b555662fcdf5083237b7ab337583cb9d8c8124deb4c1220a385745299702222` | [View](https://stellar.expert/explorer/public/tx/0b555662fcdf5083237b7ab337583cb9d8c8124deb4c1220a385745299702222) |
+| Contract Deploy | `348f0fde4ac4954f4ebed808b1bba9dbdbf2137cbb29156f69188fc69fad3af1` | [View](https://stellar.expert/explorer/public/tx/348f0fde4ac4954f4ebed808b1bba9dbdbf2137cbb29156f69188fc69fad3af1) |
+| Contract Init | `6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc` | [View](https://stellar.expert/explorer/public/tx/6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc) |
+| First request() | `0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3` | [View](https://stellar.expert/explorer/public/tx/0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3) |
+| First fulfill() | `f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf` | [View](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) |
 
 ## Starting the Oracle Worker
 

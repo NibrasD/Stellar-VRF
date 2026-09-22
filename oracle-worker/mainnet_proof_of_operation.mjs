@@ -4,8 +4,10 @@
  */
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, ".env") });
 const SDK_INDEX = path.resolve(__dirname, "node_modules/@stellar/stellar-sdk/lib/esm/index.js");
 const stellar = await import(pathToFileURL(SDK_INDEX).href);
 const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal, rpc, xdr, Account } =
@@ -13,8 +15,8 @@ const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal
 
 const MAINNET_RPC   = "https://mainnet.sorobanrpc.com";
 const NETWORK       = Networks.PUBLIC;
-const CONTRACT_ID   = "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57";
-const ORACLE_SECRET = process.env.ORACLE_SECRET;
+const CONTRACT_ID   = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
+const ORACLE_SECRET = process.env.ORACLE_STELLAR_SECRET || process.env.ORACLE_SECRET;
 if (!ORACLE_SECRET) { console.error("ERROR: ORACLE_SECRET env var is required"); process.exit(1); }
 const ORACLE_KP     = Keypair.fromSecret(ORACLE_SECRET);
 const ORACLE_PUBLIC = ORACLE_KP.publicKey();

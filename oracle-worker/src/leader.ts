@@ -18,10 +18,12 @@
  */
 
 import fs from "fs";
+import os from "os";
+import path from "path";
 import { log } from "./utils.js";
 import { RedisLease } from "./redisLock.js";
 
-const LOCK_FILE = process.env.LEADER_LOCK_FILE || "/tmp/vrf-oracle.lock";
+const LOCK_FILE = process.env.LEADER_LOCK_FILE || path.join(os.tmpdir(), "vrf-oracle.lock");
 const LOCK_TTL_MS = parseInt(process.env.LEADER_LOCK_TTL_MS || "30000", 10);    // 30s
 const HEARTBEAT_MS = parseInt(process.env.LEADER_HEARTBEAT_MS || "10000", 10); // 10s
 const POLL_MS = parseInt(process.env.LEADER_POLL_MS || "5000", 10);            // 5s

@@ -73,7 +73,7 @@ if (fs.existsSync(WASM_PATH)) {
 // ── [4/5] ScVal init-args build under v17 ───────────────────────────────────
 console.log("\n[4/5] Building all init ScVal args (v17 encoding)...");
 function bytesVal(hex) { return nativeToScVal(Buffer.from(hex, "hex"), { type: "bytes" }); }
-function u64Val(n) { return xdr.ScVal.scvU64(new xdr.Uint64(BigInt(n).toString())); }
+function u64Val(n) { return xdr.ScVal.scvU64(BigInt(n)); }
 function u32Val(n) { return xdr.ScVal.scvU32(Number(n)); }
 function i128Val(n) { return nativeToScVal(n, { type: "i128" }); }
 
@@ -115,7 +115,7 @@ try {
     new Address(dummyKP.publicKey()).toScVal(),
     i128Val(0),
   ];
-  const dummyContract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY2";
+  const dummyContract = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
   const invokeTx = new TransactionBuilder(dummyAccount, { fee: "5000000", networkPassphrase: NETWORK })
     .addOperation(Operation.invokeContractFunction({ contract: dummyContract, function: "init", args: initArgs }))
     .setTimeout(300)

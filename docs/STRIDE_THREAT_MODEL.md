@@ -12,7 +12,7 @@ Consumer ──request()──▶ VRF Contract ◀──fulfill()── Oracle W
                         on_vrf() callback
 ```
 
-**Contract:** `CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57` (Mainnet)
+**Contract:** `CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU` (Mainnet)
 **Oracle address:** `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`
 
 ---

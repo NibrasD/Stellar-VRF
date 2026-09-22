@@ -84,3 +84,5 @@ Stellar-VRF.zip
 
 # Ensure node modules ignored (redundant if already present)
 node_modules/
+.scratchpad/
+.scratchpad*

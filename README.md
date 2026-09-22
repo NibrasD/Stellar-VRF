@@ -27,7 +27,7 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 | | |
 |---|---|
-| **Contract** | [`CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57`](https://stellar.expert/explorer/public/contract/CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57) |
+| **Contract** | [`CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU`](https://stellar.expert/explorer/public/contract/CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU) |
 | **Oracle** | [`GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`](https://stellar.expert/explorer/public/account/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P) |
 | **Network** | Stellar Mainnet |
 | **Dashboard** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/dashboard/) |
@@ -53,7 +53,7 @@ import { VrfClient, Networks } from "stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
-  contractId: "CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57",
+  contractId: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
   networkPassphrase: Networks.PUBLIC,   // Networks.MAINNET also works from v1.0.1
   keypair:    Keypair.fromSecret("S..."),
