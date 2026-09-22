@@ -1,11 +1,15 @@
 [package]
 name = "stellar-vrf-sdk"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
-description = "Rust SDK for the Stellar VRF Oracle"
+description = "Rust SDK for the Stellar VRF Oracle — verifiable on-chain randomness for Stellar/Soroban, backed by drand and on-chain BLS12-381 pairing verification"
 license = "MIT"
 repository = "https://github.com/NibrasD/Stellar-VRF"
+homepage = "https://github.com/NibrasD/Stellar-VRF"
+documentation = "https://docs.rs/stellar-vrf-sdk"
+readme = "README.md"
 keywords = ["stellar", "soroban", "vrf", "randomness", "oracle"]
+categories = ["cryptography::cryptocurrencies", "api-bindings"]
 
 [dependencies]
 # NOTE: This SDK intentionally avoids the heavy `stellar-xdr` crate. Read

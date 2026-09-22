@@ -622,6 +622,12 @@
     };
 
     function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Default to Mainnet on load. This is a production oracle, so the live
+    // contract is what visitors should see first. Calling switchNetwork() (rather
+    // than only setting NETWORK) keeps the button highlighting and the network
+    // warning banner in sync with the actually selected network.
+    switchNetwork("mainnet");
   </script>
 </body>
 </html>

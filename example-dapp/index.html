@@ -665,7 +665,10 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       }
     };
 
-    switchNetwork("testnet");
+    // Default to Mainnet: this is a production oracle and the live contract is
+    // the primary thing visitors should see. switchNetwork() sets the badge,
+    // button styles and info box, so UI state stays consistent.
+    switchNetwork("mainnet");
     document.getElementById("request-btn").disabled = true;
   </script>
 </body>
