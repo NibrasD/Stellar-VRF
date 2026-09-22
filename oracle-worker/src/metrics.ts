@@ -63,13 +63,27 @@ export interface FeeGuardStats {
   unpaidFulfilled: number;
   /** Last observed oracle balance in stroops (null until first read). */
   oracleBalanceStroops: bigint | null;
+  /** Unpaid spend (tx max fees, stroops) in the shared rolling hour, last observed. */
+  unpaidSpendWindowStroops: bigint | null;
+  /** Configured unpaid budget per rolling hour (stroops). */
+  unpaidBudgetStroops: bigint | null;
 }
 
 const feeGuardStats: FeeGuardStats = {
   deferred: 0,
   unpaidFulfilled: 0,
   oracleBalanceStroops: null,
+  unpaidSpendWindowStroops: null,
+  unpaidBudgetStroops: null,
 };
+
+export function recordUnpaidSpendWindow(stroops: bigint): void {
+  feeGuardStats.unpaidSpendWindowStroops = stroops;
+}
+
+export function recordUnpaidBudget(stroops: bigint): void {
+  feeGuardStats.unpaidBudgetStroops = stroops;
+}
 
 export function getFeeGuardStats(): Readonly<FeeGuardStats> {
   return feeGuardStats;

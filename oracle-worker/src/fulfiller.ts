@@ -44,13 +44,19 @@ export class FulfillAbortedError extends Error {
  * @param canSubmit - Checked immediately before EVERY attempt (including
  *                    internal retries). Return false to abort — used to stop a
  *                    node that lost leadership mid-retry from submitting.
+ * @param beforeSend - Called with the assembled transaction's maximum fee
+ *                    (stroops) immediately before EVERY `sendTransaction()`.
+ *                    Returning `{ ok: false }` aborts without sending. This is
+ *                    where the fee guard reserves spend, so retries count too.
  * @returns The transaction hash on success
  */
 export async function submitFulfillment(
   server: rpc.Server,
   requestId: bigint,
   proof: VrfProofData,
-  canSubmit: () => boolean = () => true
+  canSubmit: () => boolean = () => true,
+  beforeSend: (maxFeeStroops: bigint) => Promise<{ ok: true } | { ok: false; reason: string }> =
+    async () => ({ ok: true })
 ): Promise<string> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     if (!canSubmit()) {
@@ -108,6 +114,19 @@ export async function submitFulfillment(
 
       // 4. Assemble, sign, and submit
       const prepared = rpc.assembleTransaction(tx, simulated).build();
+
+      // Last gate before money can move. `prepared.fee` is the envelope's max
+      // fee (inclusion + resource fee): Stellar never charges more than this.
+      if (!canSubmit()) {
+        throw new FulfillAbortedError(
+          `aborting fulfill(${requestId}) attempt ${attempt}: no longer allowed to submit (leadership lost)`
+        );
+      }
+      const gate = await beforeSend(BigInt(prepared.fee));
+      if (!gate.ok) {
+        throw new FulfillAbortedError(`aborting fulfill(${requestId}) attempt ${attempt}: ${gate.reason}`);
+      }
+
       prepared.sign(ORACLE_KEYPAIR);
 
       const sent = await server.sendTransaction(prepared);
@@ -126,6 +145,7 @@ export async function submitFulfillment(
 
       return sent.hash;
     } catch (err: unknown) {
+      if (err instanceof FulfillAbortedError) throw err; // deliberate: never retry
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error(
         `Fulfill attempt ${attempt} failed for request ${requestId}: ${errMsg}`

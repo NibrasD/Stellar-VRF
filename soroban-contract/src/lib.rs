@@ -133,6 +133,10 @@ impl VRFOracleContract {
     /// oracle key in instance storage. This means:
     /// - The **new** oracle can fulfill requests created before rotation.
     /// - The **old** oracle (or an attacker with old keys) cannot fulfill after rotation.
+    /// - Consequently, whoever controls the **current** oracle account can rotate
+    ///   to a key chosen after a request's drand round is public and bias that
+    ///   request's output. The oracle account is trusted for bias resistance;
+    ///   protect it with multisig / a hardware signer and monitor `rotate_ok`.
     ///
     /// Best practice: rotate keys only after the new oracle node is running and
     /// ready to fulfill requests, to avoid a gap where no oracle is active.
@@ -171,6 +175,12 @@ impl VRFOracleContract {
     ///
     /// # Authorization model
     /// The current oracle must authorize this call.
+    ///
+    /// # Security note
+    /// This key is what makes alpha unpredictable to the oracle. A holder of the
+    /// oracle account who installs a key it controls can sign any "beacon" and
+    /// therefore choose outputs, including for pending requests. Treat every
+    /// `rotate_dk` event as security-relevant.
     pub fn rotate_drand_pk(env: Env, new_drand_pk: BytesN<192>) {
         let oracle_addr: Address = env
             .storage()

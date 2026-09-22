@@ -60,7 +60,9 @@ biasing the randomness.
 **Remediation (Tampering.1.R.1):** The contract re-derives `alpha_seed` on-chain from
 `sha256(context || round || sha256(drand_signature))` and compares it to the proof's
 claimed alpha. Any tampering causes a mismatch and the transaction reverts. The VRF is
-deterministic for a given key and alpha — there is no second input the oracle can tweak.
+deterministic for a given key and alpha, so with the **registered keys fixed** there is no
+second input the oracle can tweak. The keys themselves can be rotated by the oracle account.
+That residual is Tampering.3.
 
 ### Tampering.2 — Oracle front-runs by using a known drand beacon
 
@@ -79,13 +81,33 @@ request is created, so the oracle cannot know the VRF input in advance.
 **Affected component:** VRF Contract, `rotate_oracle_keys()`, `rotate_drand_pk()`
 **Severity:** High
 
-**Description:** An attacker who compromises the oracle's Stellar account rotates the
-keys to install their own BLS keypair, gaining full control over future proofs.
+**Description:** Whoever controls the *current* oracle Stellar account (an attacker who
+steals it, or the operator) rotates the keys and gains control over the outputs. This covers
+pending requests as well as future ones:
+- `rotate_drand_pk()` to a key it controls lets it sign an arbitrary "beacon". That fixes
+  alpha, so it **chooses** the output.
+- `rotate_oracle_keys()` after the drand round is public lets it grind BLS keys offline and
+  install the one that gives a favourable output.
 
-**Remediation (Tampering.3.R.1):** `rotate_oracle_keys()` requires `current_oracle.require_auth()`.
-An attacker needs the Stellar secret key, not just the BLS key. After rotation, any pending
-requests locked to the old oracle PK will fail verification, forcing timeout refunds.
-Monitoring for unexpected key rotation events is critical (see monitoring plan).
+Pending requests are **not** locked to the keys active at request time. `fulfill()` checks
+the keys registered at fulfillment time, so the new key can fulfill requests created before
+the rotation (see `test_rotate_keys_new_oracle_successfully_fulfills_pending_request`).
+
+**Remediation (Tampering.3.R.1), current contract (partial):**
+`rotate_oracle_keys()` / `rotate_drand_pk()` require `current_oracle.require_auth()`, so an
+attacker needs the oracle *Stellar* secret, not just the BLS key. Compromise of an old key
+after rotation is harmless. Nothing on-chain stops the current key holder, though. The
+mitigations are operational:
+- protect the oracle account with multisig or a hardware signer;
+- alert on every `rotate_ok` / `rotate_dk` event;
+- distrust fulfillments that follow a rotation.
+
+This is a **trust assumption**. The oracle is trusted for bias resistance, not just
+liveness. See THREAT_MODEL.md.
+**Remediation (Tampering.3.R.2), requires redeployment:** snapshot oracle and drand keys per
+request at `request()` time. Put rotations behind a timelock longer than `TIMEOUT_ROUNDS`,
+and/or behind an admin authority separate from the fulfilling key. **Status: not
+implemented.**
 
 ---
 
@@ -132,7 +154,8 @@ an unfair advantage in games or lotteries.
 **Remediation (Information_Disclosure.2.R.1):** The VRF output depends on the oracle's
 BLS secret key (known only to the oracle) and the drand beacon (unpublished at request time
 due to `round_offset >= 2`). Even the oracle cannot predict the output until the drand
-round is published. `derive_random_in_range()` maps the output into `[0, max)` by drawing
+round is published, **provided it does not rotate the drand key to one it controls**
+(Tampering.3). `derive_random_in_range()` maps the output into `[0, max)` by drawing
 **128 bits** of hash entropy and reducing modulo `max` ("extra bits" reduction, NIST
 SP 800-90A B.5.1.3 style): the deviation between residue classes is bounded by
 $max / 2^{128} \le 2^{-64}$ for any `max < 2^64`, with **no biased fallback path** and a

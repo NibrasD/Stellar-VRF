@@ -97,8 +97,25 @@ export async function readFeeAmount(server: rpc.Server): Promise<bigint> {
   return (await readInstanceInteger(server, "FeeAmount")) ?? 0n;
 }
 
+/**
+ * Read the contract's fee token (`DataKey::FeeToken`, a SAC contract ID).
+ * `FeeAmount` is in this token's smallest unit, which is only stroops when the
+ * token is the native XLM SAC.
+ */
+export async function readFeeToken(server: rpc.Server): Promise<string> {
+  const v = await readInstanceValue(server, "FeeToken");
+  if (!v) throw new Error("FeeToken not found in contract instance storage");
+  return Address.fromScVal(v).toString();
+}
+
 /** Read an integer-valued unit `DataKey` variant from contract instance storage. */
 async function readInstanceInteger(server: rpc.Server, name: string): Promise<bigint | null> {
+  const v = await readInstanceValue(server, name);
+  return v ? BigInt(scValToNative(v) as bigint | number | string) : null;
+}
+
+/** Raw value of a unit `DataKey` variant in contract instance storage. */
+async function readInstanceValue(server: rpc.Server, name: string): Promise<xdr.ScVal | null> {
   const entry = await server.getContractData(
     CONTRACT_ADDRESS,
     xdr.ScVal.scvLedgerKeyContractInstance(),
@@ -109,7 +126,7 @@ async function readInstanceInteger(server: rpc.Server, name: string): Promise<bi
   for (const item of storage) {
     const key = scValToNative(item.key);
     if (Array.isArray(key) && key.length === 1 && key[0] === name) {
-      return BigInt(scValToNative(item.val) as bigint | number | string);
+      return item.val;
     }
   }
   return null;

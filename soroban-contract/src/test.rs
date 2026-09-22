@@ -1590,7 +1590,7 @@ fn test_rotate_keys_new_oracle_successfully_fulfills_pending_request() {
     let id = client.request(&context, &requester);
     assert_eq!(id, 1);
     assert_eq!(client.request_round(&id), target_round);
-    assert_eq!(client.is_fulfilled(&id), false);
+    assert!(!client.is_fulfilled(&id));
 
     // 2. Rotate to NEW oracle keys
     const PROOF_ALPHA: [u8; 32] = [0x58, 0x34, 0xb6, 0x43, 0xd1, 0x19, 0x9c, 0x0b, 0xe5, 0x61, 0x09, 0x97, 0xe5, 0x29, 0x77, 0x08, 0x22, 0x24, 0xde, 0x28, 0xbb, 0x28, 0x5d, 0x23, 0x84, 0x46, 0x13, 0x61, 0xb4, 0x10, 0xc6, 0x22];
@@ -1626,7 +1626,7 @@ fn test_rotate_keys_new_oracle_successfully_fulfills_pending_request() {
     client.fulfill(&id, &proof, &signature);
 
     // 4. Verify post-conditions
-    assert_eq!(client.is_fulfilled(&id), true, "request must be fulfilled");
+    assert!(client.is_fulfilled(&id), "request must be fulfilled");
     assert_eq!(client.get_proof(&id).beta_output, BytesN::from_array(&env, &PROOF_BETA), "randomness output must match");
 }
 

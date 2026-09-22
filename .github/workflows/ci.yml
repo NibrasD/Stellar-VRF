@@ -37,9 +37,14 @@ jobs:
             soroban-contract/target
           key: ${{ runner.os }}-cargo-contract-${{ hashFiles('soroban-contract/Cargo.lock') }}
 
-      - name: cargo test
+      # The FULL suite: unit tests, integration tests (tests/), and doc-tests.
+      # This is the same command documented for local runs, so "tests pass
+      # locally" and "tests pass in CI" mean the same thing.
+      - name: cargo test (all targets + doc-tests)
         working-directory: soroban-contract
-        run: cargo test --lib
+        run: |
+          cargo test --all-targets
+          cargo test --doc
 
       - name: Reviewer evidence — BLS / drand rejection paths
         working-directory: soroban-contract
@@ -57,9 +62,13 @@ jobs:
         working-directory: soroban-contract
         run: cargo test --lib rotate_keys -- --nocapture
 
-      - name: cargo clippy
+      - name: cargo clippy (all targets, including tests)
         working-directory: soroban-contract
-        run: cargo clippy --lib -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Fuzz targets compile
+        working-directory: soroban-contract/fuzz
+        run: cargo check --bins
 
   rust-sdk:
     name: Rust SDK (test + package)
@@ -108,6 +117,11 @@ jobs:
         env:
           REDIS_URL: redis://127.0.0.1:6399
         run: node failover_drill.mjs
+      - name: Spend-ledger drill (real Redis — unpaid budget shared across instances, never exceeded)
+        working-directory: oracle-worker
+        env:
+          REDIS_URL: redis://127.0.0.1:6399
+        run: node spend_ledger_drill.mjs
 
   js-sdk:
     name: JS SDK (build)

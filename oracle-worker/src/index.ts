@@ -19,7 +19,7 @@
  *   5. Standby: watches for leader failure, takes over automatically
  */
 
-import { printConfig } from "./config.js";
+import { printConfig, NETWORK_PASSPHRASE } from "./config.js";
 import {
   createServer,
   startListenerLoop,
@@ -27,10 +27,13 @@ import {
   isRequestFulfilled,
   findPendingRequests,
   readFeeAmount,
+  readFeeToken,
   readOracleBalance,
   readRequester,
 } from "./listener.js";
-import { FeeGuard, feeGuardOptionsFromEnv, formatXlm } from "./feeGuard.js";
+import { FeeGuard, feeGuardOptionsFromEnv, formatXlm, type Funding } from "./feeGuard.js";
+import { createSpendLedger } from "./spendLedger.js";
+import { Asset } from "@stellar/stellar-sdk";
 import { waitAndFetchBeacon } from "./drand.js";
 import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
 import { submitFulfillment } from "./fulfiller.js";
@@ -53,6 +56,8 @@ import {
   recordFeeDeferred,
   recordUnpaidFulfilled,
   recordOracleBalance,
+  recordUnpaidSpendWindow,
+  recordUnpaidBudget,
 } from "./metrics.js";
 import { withRetry, withFulfillRetry, checkDrandLag } from "./retry.js";
 import { DRAND_PERIOD } from "./config.js";
@@ -66,18 +71,27 @@ const processingRequests = new Set<string>();
 /** A real Stellar account (G…) or contract (C…) StrKey. */
 const STRKEY_RE = /^[GC][A-Z2-7]{55}$/;
 
-const feeGuardOptions = feeGuardOptionsFromEnv();
+// FeeAmount only means stroops when FeeToken is the native XLM SAC.
+const NATIVE_TOKEN_ID = Asset.native().contractId(NETWORK_PASSPHRASE);
+const feeGuardOptions = feeGuardOptionsFromEnv(NATIVE_TOKEN_ID);
 const feeGuardServer = createServer();
+// Shared with the leader lease backend: Redis in HA, a file otherwise. The
+// unpaid budget is therefore per deployment, not per process.
+const spendLedger = createSpendLedger();
 const feeGuard = new FeeGuard(
   {
     readFeeAmount: () => readFeeAmount(feeGuardServer),
+    readFeeToken: () => readFeeToken(feeGuardServer),
     readBalance: () => readOracleBalance(feeGuardServer),
     readRequester: (id) => readRequester(feeGuardServer, id),
+    ledger: spendLedger,
     now: Date.now,
     onBalance: recordOracleBalance,
+    onUnpaidSpend: recordUnpaidSpendWindow,
   },
   feeGuardOptions
 );
+recordUnpaidBudget(feeGuardOptions.unpaidBudgetStroops);
 
 /**
  * How often the leader re-reconciles against contract state while running.
@@ -105,8 +119,7 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   processingRequests.add(reqKey);
   recordRequestSeen();
   const startMs = Date.now();
-  let unpaid = false;
-  let submitAttempted = false;
+  let funding: Funding = "paid";
 
   try {
     const server = createServer();
@@ -135,8 +148,8 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
       );
       return;
     }
-    unpaid = !decision.paid;
-    if (unpaid) log.info(`  Fee guard: ${decision.reason}`);
+    funding = decision.funding;
+    if (funding !== "paid") log.info(`  Fee guard: ${decision.reason}`);
 
     log.info(`═══ Processing VRF request #${event.requestId} ═══`);
     log.info(`  Requester:      ${event.requester}`);
@@ -188,22 +201,27 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
         `[${getInstanceId()}] Lost leadership while preparing request ${event.requestId} — ` +
           `discarding instead of submitting.`
       );
-      if (unpaid) feeGuard.refundUnpaidSlot(); // nothing was spent
       return;
     }
 
-    // Leadership is re-checked before EVERY submission attempt: the outer
-    // withFulfillRetry attempts and submitFulfillment's own inner retries.
-    // A FulfillAbortedError is terminal — withFulfillRetry does not retry it.
-    submitAttempted = true; // from here on, fees may have been spent
+    // Leadership AND the fee guard are re-checked before EVERY
+    // sendTransaction(): the outer withFulfillRetry attempts and
+    // submitFulfillment's own inner retries. For budget-funded requests each
+    // send reserves its maximum fee in the shared ledger first, so retries and
+    // ambiguous timeouts count against the budget. A FulfillAbortedError is
+    // terminal — withFulfillRetry does not retry it.
+    const sendFunding = funding;
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
-      () => submitFulfillment(server, event.requestId, proof, isLeader)
+      () =>
+        submitFulfillment(server, event.requestId, proof, isLeader, (maxFee) =>
+          feeGuard.authorizeSend(sendFunding, maxFee)
+        )
     );
 
     const durationMs = Date.now() - startMs;
     recordFulfillment(durationMs);
-    if (unpaid) recordUnpaidFulfilled();
+    if (funding !== "paid") recordUnpaidFulfilled();
     feeGuard.invalidateBalance(); // the submission just changed it
 
     log.success(`═══ Request #${event.requestId} fulfilled (${durationMs}ms) ═══`);
@@ -212,9 +230,10 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     recordFailure(msg);
-    // Failed before any transaction was sent (drand / context / proof): the
-    // unpaid budget slot was not actually spent.
-    if (unpaid && !submitAttempted) feeGuard.refundUnpaidSlot();
+    feeGuard.invalidateBalance(); // a failed send may still have charged a fee
+    if (err instanceof Error && err.name === "FulfillAbortedError" && !/leadership lost/.test(msg)) {
+      recordFeeDeferred(); // refused at send time by the fee guard; stays pending on-chain
+    }
     log.error(`Failed to process request ${event.requestId}: ${msg}`);
     if (err instanceof Error && err.stack) {
       log.error(`  Stack: ${err.stack}`);
@@ -312,21 +331,28 @@ async function main(): Promise<void> {
   log.info(`Instance ID: ${getInstanceId()}`);
 
   // Report the economic posture up front so operators see it in the first log lines.
-  const { fulfillCostStroops, minBalanceStroops, maxUnpaidPerHour, allowlist } = feeGuardOptions;
+  const { fulfillCostStroops, minBalanceStroops, unpaidBudgetStroops, allowlist } = feeGuardOptions;
+  log.info(`Fee guard spend ledger: ${spendLedger.describe()}`);
   try {
-    const fee = await readFeeAmount(feeGuardServer);
-    if (fee < fulfillCostStroops) {
+    const [fee, token] = await Promise.all([readFeeAmount(feeGuardServer), readFeeToken(feeGuardServer)]);
+    const unpaidPosture =
+      `Fee guard: unpaid budget ${formatXlm(unpaidBudgetStroops)}/hour (tx max fees, all instances) + ` +
+      `${allowlist.size} allowlisted requester(s), balance floor ${formatXlm(minBalanceStroops)}.`;
+    if (token !== NATIVE_TOKEN_ID) {
+      log.warn(
+        `Contract FeeToken ${token} is not native XLM (${NATIVE_TOKEN_ID}). The worker cannot price it, ` +
+          `so EVERY request is treated as unpaid. ${unpaidPosture}`
+      );
+    } else if (fee < fulfillCostStroops) {
       log.warn(
         `Contract FeeAmount (${fee} stroops) is below the fulfill cost (${fulfillCostStroops} stroops): ` +
-          `requests do not pay for themselves. Fee guard: at most ${maxUnpaidPerHour} unpaid ` +
-          `fulfillment(s)/hour + ${allowlist.size} allowlisted requester(s), ` +
-          `balance floor ${formatXlm(minBalanceStroops)}.`
+          `requests do not pay for themselves. ${unpaidPosture}`
       );
     } else {
-      log.info(`Contract FeeAmount ${fee} stroops covers the fulfill cost; balance floor ${formatXlm(minBalanceStroops)}.`);
+      log.info(`Contract FeeAmount ${fee} stroops (XLM) covers the fulfill cost; balance floor ${formatXlm(minBalanceStroops)}.`);
     }
   } catch (err) {
-    log.warn(`Could not read contract FeeAmount at startup (${err instanceof Error ? err.message : err}); treating requests as unpaid.`);
+    log.warn(`Could not read contract FeeAmount/FeeToken at startup (${err instanceof Error ? err.message : err}); treating requests as unpaid.`);
   }
 
   // Start health server on all instances (primary + standby)

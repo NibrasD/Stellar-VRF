@@ -196,6 +196,22 @@ function handleMetrics(res: http.ServerResponse): void {
           `vrf_oracle_balance_stroops ${fg.oracleBalanceStroops}`,
         ]
       : []),
+    ...(fg.unpaidBudgetStroops !== null
+      ? [
+          ``,
+          `# HELP vrf_unpaid_budget_stroops Configured unpaid spend budget per rolling hour (all instances)`,
+          `# TYPE vrf_unpaid_budget_stroops gauge`,
+          `vrf_unpaid_budget_stroops ${fg.unpaidBudgetStroops}`,
+        ]
+      : []),
+    ...(fg.unpaidSpendWindowStroops !== null
+      ? [
+          ``,
+          `# HELP vrf_unpaid_spend_window_stroops Unpaid spend (tx max fees) reserved in the shared rolling hour`,
+          `# TYPE vrf_unpaid_spend_window_stroops gauge`,
+          `vrf_unpaid_spend_window_stroops ${fg.unpaidSpendWindowStroops}`,
+        ]
+      : []),
   ].join("\n");
 
   res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });

@@ -48,10 +48,29 @@ uses **one oracle key** (a single logical oracle), even though it is run by a pr
 hot-standby worker instance for liveness. HA removes the *availability* single-point-of-failure,
 but it does **not** distribute *trust* — all instances share the same oracle key. This means:
 
-- *Bias resistance is cryptographic.* The oracle cannot choose which VRF output to produce —
-  it must use its BLS secret key on a deterministic input. The pairing check on-chain enforces
-  this. There is no way to "try different outputs" because the VRF is deterministic for a given
-  key and input.
+- *Bias resistance holds only while the registered keys are fixed.* For a **fixed** oracle BLS
+  key and a **fixed** drand key, the oracle cannot choose the output: the input is bound to a
+  future drand round, the VRF is deterministic, and both pairing checks run on-chain.
+  **That premise is not enforced by the contract.** `fulfill()` checks the keys that are
+  registered *at fulfillment time*, not the ones registered when the request was made. And the
+  oracle account alone can change both keys, with no delay:
+  - `rotate_drand_pk()` → the holder installs a "drand" key it controls. It can then sign any
+    beacon it likes, so it chooses alpha, and therefore **chooses the output** (and can
+    predict it).
+  - `rotate_oracle_keys()` → once the drand round is public, the holder can try many BLS keys
+    offline and rotate to the one that gives a favourable output before fulfilling
+    (**grinding / bias**).
+
+  So the integrity of the randomness depends on **whoever controls the oracle account**.
+  That includes the legitimate operator, not only an attacker who steals the key. The oracle
+  is a **trusted party for unpredictability and bias resistance**, not just for liveness.
+  **Detection:** every rotation emits an on-chain event (`rotate_ok` / `rotate_dk`).
+  Integrators should alert on these events, and treat any request fulfilled after a rotation
+  whose round was already public at rotation time as suspect.
+  **Structural fix (needs a contract change and redeployment):** snapshot the oracle and drand
+  keys into each request at `request()` time and verify against the snapshot. Also put
+  rotations behind a timelock longer than `TIMEOUT_ROUNDS` and/or under an admin authority
+  separate from the fulfilling key.
 
 - *Liveness is NOT guaranteed.* If the oracle goes down, requests won't get fulfilled. We handle
   this with a timeout mechanism: after `TIMEOUT_ROUNDS` (20 drand rounds, ~60s), the requester
@@ -161,24 +180,46 @@ verification (~56M instructions), not storage operations.
   worker (fee guard, `src/feeGuard.ts`):** before any drand wait or proof work, each request is
   checked:
   1. The oracle never submits below `MIN_ORACLE_BALANCE_XLM`, and fails closed if the balance
-     is unreadable.
-  2. Requests whose on-chain fee covers `FULFILL_COST_STROOPS` are served.
-  3. Requesters on `UNPAID_REQUESTER_ALLOWLIST` are served.
-  4. Anyone else gets at most `UNPAID_FULFILL_MAX_PER_HOUR` unpaid fulfillments per rolling hour.
+     is unreadable. This is re-checked with a fresh balance before every send.
+  2. A request counts as "paid" only if `FeeToken` is the **native XLM SAC** and
+     `FeeAmount ≥ FULFILL_COST_STROOPS`. A fee in any other token counts as unpaid, because
+     the worker has no price for it.
+  3. Requesters on `UNPAID_REQUESTER_ALLOWLIST` are served. They don't count against the
+     budget.
+  4. For everyone else, **immediately before every `sendTransaction()`** (including retries),
+     the transaction's maximum fee is atomically reserved against `UNPAID_BUDGET_XLM_PER_HOUR`
+     (default 1.5 XLM) in a rolling-hour **spend ledger**. If the reservation fails, the
+     transaction is not sent.
 
-  The worst-case spend goes from "entire balance" to about `cap × 0.15 XLM` per hour, and never
-  below the floor. **Residual risk:** during spam, requests from non-allowlisted users are
-  deferred. That's a liveness degradation for them, but they're refundable via
-  `timeout_refund()`. An attacker can't bias or forge outputs. The structural fix is a deployment
-  with `fee_amount` ≥ the fulfill cost. `mainnet_deploy.mjs` enforces this.
+  **What is guaranteed:** the total of transaction max-fees sent for unpaid, non-allowlisted
+  requests is ≤ the budget per rolling hour. Stellar never charges more than a transaction's
+  max fee, so this bounds real spend. It holds across retries, ambiguous timeouts and
+  resubmissions, because each send reserves its own fee. With `REDIS_URL` set, the ledger is
+  shared by all instances and survives restarts and failover. It uses Redis' clock and an
+  atomic Lua script; see `spend_ledger_drill.mjs`, which runs in CI. Without Redis, it's a
+  file, with the same single-host scope as the file lock. If the ledger is unavailable, the
+  worker fails closed.
+  **What is NOT guaranteed:** the balance floor bounds only how far the account can fall, not
+  the rate. Allowlisted and paid requests aren't budget-limited. On a non-XLM fee token,
+  "paid" is never assumed.
+  **Residual risk: selective liveness denial.** Anyone can use up the shared unpaid budget
+  with cheap `request()` calls. After that, legitimate non-allowlisted requesters wait and may
+  only get `timeout_refund()`. The attack changes from *economic drain* into *denial of
+  service for permissionless users*. The current Mainnet instance therefore **does not
+  guarantee liveness to non-allowlisted requesters**. The structural fix is a deployment with
+  `fee_amount` ≥ the fulfill cost, **in XLM**. `mainnet_deploy.mjs` enforces this.
 - **Oracle key is a single point of failure for administration** — there is no separate admin
   role. The oracle Stellar account authorizes `fulfill()`, `rotate_oracle_keys()` and
   `rotate_drand_pk()`. Losing it makes the deployment unrotatable (requests can only time out
-  and be refunded). Compromising it lets an attacker rotate the oracle to their own keys and
-  withhold or censor service. They still can't bias outputs, which are deterministic and
-  verified on-chain. The oracle account should be protected with Stellar multisig (signer
-  weights/thresholds) and/or a hardware signer, and the HA hosts should hold only the
-  operational key material they need.
+  and be refunded). **Compromising the *currently authorised* oracle account breaks the
+  oracle trust assumption.** The attacker can withhold or censor service, and can also
+  **bias or choose outputs** of pending and future requests through `rotate_drand_pk()` /
+  `rotate_oracle_keys()` (see *Trust assumptions*). This lasts until it's detected, and on the
+  current contract **there is no independent authority to recover**: only the same account
+  can rotate. Compromise of an *old* key after a rotation is harmless: `fulfill()` rejects it.
+  Treat Stellar multisig (signer weights/thresholds) and/or a hardware signer for the oracle
+  account as a **security requirement**, not an operational nicety. The HA hosts should hold
+  only the operational key material they need.
 - **`rotate_drand_pk()` is not a chain migration** — it swaps the group key only. drand genesis,
   period and the signature DST (quicknet, G1, unchained) are fixed, and there is no upgrade
   entrypoint, so moving to a different drand chain requires a new deployment.

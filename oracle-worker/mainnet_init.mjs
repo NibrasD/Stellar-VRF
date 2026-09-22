@@ -6,6 +6,14 @@ import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs";
 import dotenv from "dotenv";
 
+// HISTORICAL: this one-off script already initialised CBTCC5QL…. It uses
+// fee_amount = 0 and a hard-coded oracle BLS key, which is exactly what
+// mainnet_deploy.mjs now refuses to do. Use mainnet_deploy.mjs.
+if (process.env.I_KNOW_THIS_IS_A_HISTORICAL_SCRIPT !== "yes") {
+  console.error("Refusing to run: historical script (fee_amount = 0, hard-coded BLS key). Use mainnet_deploy.mjs.");
+  process.exit(1);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 

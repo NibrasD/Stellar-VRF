@@ -92,8 +92,11 @@ The replica will:
 | `DRAND_VERIFY_BEACONS` | No | `true` | Local drand verification. `false` is **refused** on Mainnet or with `NODE_ENV=production` |
 | `FULFILL_COST_STROOPS` | No | `1500000` | Estimated fulfill cost. On-chain fee ≥ this counts as "paid" |
 | `MIN_ORACLE_BALANCE_XLM` | No | `5` | Never submit below this balance |
-| `UNPAID_FULFILL_MAX_PER_HOUR` | No | `10` | Unpaid fulfillments/hour for non-allowlisted requesters |
+| `UNPAID_BUDGET_XLM_PER_HOUR` | No | `1.5` | Hard cap on the total **transaction max-fees** sent for unpaid, non-allowlisted requests per rolling hour, across **all** instances. `0` = serve only the allowlist |
+| `UNPAID_FULFILL_MAX_PER_HOUR` | No | — | *Legacy.* If set and `UNPAID_BUDGET_XLM_PER_HOUR` is not, budget = N × `FULFILL_COST_STROOPS` |
 | `UNPAID_REQUESTER_ALLOWLIST` | No | — | Comma-separated requester addresses always served |
+| `FEE_GUARD_REDIS_KEY` | No | `vrf-oracle:unpaid-spend` | Spend-ledger key (used when `REDIS_URL` is set) |
+| `FEE_GUARD_STATE_FILE` | No | `$TMPDIR/vrf-oracle-unpaid-spend.json` | Spend-ledger file (used when `REDIS_URL` is empty; single host only) |
 
 Leader-election variables (`REDIS_URL`, `LEADER_LOCK_TTL_MS`, …) are listed in [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md#environment-variables).
 
@@ -130,7 +133,8 @@ Point your load balancer / uptime monitor at `/health` and alert on non-200 from
 | `vrf_drand_delays_total` | counter | sustained growth |
 | `vrf_oracle_balance_stroops` | gauge | < 2 × `MIN_ORACLE_BALANCE_XLM` |
 | `vrf_fee_guard_deferred_total` | counter | `increase(...[1h]) > 0`. Spam, an exhausted unpaid budget, or a balance at the floor |
-| `vrf_unpaid_fulfillments_total` | counter | informational: XLM spent on requests that didn't pay for themselves |
+| `vrf_unpaid_fulfillments_total` | counter | informational: fulfillments that didn't pay for themselves |
+| `vrf_unpaid_spend_window_stroops` / `vrf_unpaid_budget_stroops` | gauge | spend ≥ 80% of budget for > 15 min (budget being exhausted: legitimate non-allowlisted users are about to be deferred) |
 
 ### Economic guard (zero-fee contract)
 
@@ -140,17 +144,42 @@ generation, or submission, the worker checks each request in this order:
 
 | # | Rule | Setting (default) |
 |---|---|---|
-| 1 | Refuse if balance − cost would drop below the floor. Fail closed if the balance can't be read. Applies to **all** requests. | `MIN_ORACLE_BALANCE_XLM` (`5`) |
-| 2 | Serve if the on-chain `FeeAmount` ≥ the estimated fulfill cost. | `FULFILL_COST_STROOPS` (`1500000`) |
+| 1 | Refuse if balance − cost would drop below the floor. Fail closed if the balance can't be read. Applies to **all** requests, and is re-checked with a fresh balance before every send. | `MIN_ORACLE_BALANCE_XLM` (`5`) |
+| 2 | Serve as "paid" only if `FeeToken` is the **native XLM SAC** and `FeeAmount` ≥ the estimated fulfill cost. Any other fee token is unpaid, because the worker can't price it. | `FULFILL_COST_STROOPS` (`1500000`) |
 | 3 | Serve requesters on the allowlist without limit. | `UNPAID_REQUESTER_ALLOWLIST` (empty) |
-| 4 | Serve anyone else up to N per rolling hour, then defer. | `UNPAID_FULFILL_MAX_PER_HOUR` (`10`) |
+| 4 | Serve anyone else from a shared spend budget (see below). Defer when it's used up. | `UNPAID_BUDGET_XLM_PER_HOUR` (`1.5`) |
+
+**How rule 4 is enforced.** Right before **every** `sendTransaction()` (first attempt, internal
+retries and outer retries), the worker atomically reserves that transaction's **maximum fee**
+in a rolling-hour spend ledger. If the reservation would exceed the budget, the transaction
+isn't sent. Stellar never charges more than the max fee, so the real spend on unpaid
+requests is **≤ `UNPAID_BUDGET_XLM_PER_HOUR` per rolling hour, per deployment**. That holds
+even when a request is retried or its result is ambiguous.
+
+- With `REDIS_URL` set (production HA), the ledger is a Redis sorted set in the same Redis as
+  the leader lease. It's updated by one Lua script using Redis' clock, so primary and standby
+  share **one** budget. Failover and restarts don't reset it. `spend_ledger_drill.mjs`
+  proves this against real Redis in CI.
+- Without Redis, the ledger is a file (`FEE_GUARD_STATE_FILE`). It survives restarts, but
+  like the file lock it's correct only on a single host.
+- If the ledger can't be read or written, the worker **fails closed**: nothing unpaid is
+  sent.
+
+**Residual risk — liveness, not money.** Anyone can use up the shared budget with cheap
+`request()` calls. After that, legitimate non-allowlisted requesters are deferred and may
+only get `timeout_refund()`. The fee guard turns *economic drain* into *selective denial of
+service*. It doesn't guarantee liveness for permissionless users. Only a redeployment with
+an XLM `fee_amount` ≥ the fulfill cost does that.
 
 - Log `Deferring request N: …` shows the reason. A deferred request is **not dropped**. It stays
   pending on-chain, periodic reconciliation retries it once budget frees up, and the requester can
   call `timeout_refund()` after the timeout window.
 - The startup log states the posture, e.g. `Contract FeeAmount (0 stroops) is below the fulfill cost …`.
 - Put your own consumer contracts (`C…`) on the allowlist so they're always served. Set
-  `UNPAID_FULFILL_MAX_PER_HOUR=0` to serve **only** the allowlist.
+  `UNPAID_BUDGET_XLM_PER_HOUR=0` to serve **only** the allowlist.
+- Log `aborting fulfill(N) attempt K: sending would exceed the unpaid budget …` means the
+  budget ran out between admission and send, for example because a retry needed another fee.
+  The request stays pending, and reconciliation retries it when budget frees up.
 - On a deployment whose fee covers the cost, rule 2 applies to every request and the cap never
   triggers. `mainnet_deploy.mjs` requires `FEE_AMOUNT_STROOPS` and refuses values below
   `1500000` unless explicitly overridden.

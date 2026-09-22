@@ -9,8 +9,14 @@ randomness for Stellar/Soroban.
 
 Randomness comes from the [drand](https://drand.love) quicknet beacon and is proven
 with a **BLS12-381 pairing check executed on-chain**, so every result is publicly
-auditable. Each request is bound to a *future* drand round, so the oracle can
-neither predict nor bias the outcome.
+auditable. Each request is bound to a *future* drand round, so with the registered
+keys unchanged the oracle can neither predict nor bias the outcome.
+
+> **Trust assumption:** the oracle account can rotate the oracle and drand keys
+> (`rotate_oracle_keys` / `rotate_drand_pk`), and `fulfill()` verifies against the
+> keys registered *at fulfillment time*. Whoever controls that account can therefore
+> bias outputs. Watch for `rotate_ok` / `rotate_dk` events. See
+> [THREAT_MODEL.md](https://github.com/NibrasD/Stellar-VRF/blob/main/docs/THREAT_MODEL.md).
 
 **Live on Stellar Mainnet:**
 [`CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU`](https://stellar.expert/explorer/public/contract/CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU)

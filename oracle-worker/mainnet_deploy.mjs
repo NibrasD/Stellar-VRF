@@ -1,19 +1,47 @@
 /**
  * mainnet_deploy.mjs — Deploy and initialize VRF contract on Stellar Mainnet
  *
- * Usage: FEE_AMOUNT_STROOPS=2000000 node mainnet_deploy.mjs
+ * Usage:
+ *   DRY_RUN=1 FEE_AMOUNT_STROOPS=2000000 node mainnet_deploy.mjs   # preflight only
+ *   FEE_AMOUNT_STROOPS=2000000 node mainnet_deploy.mjs             # deploy
  *
  * FEE_AMOUNT_STROOPS is required and immutable after init(); see below.
+ *
+ * Configuration precedence (highest first):
+ *   1. the shell environment (explicit, e.g. `FEE_AMOUNT_STROOPS=… node …`)
+ *   2. `.env.mainnet`   — Mainnet-specific values
+ *   3. `.env`           — shared worker config (only fills what is still unset)
+ * dotenv never overwrites, and this script used to load `.env` FIRST, so a
+ * testnet value in `.env` silently beat `.env.mainnet`. The effective value of
+ * every deploy-relevant variable and its source are printed in the preflight
+ * before anything is sent (use DRY_RUN=1 to stop there).
  */
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import { bls12_381 } from "@noble/curves/bls12-381";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, ".env") });
-dotenv.config({ path: path.resolve(__dirname, ".env.mainnet") });
+const ENV_MAINNET = path.resolve(__dirname, ".env.mainnet");
+const ENV_SHARED = path.resolve(__dirname, ".env");
+
+// Record where each deploy-relevant variable comes from, then load.
+const TRACKED = ["ORACLE_STELLAR_SECRET", "ORACLE_SECRET", "ORACLE_BLS_SECRET_KEY", "ORACLE_BLS_PK", "FEE_AMOUNT_STROOPS", "ALLOW_UNFUNDED_FEE", "NETWORK_PASSPHRASE"];
+const source = Object.fromEntries(TRACKED.filter((k) => process.env[k] !== undefined).map((k) => [k, "shell"]));
+function load(file) {
+  if (!fs.existsSync(file)) return;
+  const parsed = dotenv.parse(fs.readFileSync(file));
+  for (const k of TRACKED) {
+    if (parsed[k] !== undefined && process.env[k] === undefined) source[k] = path.basename(file);
+  }
+  dotenv.config({ path: file }); // never overrides what is already set
+}
+load(ENV_MAINNET); // most specific file first, so it wins over .env
+load(ENV_SHARED);
+
+const DRY_RUN = /^(1|true|yes)$/i.test(process.env.DRY_RUN ?? "");
 
 const SDK_INDEX = path.resolve(__dirname, "node_modules/@stellar/stellar-sdk/lib/esm/index.js");
 const stellar = await import(pathToFileURL(SDK_INDEX).href);
@@ -42,8 +70,44 @@ const ORACLE_KP      = Keypair.fromSecret(ORACLE_SECRET);
 const ORACLE_PUBLIC  = ORACLE_KP.publicKey();
 const ORACLE_ED25519 = ORACLE_KP.rawPublicKey().toString("hex");
 
-// BLS keys (from keygen)
-const ORACLE_BLS_PK = "0eb7e2ddf281bd96d81988e1ed0318c7d481f479048af7ab038557508c6a0468ec174a227e93deed4aa9d48f22e00754164ac02fa3937a68d4162d015958139418853e4705c843305686d8017c7d5a8cc61579973f9ddc5b5d1d58307ec555660f71eb42297319aa7e2b8b45ad45fba933dd5e9b2453f80755b375f26f9a87c5ef3f8e11c6711103789d9cc44641e1110038272b39aafb997f3eb07ef494360efeb34f4e1c2bdd937636bacb5d019aaee6ff75f4c16b3bd2814e1311f6c3383d";
+if (process.env.NETWORK_PASSPHRASE && process.env.NETWORK_PASSPHRASE !== NETWORK) {
+  console.error(
+    `ERROR: NETWORK_PASSPHRASE (from ${source.NETWORK_PASSPHRASE}) is "${process.env.NETWORK_PASSPHRASE}", ` +
+      `but this script deploys to Mainnet ("${NETWORK}"). Fix .env.mainnet.`
+  );
+  process.exit(1);
+}
+
+// ── Oracle BLS public key: DERIVED from the secret the worker will use ──────
+// It used to be a hard-coded constant here, so rotating ORACLE_BLS_SECRET_KEY
+// without editing this file deployed a contract whose oracle key the worker
+// could never satisfy (every fulfill() would fail "oracle key mismatch").
+// Now it is derived exactly like the worker does (src/vrf.ts:
+// deriveBlsPublicKey), and an optional pinned ORACLE_BLS_PK must match.
+const BLS_SK_HEX = (process.env.ORACLE_BLS_SECRET_KEY ?? "").trim().replace(/^0x/, "");
+if (!/^[0-9a-fA-F]{1,64}$/.test(BLS_SK_HEX)) {
+  console.error("ERROR: ORACLE_BLS_SECRET_KEY (hex scalar from `npm run keygen`) is required");
+  process.exit(1);
+}
+const BLS_SK = BigInt("0x" + BLS_SK_HEX);
+if (BLS_SK === 0n || BLS_SK >= bls12_381.G2.CURVE.n) {
+  console.error("ERROR: ORACLE_BLS_SECRET_KEY is not a valid BLS12-381 scalar (0 < sk < r)");
+  process.exit(1);
+}
+const ORACLE_BLS_PK = Buffer.from(
+  bls12_381.G2.ProjectivePoint.BASE.multiply(BLS_SK).toRawBytes(false)
+).toString("hex");
+const PINNED_BLS_PK = (process.env.ORACLE_BLS_PK ?? "").trim().toLowerCase().replace(/^0x/, "");
+if (PINNED_BLS_PK && PINNED_BLS_PK !== ORACLE_BLS_PK) {
+  console.error(
+    `ERROR: ORACLE_BLS_PK (from ${source.ORACLE_BLS_PK}) does not match the public key derived from ` +
+      `ORACLE_BLS_SECRET_KEY (from ${source.ORACLE_BLS_SECRET_KEY}).\n` +
+      `       pinned : ${PINNED_BLS_PK.slice(0, 32)}…\n` +
+      `       derived: ${ORACLE_BLS_PK.slice(0, 32)}…\n` +
+      "       The worker would be unable to fulfill any request. Refusing to deploy."
+  );
+  process.exit(1);
+}
 // drand quicknet G2 public key — 192 bytes UNCOMPRESSED (required by contract's Bls12381G2Affine::from_bytes)
 const DRAND_PK = "03cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a01a714f2edb74119a2f2b0d5a7c75ba902d163700a61bc224ededd8e63aef7be1aaf8e93d7a9718b047ccddb3eb5d68b0e5db2b6bfbb01c867749cadffca88b36c24f3012ba09fc4d3022c5c37dce0f977d3adb5d183c7477c442b1f04515273";
 const G2_GEN        = "13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801";
@@ -79,6 +143,21 @@ if (FEE_AMOUNT < MIN_SELF_FUNDING_FEE && process.env.ALLOW_UNFUNDED_FEE !== "yes
   process.exit(1);
 }
 const WASM_PATH = path.resolve(__dirname, "../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.optimized.wasm");
+
+// ── Preflight: show exactly what will be deployed, and from where ──────────
+const src = (k) => source[k] ?? "unset";
+console.log("\n=== Preflight (effective configuration) ===");
+console.log(`  Network            : ${NETWORK}`);
+console.log(`  RPC                : ${MAINNET_RPC}`);
+console.log(`  Oracle account     : ${ORACLE_PUBLIC}   [${src(process.env.ORACLE_STELLAR_SECRET ? "ORACLE_STELLAR_SECRET" : "ORACLE_SECRET")}]`);
+console.log(`  Oracle BLS pk      : ${ORACLE_BLS_PK.slice(0, 32)}…   [derived from ORACLE_BLS_SECRET_KEY, ${src("ORACLE_BLS_SECRET_KEY")}]${PINNED_BLS_PK ? " (matches pinned ORACLE_BLS_PK)" : ""}`);
+console.log(`  Fee token          : ${XLM_SAC} (native XLM SAC)`);
+console.log(`  Fee amount         : ${FEE_AMOUNT} stroops   [${src("FEE_AMOUNT_STROOPS")}]${FEE_AMOUNT < MIN_SELF_FUNDING_FEE ? "  ⚠ UNFUNDED (override set)" : ""}`);
+console.log(`  WASM               : ${WASM_PATH}`);
+if (DRY_RUN) {
+  console.log("\nDRY_RUN set: nothing was sent. Re-run without DRY_RUN to deploy.");
+  process.exit(0);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function bytesVal(hex) {

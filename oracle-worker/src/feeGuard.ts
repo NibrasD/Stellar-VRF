@@ -9,27 +9,37 @@
  * (~0.14 XLM on Mainnet). When `FeeAmount` is below that cost (the live
  * Mainnet instance has `FeeAmount = 0`, and it is immutable), anyone can make
  * the oracle spend real XLM per request for the price of a cheap `request()`.
- * Unbounded, that drains the oracle account and takes the service down.
  *
- * Policy (evaluated before any drand wait / proof work / submission)
- * ──────────────────────────────────────────────────────────────────
- *   1. Balance floor, ALWAYS. Never submit if doing so would take the oracle
- *      account below `minBalanceStroops`. Fail closed if the balance can't be
- *      read.
- *   2. Paid request (on-chain `FeeAmount >= fulfillCostStroops`): allowed. The
- *      escrowed fee is released to the oracle by `fulfill()` itself.
- *   3. Unpaid request, requester on the allowlist: allowed.
- *   4. Unpaid request, anyone else: allowed up to `maxUnpaidPerHour`
- *      (rolling window). Beyond that, deferred.
+ * Two checkpoints
+ * ───────────────
+ * 1. `check()` — admission, before any drand wait or proof work:
+ *      a. Balance floor (fail closed if unreadable).
+ *      b. Paid: the fee token is **native XLM** and `FeeAmount >= cost`.
+ *         Any other fee token is treated as unpaid: its units are not stroops
+ *         and the worker has no price for it.
+ *      c. Allowlisted requester: served, not charged to the budget.
+ *      d. Anyone else: admitted only if the shared budget still has room for
+ *         one more fulfillment.
  *
- * A deferred request is NOT lost: it stays pending on-chain, periodic
- * reconciliation re-offers it, and the requester can always call
- * `timeout_refund()`. The worst case changes from "drain the whole account" to
- * "at most `maxUnpaidPerHour × cost` per hour, and never below the floor".
+ * 2. `authorizeSend()` — immediately before EVERY `sendTransaction()`,
+ *    including internal and outer retries:
+ *      - balance floor again, against the transaction's maximum fee;
+ *      - for budget-limited requests, atomically reserve that maximum fee in
+ *        the SpendLedger, or refuse to send.
  *
- * This is an operational mitigation. The structural fix is a deployment whose
- * `FeeAmount` covers the fulfillment cost; then rule 2 covers every request.
+ * Because each transaction reserves its maximum possible fee before it is
+ * sent, retries, ambiguous timeouts and resubmissions all count, and the sum
+ * can never exceed `unpaidBudgetStroops` per rolling hour. The ledger is shared
+ * through Redis in HA and persisted in a file otherwise, so the budget is
+ * per deployment, not per process, and survives restarts and failover.
+ *
+ * What this does NOT give: liveness for non-allowlisted requesters on a
+ * zero-fee contract. Once the budget is used (by an attacker or anyone),
+ * their requests wait and may end in `timeout_refund()`. Only a deployment
+ * with `FeeAmount >= cost` in XLM fixes that.
  */
+
+import type { SpendLedger } from "./spendLedger.js";
 
 export const STROOPS_PER_XLM = 10_000_000n;
 
@@ -38,31 +48,43 @@ export interface FeeGuardOptions {
   fulfillCostStroops: bigint;
   /** Never submit if the balance after paying would drop below this (stroops). */
   minBalanceStroops: bigint;
-  /** Max unpaid, non-allowlisted fulfillments per rolling hour. 0 = none. */
-  maxUnpaidPerHour: number;
-  /** Requesters (G…/C… addresses) exempt from the hourly cap. */
+  /**
+   * Max total of transaction max-fees (stroops) spent on unpaid,
+   * non-allowlisted requests per rolling hour, across ALL instances. 0 = none.
+   */
+  unpaidBudgetStroops: bigint;
+  /** Requesters (G…/C… addresses) exempt from the budget. */
   allowlist: ReadonlySet<string>;
-  /** How long a balance reading is reused, to avoid one RPC call per request. */
+  /** How long a balance reading is reused at admission (ms). */
   balanceCacheMs: number;
+  /** Contract ID of the native XLM SAC on this network. */
+  nativeTokenId: string;
 }
 
 export interface FeeGuardDeps {
-  /** On-chain `FeeAmount` (stroops of the fee token). */
+  /** On-chain `FeeAmount` (smallest unit of the fee token). */
   readFeeAmount: () => Promise<bigint>;
+  /** On-chain `FeeToken` contract ID. */
+  readFeeToken: () => Promise<string>;
   /** Oracle account native balance, in stroops. */
   readBalance: () => Promise<bigint>;
   /** Requester of a request, or null if unknown / expired. */
   readRequester: (requestId: bigint) => Promise<string | null>;
+  ledger: SpendLedger;
   now: () => number;
-  /** Observability hook, called with every fresh balance reading. */
+  /** Observability hooks. */
   onBalance?: (stroops: bigint) => void;
+  onUnpaidSpend?: (windowTotalStroops: bigint) => void;
 }
 
+/** How a request is funded. Only "budget" requests draw on the shared budget. */
+export type Funding = "paid" | "allowlisted" | "budget";
+
 export type FeeDecision =
-  | { allow: true; paid: boolean; reason: string }
+  | { allow: true; funding: Funding; reason: string }
   | { allow: false; reason: string };
 
-const HOUR_MS = 3_600_000;
+export type SendDecision = { ok: true } | { ok: false; reason: string };
 
 /** Parse a decimal XLM amount ("5", "0.15") into stroops without float error. */
 export function xlmToStroops(xlm: string): bigint {
@@ -78,65 +100,76 @@ export function formatXlm(stroops: bigint): string {
   return `${neg ? "-" : ""}${abs / STROOPS_PER_XLM}${frac ? "." + frac : ""} XLM`;
 }
 
-/** Build options from environment variables (see .env.example). */
-export function feeGuardOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): FeeGuardOptions {
-  const maxUnpaid = Number(env.UNPAID_FULFILL_MAX_PER_HOUR ?? "10");
-  if (!Number.isInteger(maxUnpaid) || maxUnpaid < 0) {
-    throw new Error("UNPAID_FULFILL_MAX_PER_HOUR must be an integer >= 0");
-  }
+/**
+ * Build options from environment variables (see .env.example).
+ * `nativeTokenId` comes from the caller (it depends on the network).
+ */
+export function feeGuardOptionsFromEnv(
+  nativeTokenId: string,
+  env: NodeJS.ProcessEnv = process.env
+): FeeGuardOptions {
   const cost = env.FULFILL_COST_STROOPS ?? "1500000";
   if (!/^\d+$/.test(cost)) throw new Error("FULFILL_COST_STROOPS must be an integer (stroops)");
+  const fulfillCostStroops = BigInt(cost);
+
+  let unpaidBudgetStroops: bigint;
+  if (env.UNPAID_BUDGET_XLM_PER_HOUR !== undefined) {
+    unpaidBudgetStroops = xlmToStroops(env.UNPAID_BUDGET_XLM_PER_HOUR);
+  } else if (env.UNPAID_FULFILL_MAX_PER_HOUR !== undefined) {
+    // Legacy knob (a request count). Converted to a spend budget.
+    const n = Number(env.UNPAID_FULFILL_MAX_PER_HOUR);
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error("UNPAID_FULFILL_MAX_PER_HOUR must be an integer >= 0");
+    }
+    unpaidBudgetStroops = BigInt(n) * fulfillCostStroops;
+  } else {
+    unpaidBudgetStroops = xlmToStroops("1.5");
+  }
+
   const allowlist = new Set(
     (env.UNPAID_REQUESTER_ALLOWLIST ?? "").split(",").map((a) => a.trim()).filter(Boolean)
   );
   return {
-    fulfillCostStroops: BigInt(cost),
+    fulfillCostStroops,
     minBalanceStroops: xlmToStroops(env.MIN_ORACLE_BALANCE_XLM ?? "5"),
-    maxUnpaidPerHour: maxUnpaid,
+    unpaidBudgetStroops,
     allowlist,
     balanceCacheMs: parseInt(env.FEE_GUARD_BALANCE_CACHE_MS ?? "15000", 10),
+    nativeTokenId,
   };
 }
 
 export class FeeGuard {
-  private feeAmount: bigint | null = null;
-  private unpaidTimes: number[] = [];
+  private feeInfo: { amount: bigint; token: string } | null = null;
   private balance: { value: bigint; at: number } | null = null;
 
   constructor(private deps: FeeGuardDeps, private opts: FeeGuardOptions) {}
 
   /**
-   * Decide whether to spend money fulfilling `requestId`.
-   * `knownRequester` avoids an RPC read when the event already carried it.
-   * Consumes an hourly slot when it allows an unpaid request; give it back with
-   * `refundUnpaidSlot()` if nothing was spent.
+   * Admission: decide whether to start working on `requestId` at all.
+   * Records nothing. Spend is only recorded by `authorizeSend()`.
    */
   async check(requestId: bigint, knownRequester: string | null): Promise<FeeDecision> {
     const { fulfillCostStroops: cost, minBalanceStroops: floor } = this.opts;
 
-    // 1. Balance floor, which applies to paid requests too.
+    // a. Balance floor, which applies to paid requests too.
     let balance: bigint;
     try {
-      balance = await this.getBalance();
+      balance = await this.getBalance(false);
     } catch (err) {
       return { allow: false, reason: `could not read oracle balance (${errMsg(err)}); failing closed` };
     }
     if (balance - cost < floor) {
-      return {
-        allow: false,
-        reason:
-          `oracle balance ${formatXlm(balance)} minus fulfill cost ${formatXlm(cost)} would drop ` +
-          `below the floor of ${formatXlm(floor)} (MIN_ORACLE_BALANCE_XLM). Top up the oracle account`,
-      };
+      return { allow: false, reason: floorReason(balance, cost, floor) };
     }
 
-    // 2. Paid by the on-chain fee.
-    const fee = await this.getFeeAmount();
-    if (fee !== null && fee >= cost) {
-      return { allow: true, paid: true, reason: `on-chain fee ${fee} >= cost ${cost} stroops` };
+    // b. Paid by the on-chain fee, only if it is denominated in XLM.
+    const fee = await this.getFeeInfo();
+    if (fee && fee.token === this.opts.nativeTokenId && fee.amount >= cost) {
+      return { allow: true, funding: "paid", reason: `on-chain fee ${fee.amount} stroops (XLM) >= cost ${cost}` };
     }
 
-    // 3. Allowlisted requester.
+    // c. Allowlisted requester.
     if (this.opts.allowlist.size > 0) {
       let requester = knownRequester;
       if (!requester) {
@@ -147,35 +180,73 @@ export class FeeGuard {
         }
       }
       if (requester && this.opts.allowlist.has(requester)) {
-        return { allow: true, paid: false, reason: `requester ${requester} is allowlisted` };
+        return { allow: true, funding: "allowlisted", reason: `requester ${requester} is allowlisted` };
       }
     }
 
-    // 4. Rolling hourly cap on unpaid fulfillments.
-    const now = this.deps.now();
-    this.unpaidTimes = this.unpaidTimes.filter((t) => now - t < HOUR_MS);
-    if (this.unpaidTimes.length >= this.opts.maxUnpaidPerHour) {
+    // d. Shared budget must have room for at least one fulfillment.
+    let spent: bigint;
+    try {
+      spent = await this.deps.ledger.spent(this.deps.now());
+    } catch (err) {
+      return { allow: false, reason: `could not read the unpaid spend ledger (${errMsg(err)}); failing closed` };
+    }
+    this.deps.onUnpaidSpend?.(spent);
+    if (spent + cost > this.opts.unpaidBudgetStroops) {
       return {
         allow: false,
         reason:
-          `on-chain fee (${fee ?? "unknown"}) does not cover the fulfill cost (${cost} stroops) and ` +
-          `the unpaid budget of ${this.opts.maxUnpaidPerHour}/hour (UNPAID_FULFILL_MAX_PER_HOUR) is used up`,
+          `${describeFee(fee, this.opts.nativeTokenId)} does not cover the fulfill cost and the ` +
+          `unpaid budget is used up (${formatXlm(spent)} of ${formatXlm(this.opts.unpaidBudgetStroops)} ` +
+          `this hour, UNPAID_BUDGET_XLM_PER_HOUR)`,
       };
     }
-    this.unpaidTimes.push(now);
     return {
       allow: true,
-      paid: false,
-      reason: `unpaid ${this.unpaidTimes.length}/${this.opts.maxUnpaidPerHour} this hour`,
+      funding: "budget",
+      reason: `unpaid; ${formatXlm(spent)} of ${formatXlm(this.opts.unpaidBudgetStroops)} budget used this hour`,
     };
   }
 
   /**
-   * Return the most recent unpaid slot when the fulfillment was abandoned
-   * before any transaction was sent (e.g. leadership lost, already fulfilled).
+   * Call immediately before EVERY `sendTransaction()`, with the transaction's
+   * maximum fee in stroops. For budget-funded requests this atomically
+   * reserves `maxFeeStroops` in the shared ledger; if that would exceed the
+   * budget, the transaction must not be sent.
    */
-  refundUnpaidSlot(): void {
-    this.unpaidTimes.pop();
+  async authorizeSend(funding: Funding, maxFeeStroops: bigint): Promise<SendDecision> {
+    let balance: bigint;
+    try {
+      balance = await this.getBalance(true); // fresh: money is about to move
+    } catch (err) {
+      return { ok: false, reason: `could not read oracle balance (${errMsg(err)}); failing closed` };
+    }
+    if (balance - maxFeeStroops < this.opts.minBalanceStroops) {
+      return { ok: false, reason: floorReason(balance, maxFeeStroops, this.opts.minBalanceStroops) };
+    }
+    if (funding !== "budget") return { ok: true };
+
+    const now = this.deps.now();
+    let reserved: boolean;
+    try {
+      reserved = await this.deps.ledger.tryReserve(maxFeeStroops, now, this.opts.unpaidBudgetStroops);
+    } catch (err) {
+      return { ok: false, reason: `could not update the unpaid spend ledger (${errMsg(err)}); failing closed` };
+    }
+    if (!reserved) {
+      return {
+        ok: false,
+        reason:
+          `sending would exceed the unpaid budget of ${formatXlm(this.opts.unpaidBudgetStroops)}/hour ` +
+          `(tx max fee ${formatXlm(maxFeeStroops)})`,
+      };
+    }
+    try {
+      this.deps.onUnpaidSpend?.(await this.deps.ledger.spent(now));
+    } catch {
+      /* metric only */
+    }
+    return { ok: true };
   }
 
   /** Forget the cached balance, e.g. after a submission changed it. */
@@ -183,9 +254,9 @@ export class FeeGuard {
     this.balance = null;
   }
 
-  private async getBalance(): Promise<bigint> {
+  private async getBalance(fresh: boolean): Promise<bigint> {
     const now = this.deps.now();
-    if (this.balance && now - this.balance.at < this.opts.balanceCacheMs) {
+    if (!fresh && this.balance && now - this.balance.at < this.opts.balanceCacheMs) {
       return this.balance.value;
     }
     const value = await this.deps.readBalance();
@@ -194,18 +265,33 @@ export class FeeGuard {
     return value;
   }
 
-  /** FeeAmount is immutable after init(), so a successful read is cached forever. */
-  private async getFeeAmount(): Promise<bigint | null> {
-    if (this.feeAmount !== null) return this.feeAmount;
+  /** FeeToken/FeeAmount are immutable after init(), so a successful read is cached forever. */
+  private async getFeeInfo(): Promise<{ amount: bigint; token: string } | null> {
+    if (this.feeInfo) return this.feeInfo;
     try {
-      this.feeAmount = await this.deps.readFeeAmount();
-      return this.feeAmount;
+      const [amount, token] = await Promise.all([this.deps.readFeeAmount(), this.deps.readFeeToken()]);
+      this.feeInfo = { amount, token };
+      return this.feeInfo;
     } catch {
       return null; // unknown → treated as unpaid (the conservative choice)
     }
   }
 }
 
+function describeFee(fee: { amount: bigint; token: string } | null, native: string): string {
+  if (!fee) return "on-chain fee (unknown)";
+  if (fee.token !== native) return `on-chain fee ${fee.amount} of non-XLM token ${fee.token} (not priced)`;
+  return `on-chain fee ${fee.amount} stroops`;
+}
+
+function floorReason(balance: bigint, cost: bigint, floor: bigint): string {
+  return (
+    `oracle balance ${formatXlm(balance)} minus fee ${formatXlm(cost)} would drop below the floor ` +
+    `of ${formatXlm(floor)} (MIN_ORACLE_BALANCE_XLM). Top up the oracle account`
+  );
+}
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+

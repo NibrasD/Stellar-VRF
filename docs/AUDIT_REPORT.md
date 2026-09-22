@@ -1,9 +1,29 @@
-# Stellar-VRF — Comprehensive Pre-Deployment Security Audit Report
+> [!WARNING]
+> **HISTORICAL DOCUMENT — this is not an audit of the current `main`.**
+>
+> - This is an **automated** review (the Plamen tool). It is **not** a third-party audit by a
+>   human firm.
+> - It was generated against commit **`11c3dda`**. Its figures (55/55 tests, 16/16 worker tests,
+>   the "98/100" rating) and its "APPROVED FOR PRODUCTION" verdict describe **that commit
+>   only**.
+> - Later reviews found issues that it did **not** flag:
+>   - the oracle account can bias outputs through key rotation (see THREAT_MODEL.md →
+>     *Trust assumptions*);
+>   - the Mainnet instance has `fee_amount = 0`, which enables oracle drain / selective
+>     liveness denial;
+>   - there was a biased range fallback. Section MB-01 has since been corrected in place.
+> - The live Mainnet WASM (`90ad8499…`) predates several source fixes.
+>
+> For the current security posture, read [`THREAT_MODEL.md`](THREAT_MODEL.md) and the
+> *Known limitations* in the [README](../README.md). The current test counts come from CI
+> (`cargo test --all-targets`, `npm test`), not from this file.
+
+# Stellar-VRF — Automated Pre-Deployment Security Review (historical, commit `11c3dda`)
 **Framework**: Plamen (Autonomous Web3 Security Auditor for Soroban/Stellar)  
 **Target Contract**: `soroban-vrf-oracle` (`soroban-contract/src/lib.rs`)  
 **Audit Date**: September 21, 2026  
 **Auditor Engine**: Plamen Multi-Vector Soroban Security Methodology (19 Specialized Skills)  
-**Final Status**: **APPROVED FOR PRODUCTION DEPLOYMENT (PASS)**  
+**Final Status (at `11c3dda`, superseded — see banner)**: ~~APPROVED FOR PRODUCTION DEPLOYMENT (PASS)~~  
 
 ---
 

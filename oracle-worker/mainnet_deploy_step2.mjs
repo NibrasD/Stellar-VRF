@@ -5,6 +5,14 @@
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
+// HISTORICAL: this one-off script already ran for the current instance. It
+// initialises with fee_amount = 0 and a hard-coded oracle BLS key, which is
+// exactly what mainnet_deploy.mjs now refuses to do. Use mainnet_deploy.mjs.
+if (process.env.I_KNOW_THIS_IS_A_HISTORICAL_SCRIPT !== "yes") {
+  console.error("Refusing to run: historical script (fee_amount = 0, hard-coded BLS key). Use mainnet_deploy.mjs.");
+  process.exit(1);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SDK_INDEX = path.resolve(__dirname, "node_modules/@stellar/stellar-sdk/lib/index.js");
 const stellar = await import(pathToFileURL(SDK_INDEX).href);
