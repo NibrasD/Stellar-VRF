@@ -32,16 +32,17 @@ All values in this section are **CPU instructions** from the Soroban budget.
 
 | Measurement | Instructions | Source |
 |---|---|---|
-| `fulfill()` total (mainnet) | **58,641,186** | `SorobanTransactionData.resources.instructions`, mainnet TX `5190ba03...` |
+| `fulfill()` (fee=0, mainnet) | **58,073,400** | `SorobanTransactionData.resources.instructions`, mainnet TX `f3e83555...` |
+| `fulfill()` (fee>0, mainnet) | **58,342,003** | `SorobanTransactionData.resources.instructions`, mainnet TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) |
+| SAC transfer on-chain delta | **268,603** | Difference on Mainnet between nonzero-fee (`58,342,003`) and fee=0 (`58,073,400`) |
+| SAC transfer isolated benchmark | **221,988** | `test_budget_sac_transfer_cpu_instructions` — isolated budget delta around SAC `transfer` |
 | G1 negation (single) | **4,031** | `test_budget_g1_negation_cpu_instructions` |
-| SAC transfer (escrow release) | **221,988** | `test_budget_sac_transfer_cpu_instructions` — budget delta measured with `reset_unlimited()` around the SAC `transfer` call |
 
-> **Why `221,988` appears in both sections.** These are two independent
-> measurements that coincide closely, *not* one number reused:
+> **Why `221,988` appears in Section A & B.** In early testing:
 > - Section A: the `fee_charged` **stroops** delta between the `fee_amount=0` and
 >   `fee_amount=1,000,000` fulfillment paths (Horizon).
-> - Section B: the **CPU instruction** cost of the SAC `transfer` call, measured by
->   the Soroban budget.
+> - Section B: the isolated unit test **CPU instruction** cost of the SAC `transfer` call (`221,988`),
+>   which closely aligns with the actual on-chain measured delta of **268,603 instructions** on Stellar Mainnet.
 >
 > Reproduce the CPU figure locally:
 >
@@ -59,20 +60,21 @@ All values in this section are **CPU instructions** from the Soroban budget.
 
 ### Fulfill() CPU instruction count — MEASURED from **Mainnet** TX
 
-The `fulfill()` pipeline has been measured on **Stellar Mainnet** across deployments —
-decoded directly from the `SorobanTransactionData.resources.instructions` field of the signed
+The `fulfill()` pipeline has been directly measured on **Stellar Mainnet** across deployments —
+decoded directly from the `SorobanTransactionData.resources.instructions` field of confirmed
 transaction envelopes:
 
-| Field | Baseline Deployment | Current Deployment (`CBTCC5...`) |
-|---|---|---|
-| **Network** | **Stellar Mainnet** | **Stellar Mainnet** |
-| **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) | [`f3e83555...`](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) |
-| **Status** | `successful: true` | `successful: true` |
-| **Instructions (measured)** | **58,641,186** | **58,073,400** |
-| Soroban mainnet limit | 400,000,000 | 400,000,000 |
-| Project / SCF target | < 75,000,000 | < 75,000,000 |
-| **Headroom under target** | **21.8%** | **22.6%** |
-| **Headroom under 400M limit** | **85.3%** | **85.5%** |
+| Field | Baseline Deployment | Current Zero-Fee (`CBTCC5...`) | Dedicated Nonzero-Fee (`CA24JM...`) |
+|---|---|---|---|
+| **Network** | **Stellar Mainnet** | **Stellar Mainnet** | **Stellar Mainnet** |
+| **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) | [`f3e83555...`](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) | [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) |
+| **Status** | `successful: true` | `successful: true` | `successful: true` |
+| **Instructions (measured)** | **58,641,186** | **58,073,400** | **58,342,003** |
+| **Escrowed Fee** | 0 stroops | 0 stroops | 100,000 stroops (0.01 XLM) |
+| **Soroban mainnet limit** | 400,000,000 | 400,000,000 | 400,000,000 |
+| **Project / SCF target** | < 75,000,000 | < 75,000,000 | < 75,000,000 |
+| **Headroom under target** | **21.8%** | **22.6%** | **22.21%** |
+| **Headroom under 400M limit** | **85.3%** | **85.5%** | **85.41%** |
 
 Breakdown by component:
 
@@ -85,16 +87,18 @@ Breakdown by component:
 | G1 negation (`-h`, `-h_msg`) | **4,031** | **Empirically measured** (`test_budget_g1_negation_cpu_instructions`) |
 | Storage reads/writes + TTL extensions | ~1,500,000 | Component benchmark |
 | **Total (fee=0, mainnet measured)** | **58,073,400** | **Direct on-chain measurement** (TX `f3e83555...`) |
-| **Nonzero-fee fulfill (composite estimate)** | **~58,295,388** | **Estimated composite** (Base 58.07M + SAC transfer 221,988) |
+| **Total (nonzero fee, mainnet measured)** | **58,342,003** | **Direct on-chain measurement** (TX `8932bb72...`) |
 
-> **Transparency Note on Nonzero-fee Fulfill**: The ~58.3M figure for nonzero-fee fulfill is an
-> **empirically grounded composite estimate** formed by adding the measured SAC token transfer
-> cost (221,988 instructions from `test_budget_sac_transfer_cpu_instructions`) to the on-chain measured
-> zero-fee fulfill cost (58,073,400 instructions). It is labeled as a composite estimate rather than
-> an end-to-end on-chain measurement.
+> **Confirmed On-Chain Nonzero-Fee Fulfill**: The **58,342,003 instructions** figure is an
+> **actual, confirmed on-chain measurement** executed on Stellar Mainnet ledger `64560204`
+> (TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9))
+> on a live instance initialized with `fee_amount = 100,000 stroops (0.01 XLM)`.
 >
-> All execution paths remain well below the **75M SCF requirement** (~22% headroom) and far below
-> the **400M Soroban mainnet protocol limit** (~85% headroom).
+> The measured on-chain delta between nonzero-fee and zero-fee fulfillment is **268,603 instructions**,
+> tightly corroborating the 221,988 instructions measured in the isolated SAC transfer test.
+>
+> All execution paths remain comfortably below the **75M SCF requirement** (22.21% headroom) and far below
+> the **400M Soroban mainnet protocol limit** (85.41% headroom).
 
 > **Testnet cross-check:** testnet TX [`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb)
 > measured 58,587,982 instructions — within 0.1% of mainnet, confirming consistency across networks.

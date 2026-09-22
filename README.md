@@ -127,7 +127,7 @@ docs/               — Operational and security documentation
 
 ## Performance
 
-`fulfill()` measured at **58,641,186 CPU instructions** on mainnet — well within the 75M Soroban limit with 21.8% headroom. See [`docs/PROFILING.md`](docs/PROFILING.md).
+`fulfill()` measured at **58,073,400 CPU instructions** (fee=0) and **58,342,003 CPU instructions** (nonzero-fee) on Stellar Mainnet — well within the 75M target with 22.2% headroom and 85.4% headroom under the 400M protocol limit. See [`docs/PROFILING.md`](docs/PROFILING.md).
 
 ## Running the Oracle
 
