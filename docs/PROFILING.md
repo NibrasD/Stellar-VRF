@@ -4,7 +4,7 @@ This document records measured instruction costs for all VRF contract code paths
 
 > **Terminology & Units Notice.** To ensure complete clarity, three distinct metrics are tracked in this document:
 > 1. **Contract Application Fee (`fee_amount`)** — Configured in the VRF contract; escrowed by the requester in XLM SAC and transferred to the oracle upon fulfillment (e.g. `100,000 stroops = 0.01 XLM` in our nonzero-fee test instance).
-> 2. **Network Transaction Fee (`fee_charged`)** — Paid in **stroops** (1 XLM = 10,000,000 stroops) to Stellar validators for transaction inclusion, read from the Horizon API / transaction metadata (e.g. `1,486,159 stroops = ~0.1486 XLM` on Mainnet TX `8932bb72...`).
+> 2. **Stellar Network Transaction Fee (`fee_charged`)** — Incurred in **stroops** (1 XLM = 10,000,000 stroops) for transaction execution and ledger inclusion, read from the Horizon API / transaction metadata (e.g. `1,486,159 stroops = ~0.1486 XLM` on Mainnet TX `8932bb72...`).
 > 3. **CPU Compute Cost** — Metred in **instructions** by the Soroban VM host budget, read from `SorobanTransactionData.resources.instructions` (e.g. `58,342,003 instructions`).
 
 ## A. Network fee measurements (stroops)
@@ -61,7 +61,7 @@ The `fulfill()` pipeline has been directly measured on **Stellar Mainnet** acros
 decoded directly from the `SorobanTransactionData.resources.instructions` field of confirmed
 transaction envelopes:
 
-| Field | Baseline Deployment | Current Zero-Fee (`CBTCC5...`) | Dedicated Nonzero-Fee (`CA24JM...`) |
+| Field | Baseline Deployment | Production Zero-Fee (`CBTCC5...`) | Dedicated Profiling Deployment (`CA24JM...`) |
 |---|---|---|---|
 | **Network** | **Stellar Mainnet** | **Stellar Mainnet** | **Stellar Mainnet** |
 | **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) | [`f3e83555...`](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) | [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) |
@@ -87,10 +87,12 @@ Breakdown by component:
 | **Total (fee=0, mainnet measured)** | **58,073,400** | **Direct on-chain measurement** (TX `f3e83555...`) |
 | **Total (nonzero fee, mainnet measured)** | **58,342,003** | **Direct on-chain measurement** (TX `8932bb72...`) |
 
-> **Confirmed On-Chain Nonzero-Fee Fulfill**: The **58,342,003 instructions** figure is an
-> **actual, confirmed on-chain measurement** executed on Stellar Mainnet ledger `64560204`
-> (TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9))
-> on a live instance initialized with `fee_amount = 100,000 stroops (0.01 XLM)`.
+> **Confirmed On-Chain Nonzero-Fee Fulfill**: A dedicated Mainnet profiling deployment
+> (`CA24JMRHKL2J7ZSNE7GFRKQHMH45J2SEEVEVEJR2CZ5RZQB7RRJUKRQG`) using the exact same fulfillment
+> implementation was used to obtain an actual nonzero-fee `fulfill()` measurement.
+> The **58,342,003 instructions** figure is an actual, confirmed on-chain measurement executed on
+> Stellar Mainnet ledger `64560204` (TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9))
+> with `fee_amount = 100,000 stroops (0.01 XLM)`.
 >
 > The measured on-chain delta between nonzero-fee and zero-fee fulfillment is **268,603 instructions**,
 > tightly corroborating the 221,988 instructions measured in the isolated SAC transfer test.
