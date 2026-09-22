@@ -55,6 +55,6 @@ fn test_budget_bls_pairing() {
     // Fulfill uses 2 pairings, 3 sha256, 1 ed25519 verify
     std::println!("========================================");
     std::println!("DUAL BLS PAIRING CPU INSTRUCTIONS: {}", cpu);
-    std::println!("TOTAL FULFILL BUDGET IS WELL BELOW 100M!");
+    std::println!("TOTAL FULFILL BUDGET IS WELL BELOW 75M SCF TARGET (AND 400M MAINNET LIMIT)!");
     std::println!("========================================");
 }

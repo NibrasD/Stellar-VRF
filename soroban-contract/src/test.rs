@@ -1604,7 +1604,7 @@ fn test_budget_combined_nonzero_fee_fulfill_estimate() {
         + ed25519_cpu + hash_g1_cpu + storage_cpu;
 
     std::println!("╔══════════════════════════════════════════════════════════╗");
-    std::println!("║  COMBINED NONZERO-FEE FULFILL() CPU BUDGET              ║");
+    std::println!("║  COMPOSITE NONZERO-FEE FULFILL() CPU ESTIMATE           ║");
     std::println!("╠══════════════════════════════════════════════════════════╣");
     std::println!("║  BLS pairing × 2:       {:>12} instructions       ║", pairing_cpu);
     std::println!("║  G1 negation × 2:       {:>12} instructions       ║", neg_cpu);
@@ -1613,14 +1613,167 @@ fn test_budget_combined_nonzero_fee_fulfill_estimate() {
     std::println!("║  hash_to_g1 × 2:        {:>12} instructions       ║", hash_g1_cpu);
     std::println!("║  Storage R/W + TTL:     {:>12} instructions (est) ║", storage_cpu);
     std::println!("╠══════════════════════════════════════════════════════════╣");
-    std::println!("║  TOTAL (nonzero fee):   {:>12} instructions       ║", total_nonzero_fee);
-    std::println!("║  Soroban limit:         {:>12} instructions       ║", 100_000_000u64);
-    std::println!("║  Headroom:              {:>11.1}%                    ║",
-        (1.0 - total_nonzero_fee as f64 / 100_000_000.0) * 100.0);
+    std::println!("║  TOTAL (composite est): {:>12} instructions       ║", total_nonzero_fee);
+    std::println!("║  Mainnet Protocol Limit: {:>11} instructions       ║", 400_000_000u64);
+    std::println!("║  Project / SCF Target:  {:>12} instructions       ║", 75_000_000u64);
+    std::println!("║  Headroom under target: {:>11.1}%                    ║",
+        (1.0 - total_nonzero_fee as f64 / 75_000_000.0) * 100.0);
+    std::println!("║  Headroom under 400M:   {:>11.1}%                    ║",
+        (1.0 - total_nonzero_fee as f64 / 400_000_000.0) * 100.0);
     std::println!("╚══════════════════════════════════════════════════════════╝");
 
-    assert!(total_nonzero_fee < 100_000_000,
-        "Nonzero-fee fulfill() exceeds Soroban 100M limit: {}", total_nonzero_fee);
+    assert!(total_nonzero_fee < 400_000_000,
+        "Nonzero-fee fulfill() exceeds Soroban 400M protocol limit: {}", total_nonzero_fee);
     assert!(total_nonzero_fee < 75_000_000,
         "Nonzero-fee fulfill() exceeds SCF 75M target: {}", total_nonzero_fee);
 }
+
+/// Proves cross-request replay protection:
+/// An attacker who captures a valid fulfillment payload and Ed25519 signature
+/// for Request A CANNOT replay it to fulfill Request B.
+///
+/// Defense in depth:
+/// 1. Primary layer: The oracle's Ed25519 signature binds request_id. When submitted
+///    to fulfill(B, ...), the signature check fails with "failed ED25519 verification"
+///    because the message payload was signed for request_id A, not B.
+/// 2. Cryptographic binding layer: Even if an attacker forged an Ed25519 signature for B,
+///    derive_expected_alpha binds request_id and context into the SHA-256 hash.
+///    The alpha_seed from Request A will mismatch derive_expected_alpha for Request B.
+#[test]
+#[should_panic(expected = "failed ED25519 verification")]
+fn test_cross_request_replay_rejected() {
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Generate real Ed25519 keypair for the oracle.
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let ed25519_pk_bytes: [u8; 32] = verifying_key.to_bytes();
+
+    let contract_id = env.register(VRFOracleContract, ());
+    let client = VRFOracleContractClient::new(&env, &contract_id);
+
+    let oracle_addr = Address::generate(&env);
+    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_ed25519 = BytesN::from_array(&env, &ed25519_pk_bytes);
+    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
+    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let fee_token = Address::generate(&env);
+
+    client.init(
+        &oracle_pk,
+        &oracle_addr,
+        &oracle_ed25519,
+        &drand_pk,
+        &g2_generator,
+        &1_692_803_367u64,
+        &3u32,
+        &2u32,
+        &fee_token,
+        &0i128,
+    );
+
+    let requester = Address::generate(&env);
+    let id_a = client.request(&Bytes::from_slice(&env, b"ctx_a"), &requester);
+    let id_b = client.request(&Bytes::from_slice(&env, b"ctx_b"), &requester);
+    let round_a = client.request_round(&id_a);
+
+    let proof_a = crate::BlsVrfProof {
+        alpha_seed: BytesN::from_array(&env, &[0x11; 32]),
+        gamma_point: BytesN::from_array(&env, &[0x22; 96]),
+        beta_output: BytesN::from_array(&env, &[0x33; 32]),
+        public_key: oracle_pk,
+        drand_round: round_a,
+        drand_signature: BytesN::from_array(&env, &[0x44; 96]),
+    };
+
+    // The oracle legitimately signed the fulfillment payload for Request A:
+    let mut msg_a = alloc::vec::Vec::<u8>::new();
+    msg_a.extend_from_slice(&id_a.to_be_bytes());
+    msg_a.extend_from_slice(&proof_a.alpha_seed.to_array());
+    msg_a.extend_from_slice(&proof_a.gamma_point.to_array());
+    msg_a.extend_from_slice(&proof_a.beta_output.to_array());
+    msg_a.extend_from_slice(&round_a.to_be_bytes());
+    msg_a.extend_from_slice(&proof_a.drand_signature.to_array());
+
+    let sig_a = signing_key.sign(&msg_a);
+    let valid_sig_for_a = BytesN::from_array(&env, &sig_a.to_bytes());
+
+    // Attacker attempts to replay (proof_a, valid_sig_for_a) to fulfill Request B:
+    // This MUST fail because the signature is cryptographically bound to id_a.
+    client.fulfill(&id_b, &proof_a, &valid_sig_for_a);
+}
+
+/// Verifies that derive_expected_alpha produces strictly distinct seeds for different
+/// request IDs even when the request context, drand round, and drand signature are 100% identical.
+#[test]
+fn test_alpha_seed_unique_per_request() {
+    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let id_a = client.request(&Bytes::from_slice(&env, b"context_identical"), &requester);
+    let id_b = client.request(&Bytes::from_slice(&env, b"context_identical"), &requester);
+    let round = 100u64;
+    let drand_sig = BytesN::from_array(&env, &[0x99; 96]);
+
+    let alpha_a = env.as_contract(&client.address, || {
+        crate::derive_expected_alpha(&env, id_a, round, &drand_sig)
+    });
+    let alpha_b = env.as_contract(&client.address, || {
+        crate::derive_expected_alpha(&env, id_b, round, &drand_sig)
+    });
+
+    // Even with identical context, identical round, and identical drand signature,
+    // different request_ids MUST yield completely different alpha seeds.
+    assert_ne!(alpha_a, alpha_b);
+}
+
+/// Comprehensive boundary test for future round enforcement:
+/// Verifies across multiple timestamps (before genesis, at genesis, before boundary,
+/// at boundary, after boundary) that compute_required_round always enforces a strictly future round:
+/// required_round >= current_round + round_offset > current_round.
+#[test]
+fn test_future_round_boundary_enforcement() {
+    let genesis = 1_692_803_367u64;
+    let period = 3u32;
+    let offset = 2u32; // MIN_ROUND_OFFSET
+
+    let test_timestamps = [
+        0u64,
+        genesis.saturating_sub(10),
+        genesis,
+        genesis + 1,
+        genesis + 2,
+        genesis + 3,
+        genesis + 4,
+        genesis + 5,
+        genesis + 6,
+        genesis + 8,
+        genesis + 9,
+        genesis + 10,
+        genesis + 300,
+        genesis + 301,
+        genesis + 302,
+        genesis + 1_000_000,
+    ];
+
+    for &ts in &test_timestamps {
+        let current_round = crate::compute_current_round(ts, genesis, period);
+        let required_round = crate::compute_required_round(ts, genesis, period, offset);
+
+        assert!(
+            required_round > current_round,
+            "Violation at timestamp {}: required_round ({}) must be > current_round ({})",
+            ts, required_round, current_round
+        );
+
+        assert!(
+            required_round >= current_round + offset as u64,
+            "Violation at timestamp {}: required_round ({}) must be >= current_round ({}) + offset ({})",
+            ts, required_round, current_round, offset
+        );
+    }
+}
+
