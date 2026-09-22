@@ -2,13 +2,10 @@
 
 This document records measured instruction costs for all VRF contract code paths.
 
-> **Units notice.** This document reports two *different* metrics. They are never
-> mixed within a single table:
-> - **Network fees** — `fee_charged` in **stroops** (1 XLM = 10,000,000 stroops),
->   read from the Horizon API.
-> - **CPU cost** — **instructions**, read from the Soroban budget
->   (`env.cost_estimate().budget().cpu_instruction_cost()` in tests, or the
->   `SorobanTransactionData.resources.instructions` field on-chain).
+> **Terminology & Units Notice.** To ensure complete clarity, three distinct metrics are tracked in this document:
+> 1. **Contract Application Fee (`fee_amount`)** — Configured in the VRF contract; escrowed by the requester in XLM SAC and transferred to the oracle upon fulfillment (e.g. `100,000 stroops = 0.01 XLM` in our nonzero-fee test instance).
+> 2. **Network Transaction Fee (`fee_charged`)** — Paid in **stroops** (1 XLM = 10,000,000 stroops) to Stellar validators for transaction inclusion, read from the Horizon API / transaction metadata (e.g. `1,486,159 stroops = ~0.1486 XLM` on Mainnet TX `8932bb72...`).
+> 3. **CPU Compute Cost** — Metred in **instructions** by the Soroban VM host budget, read from `SorobanTransactionData.resources.instructions` (e.g. `58,342,003 instructions`).
 
 ## A. Network fee measurements (stroops)
 
@@ -69,8 +66,9 @@ transaction envelopes:
 | **Network** | **Stellar Mainnet** | **Stellar Mainnet** | **Stellar Mainnet** |
 | **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) | [`f3e83555...`](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) | [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) |
 | **Status** | `successful: true` | `successful: true` | `successful: true` |
-| **Instructions (measured)** | **58,641,186** | **58,073,400** | **58,342,003** |
-| **Escrowed Fee** | 0 stroops | 0 stroops | 100,000 stroops (0.01 XLM) |
+| **Contract VRF Fee (`fee_amount`)** | 0 stroops (0 XLM) | 0 stroops (0 XLM) | 100,000 stroops (0.01 XLM) |
+| **Network Fee (`fee_charged`)** | 135,638 stroops (~0.0135 XLM) | 135,638 stroops (~0.0135 XLM) | 1,486,159 stroops (~0.1486 XLM) |
+| **CPU Instructions (measured)** | **58,641,186** | **58,073,400** | **58,342,003** |
 | **Soroban mainnet limit** | 400,000,000 | 400,000,000 | 400,000,000 |
 | **Project / SCF target** | < 75,000,000 | < 75,000,000 | < 75,000,000 |
 | **Headroom under target** | **21.8%** | **22.6%** | **22.21%** |
