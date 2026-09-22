@@ -14,17 +14,38 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { computeCurrentRound, roundTimestamp } from "./drand.js";
+import {
+  computeCurrentRound,
+  roundTimestamp,
+  verifyDrandBeacon,
+  DrandVerificationError,
+} from "./drand.js";
 
 // ── Mock configuration ──────────────────────────────────────────────────────
 
 // We mock config.js and utils.js at the module level so drand.ts imports
 // our test values instead of reading environment variables.
+// The real quicknet group key, so the verification tests below exercise the
+// same key the worker uses in production.
+const QUICKNET_PK =
+  "83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c" +
+  "3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab" +
+  "4af5a6e9c76a4bc09e76eae8991ef5ece45a";
+
 vi.mock("./config.js", () => ({
   DRAND_API_URL: "https://drand.test",
   DRAND_CHAIN_HASH: "test_chain_hash",
   DRAND_GENESIS_TIME: 1_000_000,
   DRAND_PERIOD: 3,
+  DRAND_PUBLIC_KEY:
+    "83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c" +
+    "3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab" +
+    "4af5a6e9c76a4bc09e76eae8991ef5ece45a",
+  // Most fetch/retry tests use synthetic (unverifiable) signatures, so
+  // verification is off by default here and enabled explicitly in the
+  // verification test block below.
+  DRAND_VERIFY_BEACONS: false,
+  DRAND_DST: "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_",
 }));
 
 vi.mock("./utils.js", () => ({
@@ -253,5 +274,86 @@ describe("waitAndFetchBeacon", () => {
     mockFetch.mockRejectedValue(new Error("network down"));
 
     await expect(waitAndFetchBeacon(5)).rejects.toThrow(/network down/);
+  });
+});
+
+// ── verifyDrandBeacon tests ─────────────────────────────────────────────────
+//
+// These are REAL BLS verifications against the live quicknet group public key
+// using a fixed, published beacon — no network access and no mocking of the
+// crypto. A regression in the hashing convention (round encoding, sha256 of the
+// round, or the DST) makes the "valid beacon" case fail immediately.
+
+/** Published quicknet beacon, round 1,000,000 (api.drand.sh, immutable). */
+const REAL_BEACON = {
+  round: 1_000_000,
+  randomness: "b22aad4794f7451896f7a371aa46106fd84d919f3f569acd5b2fddf1d1440af3",
+  signature:
+    "83ad29e4c409f9470fc2ef02f90214df49e02b441a1a241a82d622d9f608ef98fd8b11a029f1bee9d9e83b45088abe72",
+};
+
+describe("verifyDrandBeacon", () => {
+  it("accepts a genuine quicknet beacon", () => {
+    expect(() => verifyDrandBeacon(REAL_BEACON)).not.toThrow();
+  });
+
+  it("accepts a genuine beacon when the expected round matches", () => {
+    expect(() => verifyDrandBeacon(REAL_BEACON, REAL_BEACON.round)).not.toThrow();
+  });
+
+  it("uses the same public key the worker ships with", () => {
+    // Guards against the mocked config drifting from the real default.
+    expect(QUICKNET_PK).toHaveLength(192); // 96-byte compressed G2 point
+  });
+
+  it("rejects a beacon whose round does not match the requested round", () => {
+    expect(() => verifyDrandBeacon(REAL_BEACON, REAL_BEACON.round + 1)).toThrow(
+      DrandVerificationError
+    );
+    expect(() => verifyDrandBeacon(REAL_BEACON, REAL_BEACON.round + 1)).toThrow(
+      /round mismatch/
+    );
+  });
+
+  it("rejects a valid signature replayed under a different round", () => {
+    // The core forgery attempt: a relay serving round N's signature as round M.
+    const replayed = { ...REAL_BEACON, round: 1_000_001 };
+    expect(() => verifyDrandBeacon(replayed)).toThrow(DrandVerificationError);
+    expect(() => verifyDrandBeacon(replayed)).toThrow(/INVALID/);
+  });
+
+  it("rejects a tampered signature (single flipped hex nibble)", () => {
+    const sig = REAL_BEACON.signature;
+    const flipped =
+      sig.slice(0, sig.length - 1) + (sig.at(-1) === "2" ? "3" : "2");
+    expect(() => verifyDrandBeacon({ ...REAL_BEACON, signature: flipped })).toThrow(
+      DrandVerificationError
+    );
+  });
+
+  it("rejects a malformed signature (wrong length)", () => {
+    expect(() =>
+      verifyDrandBeacon({ ...REAL_BEACON, signature: "deadbeef" })
+    ).toThrow(DrandVerificationError);
+  });
+
+  it("rejects a beacon with no signature", () => {
+    expect(() => verifyDrandBeacon({ ...REAL_BEACON, signature: "" })).toThrow(
+      /no signature/
+    );
+  });
+
+  it("rejects a beacon with no valid round", () => {
+    expect(() =>
+      verifyDrandBeacon({ ...REAL_BEACON, round: NaN })
+    ).toThrow(/no valid round/);
+  });
+
+  it("does not reject solely because the randomness field is wrong", () => {
+    // randomness is advisory: the proof binds to the signature, so a wrong
+    // randomness field is warned about, not fatal.
+    expect(() =>
+      verifyDrandBeacon({ ...REAL_BEACON, randomness: "00".repeat(32) })
+    ).not.toThrow();
   });
 });

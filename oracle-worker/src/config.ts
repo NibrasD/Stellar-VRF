@@ -86,6 +86,53 @@ export const DRAND_PERIOD = parseInt(
   10
 );
 
+/**
+ * drand group public key for the configured chain, as a **compressed G2 point**
+ * (96 bytes / 192 hex chars). This is the `public_key` field returned by
+ * `GET {DRAND_API_URL}/{DRAND_CHAIN_HASH}/info`.
+ *
+ * Default = quicknet (`bls-unchained-g1-rfc9380`). If `DRAND_CHAIN_HASH` is
+ * overridden, `DRAND_PUBLIC_KEY` MUST be overridden to match.
+ *
+ * Note this is the compressed encoding, while the contract's `DrandPK` storage
+ * slot holds the same key uncompressed (192 bytes) — both describe the same
+ * group key, so an off-chain check here and the on-chain pairing check agree.
+ */
+export const DRAND_PUBLIC_KEY = optionalEnv(
+  "DRAND_PUBLIC_KEY",
+  "83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c" +
+    "3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab" +
+    "4af5a6e9c76a4bc09e76eae8991ef5ece45a"
+);
+
+/**
+ * Verify every fetched drand beacon's BLS signature locally before using it.
+ *
+ * The contract re-verifies the drand signature on-chain, so a forged beacon can
+ * never produce accepted randomness. Verifying here closes a *resource* hole
+ * instead: without it a compromised or buggy relay can feed the worker garbage,
+ * and the worker will happily spend CPU on a BLS-VRF proof and submit a
+ * transaction that is guaranteed to be rejected on-chain — wasting fees on
+ * every request. Disable only for debugging.
+ */
+export const DRAND_VERIFY_BEACONS =
+  optionalEnv("DRAND_VERIFY_BEACONS", "true").toLowerCase() !== "false";
+
+/** drand DST for quicknet (`bls-unchained-g1-rfc9380`); matches DRAND_DST on-chain. */
+export const DRAND_DST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
+
+// Fail fast on a malformed key rather than surfacing it as a verification
+// failure on the first request (which would look like a relay problem).
+if (DRAND_VERIFY_BEACONS) {
+  if (!/^[0-9a-fA-F]{192}$/.test(DRAND_PUBLIC_KEY)) {
+    throw new Error(
+      `DRAND_PUBLIC_KEY must be 192 hex chars (96-byte compressed G2 point), got ` +
+        `${DRAND_PUBLIC_KEY.length} chars. Fetch it with: ` +
+        `curl -s ${DRAND_API_URL}/${DRAND_CHAIN_HASH}/info`
+    );
+  }
+}
+
 // ─── Worker tuning ──────────────────────────────────────────────────────────
 
 export const POLL_INTERVAL_MS = parseInt(
@@ -111,6 +158,13 @@ export function printConfig(): void {
   console.log(`║ Oracle:     ${ORACLE_PUBLIC_KEY}`);
   console.log(`║ Network:    ${NETWORK_PASSPHRASE}`);
   console.log(`║ drand API:  ${DRAND_API_URL}`);
+  console.log(
+    `║ drand verify: ${
+      DRAND_VERIFY_BEACONS
+        ? `ON (pk ${DRAND_PUBLIC_KEY.slice(0, 16)}…)`
+        : "OFF — NOT FOR PRODUCTION"
+    }`
+  );
   console.log(`║ Poll:       ${POLL_INTERVAL_MS}ms`);
   console.log(`║ Retries:    ${MAX_RETRIES}`);
   console.log("╚═══════════════════════════════════════════════════════════╝");

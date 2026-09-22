@@ -53,3 +53,26 @@ export function recordFailure(error: string): void {
 export function recordDrandDelay(): void {
   metrics.drandDelays++;
 }
+
+/**
+ * Number of requests the listener has picked up but not yet completed.
+ *
+ * Health checks need this to distinguish "idle because nobody asked for
+ * randomness" (healthy) from "work arrived and is not getting done" (stuck).
+ * Without it, a correctly idle oracle would be reported unhealthy and process
+ * managers would restart it in a loop.
+ */
+let inFlight = 0;
+
+export function recordRequestSeen(): void {
+  inFlight++;
+}
+
+/** Call when a request leaves the pipeline, whether it succeeded or failed. */
+export function recordRequestSettled(): void {
+  if (inFlight > 0) inFlight--;
+}
+
+export function getInFlightCount(): number {
+  return inFlight;
+}

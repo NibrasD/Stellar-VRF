@@ -681,9 +681,24 @@ impl VRFOracleContract {
         u64::from_be_bytes(buf)
     }
 
-    /// Derives a random u64 in the range [0, max) with no modulo bias.
-    /// Uses iterative hashing (rejection sampling variant) to ensure uniform distribution.
-    /// Worst-case bounded at 10 iterations (p < 2^-640 of exceeding).
+    /// Derives a random u64 in `[0, max)` with cryptographically negligible bias.
+    ///
+    /// # Why not rejection sampling with a bounded loop
+    /// A previous version rejected candidates `>= u64::MAX - (u64::MAX % max)` and,
+    /// after 10 attempts, fell back to a plain `candidate % max`. That fallback is
+    /// **biased**, and the claimed failure probability of `2^-640` was wrong: the
+    /// per-attempt rejection probability is `(u64::MAX % max + 1) / 2^64`, which
+    /// approaches **1/2** as `max` approaches `2^63`. For such ranges the biased
+    /// fallback was reached with probability ≈ `2^-11`, not `2^-640`.
+    ///
+    /// # Current method — "extra bits" reduction (NIST SP 800-90A B.5.1.3 style)
+    /// Draw **128 bits** of hash entropy and reduce modulo `max`. For a uniform
+    /// `x ∈ [0, 2^128)` and any `max < 2^64`, the largest possible deviation between
+    /// residue classes is bounded by `max / 2^128 ≤ 2^-64` — i.e. negligible, and
+    /// smaller than the statistical distance anyone can detect. This is:
+    /// - **unbiased in practice** (≤ 2^-64, no biased fallback path),
+    /// - **constant cost** (exactly one sha256, no loop, deterministic instructions),
+    /// - **deterministic** (same inputs always yield the same output).
     pub fn derive_random_in_range(env: Env, request_id: u64, context: Bytes, max: u64) -> u64 {
         if max == 0 {
             panic!("max must be > 0");
@@ -707,33 +722,20 @@ impl VRFOracleContract {
             .get(&DataKey::Proof(request_id))
             .unwrap_or_else(|| panic!("proof missing"));
 
-        // Rejection-sampling–style derivation to eliminate modulo bias.
-        let threshold = u64::MAX.saturating_sub(u64::MAX % max);
-        let mut attempt: u32 = 0;
-        loop {
-            let mut input = Bytes::new(&env);
-            input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
-            input.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
-            input.append(&context);
-            input.append(&u64_be_bytes(&env, attempt as u64));
-            let hash = env.crypto().sha256(&input);
-            let hash_arr = hash.to_array();
+        // Single sha256 over (domain ‖ beta ‖ context); take 128 bits of it.
+        let mut input = Bytes::new(&env);
+        input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
+        input.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
+        input.append(&context);
+        let hash_arr = env.crypto().sha256(&input).to_array();
 
-            let mut buf = [0u8; 8];
-            buf.copy_from_slice(&hash_arr[0..8]);
-            let candidate = u64::from_be_bytes(buf);
+        let mut wide = [0u8; 16];
+        wide.copy_from_slice(&hash_arr[0..16]);
+        let candidate = u128::from_be_bytes(wide);
 
-            if candidate < threshold {
-                return candidate % max;
-            }
-
-            attempt += 1;
-            if attempt > 10 {
-                // Statistically near-impossible (p < 2^-640) but we bound
-                // iterations for deterministic instruction costs.
-                return candidate % max;
-            }
-        }
+        // Reduce 128 bits into [0, max). Bias <= max / 2^128 <= 2^-64 for any
+        // max < 2^64, so no rejection loop (and no biased fallback) is needed.
+        (candidate % (max as u128)) as u64
     }
 
     /// Allows the requester (or oracle) to remove proof data for a fulfilled request,

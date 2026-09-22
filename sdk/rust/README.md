@@ -21,9 +21,29 @@ neither predict nor bias the outcome.
 cargo add stellar-vrf-sdk
 ```
 
-This crate deliberately avoids the heavy `stellar-xdr` dependency: reads go through
-Soroban JSON-RPC `simulateTransaction` with compact hand-rolled XDR builders, keeping
-the dependency footprint small.
+## Scope — read this first
+
+This crate is a **read-only client**. It is intentionally dependency-light: it does
+not pull in `stellar-xdr`, and instead talks to Soroban JSON-RPC
+`simulateTransaction` using compact hand-rolled XDR builders.
+
+| Capability | Supported |
+|---|---|
+| Query state (`is_fulfilled`, `is_refunded`, `derive_random_in_range`) | ✅ |
+| Read events (`get_request_events`, `get_fulfill_events`) | ✅ |
+| Wait for fulfillment | ✅ |
+| Client-side derivation (`derive_random_from_beta`) | ✅ |
+| **Submitting transactions** (`request`, `fulfill`) | ❌ **not supported** |
+
+**Why:** signed transaction submission needs a fully-formed, correctly serialized
+`TransactionEnvelope`. The internal envelope builder here is sufficient only for
+simulation, which does not validate signatures or sequence numbers. Rather than
+imply otherwise, this SDK does not expose write operations.
+
+**To submit transactions**, use the
+[JavaScript SDK](https://www.npmjs.com/package/stellar-vrf-sdk) or the
+[Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli),
+both of which use audited XDR serialization.
 
 ## Quick Start
 

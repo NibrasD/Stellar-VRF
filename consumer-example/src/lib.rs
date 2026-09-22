@@ -190,33 +190,24 @@ impl VrfSamplingContract {
             .get(&ConsumerKey::PendingSample(sample_id))
             .unwrap_or_else(|| panic!("unknown sample_id"));
 
-        // Derive an unbiased random value in [0, range_max) using rejection sampling.
-        // Direct modulo reduction (raw % range_max) introduces bias unless range_max divides 2^64.
-        // We reject any raw value >= zone, where zone is the largest multiple of range_max <= u64::MAX.
-        let zone = u64::MAX.saturating_sub(u64::MAX % range_max);
-        let mut sample_val: Option<u64> = None;
-        let mut entropy = beta_output;
-
-        loop {
-            let arr = entropy.to_array();
-            for chunk in arr.chunks_exact(8) {
-                let mut buf = [0u8; 8];
-                buf.copy_from_slice(chunk);
-                let raw = u64::from_be_bytes(buf);
-                if raw < zone {
-                    sample_val = Some(raw % range_max);
-                    break;
-                }
-            }
-            if sample_val.is_some() {
-                break;
-            }
-            // In the astronomically rare event all 4 slices fall in the rejection zone,
-            // re-hash entropy with SHA-256 to produce an unbiased 32-byte pseudo-random block.
-            let input = Bytes::from_slice(&env, &arr);
-            entropy = env.crypto().sha256(&input).into();
-        }
-        let sample = sample_val.unwrap();
+        // Derive a random value in [0, range_max) with negligible bias, using the
+        // same "extra bits" reduction as the VRF contract's `derive_random_in_range()`
+        // (NIST SP 800-90A B.5.1.3 style).
+        //
+        // Reducing only 64 bits (`raw % range_max`) is biased unless `range_max`
+        // divides 2^64: the deviation between residue classes is bounded by
+        // range_max / 2^64, which approaches a 50% skew as range_max approaches 2^63.
+        //
+        // Taking **128 bits** of beta instead bounds that deviation by
+        // range_max / 2^128 <= 2^-64 — cryptographically negligible. Note this is
+        // deliberately NOT a rejection loop: an unbounded loop inside a callback can
+        // blow the instruction budget and make `fulfill()` revert, and a *bounded*
+        // loop needs a fallback that reintroduces the very bias it set out to avoid.
+        // This form is constant-cost and has no biased path at all.
+        let beta_arr = beta_output.to_array();
+        let mut wide = [0u8; 16];
+        wide.copy_from_slice(&beta_arr[0..16]);
+        let sample = (u128::from_be_bytes(wide) % (range_max as u128)) as u64;
 
         // Store the result.
         env.storage()

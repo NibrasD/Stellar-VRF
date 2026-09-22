@@ -132,8 +132,14 @@ an unfair advantage in games or lotteries.
 **Remediation (Information_Disclosure.2.R.1):** The VRF output depends on the oracle's
 BLS secret key (known only to the oracle) and the drand beacon (unpublished at request time
 due to `round_offset >= 2`). Even the oracle cannot predict the output until the drand
-round is published. `derive_random()` uses rejection sampling to eliminate modulo bias,
-bounded to 10 iterations for deterministic costs.
+round is published. `derive_random_in_range()` maps the output into `[0, max)` by drawing
+**128 bits** of hash entropy and reducing modulo `max` ("extra bits" reduction, NIST
+SP 800-90A B.5.1.3 style): the deviation between residue classes is bounded by
+$max / 2^{128} \le 2^{-64}$ for any `max < 2^64`, with **no biased fallback path** and a
+**constant** instruction cost (one `sha256`, no loop). An earlier bounded rejection loop
+that fell back to a plain 64-bit `% max` after 10 attempts was removed — that fallback was
+biased and its documented $2^{-640}$ failure probability was incorrect (the true
+per-attempt rejection probability approaches $1/2$ for `max` near $2^{63}$).
 
 ---
 

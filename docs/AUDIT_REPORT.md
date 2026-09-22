@@ -54,7 +54,7 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
 | **Centralization Risk** | `[CR]` | Oracle admin privilege boundaries, theft of escrow funds | Oracle cannot withdraw arbitrary funds; fees can only be released upon valid cryptographic proof | **VERIFIED** |
 | **SEP-41 Token Safety** | `[ST]` | SAC fee escrow handling, balance drain prevention | Escrowed fee locked per-request; refunded only to authenticated requester; released only to oracle | **VERIFIED** |
 | **Custom Type Safety** | `[CT]` | `DataKey` enum, deserialization attacks, ScVal boundaries | Strong typing on all keys; bounded context input (`MAX_CONTEXT_LEN = 1024`) | **VERIFIED** |
-| **Modulo Bias Elimination**| `[MB]` | Random range mapping uniform distribution | Rejection sampling variant eliminates modulo bias; iterations bounded at 10 | **VERIFIED** |
+| **Modulo Bias Elimination**| `[MB]` | Random range mapping uniform distribution | 128-bit "extra bits" reduction; bias $\le 2^{-64}$, no biased fallback, constant cost | **VERIFIED** |
 | **Confused Deputy** | `[CD]` | Third-party callback hijacking | `callback_contract == requester` enforced; `callback_fn == "on_vrf"` restricted | **VERIFIED** |
 | **Storage Rent Reclamation**| `[SR]` | Rent explosion prevention on long-lived contracts | `cleanup_proof` allows purging 384-byte proof while keeping `Fulfilled` flag; timeout deletes context | **VERIFIED** |
 | **Gas / CPU Headroom** | `[GH]` | Resource consumption within Soroban host limits | Nonzero-fee fulfill consumes 56,122,588 instructions (Soroban cap is 100,000,000; 43.9% headroom) | **VERIFIED** |
@@ -97,13 +97,14 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
   - Line 206: `callback_fn != "on_vrf"` reverts immediately. Callbacks cannot be directed to arbitrary functions (e.g. `transfer` or `mint`).
 
 ### [MB-01] Elimination of Modulo Bias in Random Range Derivation [VERIFIED-SECURE]
-- **Analysis**: Standard `beta % max` derivation introduces statistical bias when mapping uniform 256-bit or 64-bit outputs into arbitrary integer ranges.
-- **Mitigation**:
-  - In `derive_random_in_range`, rejection sampling is applied:
-    $$\text{threshold} = \text{u64::MAX} - (\text{u64::MAX} \pmod{\text{max}})$$
-  - Any candidate $\ge \text{threshold}$ is rejected and re-hashed with an incremented counter.
-  - Worst-case iterations are bounded at 10 ($p_{\text{exceed}} < 2^{-640}$), guaranteeing deterministic instruction bounds while preserving mathematical uniformity.
-  - Verified by tests: `test_derive_random_in_range_bounds` and `test_derive_random_in_range_worst_case_sampling`.
+- **Analysis**: Reducing a **64-bit** hash value with `candidate % max` introduces statistical bias whenever `max` does not divide $2^{64}$. The deviation between residue classes is bounded by $max / 2^{64}$, which is negligible for small ranges (dice, percentages) but approaches a **50% skew** as `max` approaches $2^{63}$.
+- **Superseded mitigation (removed)**: an earlier version rejected candidates $\ge \text{u64::MAX} - (\text{u64::MAX} \bmod max)$ and, after 10 attempts, **fell back to a plain `candidate % max`**. That fallback was biased, and the documented failure probability of $2^{-640}$ was **incorrect**: the per-attempt rejection probability is $(\text{u64::MAX} \bmod max + 1) / 2^{64}$, which tends to $1/2$ as `max` tends to $2^{63}$ — making the biased fallback reachable with probability $\approx 2^{-11}$, not $2^{-640}$.
+- **Current mitigation — "extra bits" reduction (NIST SP 800-90A B.5.1.3 style)**:
+  - `derive_random_in_range` draws **128 bits** of hash entropy and reduces modulo `max`.
+  - For uniform $x \in [0, 2^{128})$ and any $max < 2^{64}$, the deviation between residue classes is bounded by $max / 2^{128} \le 2^{-64}$ — cryptographically negligible.
+  - Properties: **no biased fallback path**, **constant cost** (exactly one `sha256`, no loop, deterministic instruction count), and **deterministic** output for identical inputs.
+  - The client-side helpers mirror this exactly: `deriveRandomFromBeta()` (JS SDK) and `derive_random_from_beta()` (Rust SDK) both consume 128 bits of beta.
+  - Verified by tests: `test_derive_random_in_range_bounds`, `test_derive_random_in_range_worst_case_sampling`, `test_property_derive_random_in_range_boundary_max_one`, and `test_property_derive_random_in_range_fuzz_various_ranges`.
 
 ### [SL-01] Storage Rent Reclamation & Bounded Growth [VERIFIED-SECURE]
 - **Analysis**: Storing 384-byte cryptographic proofs indefinitely causes rent accumulation on Soroban.

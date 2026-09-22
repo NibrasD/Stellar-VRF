@@ -709,12 +709,92 @@ fn test_reentancy_guard_blocks_during_callback() {
 }
 
 
-// ── Tranche 2: derive_random_in_range worst-case (rejection sampling) ─────────
+// ── derive_random_in_range: range + bias behaviour ───────────────────────────
 
-/// Tests derive_random_in_range with powers-of-2 and near-powers-of-2 max values.
-/// Powers of 2 never require rejection sampling (modulo is unbiased).
-/// Values like (2^k + 1) maximise the rejection probability per iteration.
-/// This verifies the 10-iteration bound does not cause panics.
+/// Regression test for modulo bias.
+///
+/// The original implementation reduced 64 bits of hash with a bounded rejection
+/// loop that, after 10 attempts, fell back to a plain `candidate % max` — a
+/// biased path. The documented failure probability of `2^-640` was wrong: the
+/// per-attempt rejection probability is `(u64::MAX % max + 1) / 2^64`, which
+/// tends to 1/2 as `max` tends to 2^63, so the biased fallback was reachable
+/// with probability around `2^-11`.
+///
+/// `max = 2^63 + 1` is exactly that worst case. With the current 128-bit
+/// reduction the bias is bounded by `max / 2^128 <= 2^-64`, and there is no
+/// fallback path at all. This test asserts the result is in range for the
+/// adversarial modulus, which the old code could only satisfy by luck.
+#[test]
+fn test_derive_random_in_range_worst_case_modulus_no_bias_fallback() {
+    let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+
+    // Worst case for 64-bit rejection sampling: just above half the u64 space.
+    let max: u64 = (1u64 << 63) + 1;
+
+    for i in 0u8..12 {
+        let context = Bytes::from_slice(&env, b"bias_worst_case");
+        let id = client.request(&context, &requester);
+
+        use crate::DataKey;
+        env.as_contract(&client.address, || {
+            env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+            env.storage().persistent().set(
+                &DataKey::Proof(id),
+                &crate::BlsVrfProof {
+                    alpha_seed: BytesN::from_array(&env, &[i.wrapping_mul(31); 32]),
+                    gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+                    // Vary beta so each iteration samples a different point.
+                    beta_output: BytesN::from_array(&env, &[i.wrapping_mul(97).wrapping_add(7); 32]),
+                    public_key: BytesN::from_array(&env, &[0u8; 192]),
+                    drand_round: 2,
+                    drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+                },
+            );
+        });
+
+        let derive_ctx = Bytes::from_slice(&env, b"bias_ctx");
+        let result = client.derive_random_in_range(&id, &derive_ctx, &max);
+        assert!(result < max, "result {} out of range for max {}", result, max);
+    }
+}
+
+/// Determinism: identical (request, context, max) must always give the same
+/// value. The 128-bit reduction removed the internal attempt counter, so this
+/// guards against accidentally reintroducing nondeterminism.
+#[test]
+fn test_derive_random_in_range_is_deterministic() {
+    let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let requester = Address::generate(&env);
+    let context = Bytes::from_slice(&env, b"determinism");
+    let id = client.request(&context, &requester);
+
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage().persistent().set(
+            &DataKey::Proof(id),
+            &crate::BlsVrfProof {
+                alpha_seed: BytesN::from_array(&env, &[3u8; 32]),
+                gamma_point: BytesN::from_array(&env, &[0u8; 96]),
+                beta_output: BytesN::from_array(&env, &[42u8; 32]),
+                public_key: BytesN::from_array(&env, &[0u8; 192]),
+                drand_round: 2,
+                drand_signature: BytesN::from_array(&env, &[0u8; 96]),
+            },
+        );
+    });
+
+    let ctx = Bytes::from_slice(&env, b"same-ctx");
+    let a = client.derive_random_in_range(&id, &ctx, &100u64);
+    let b = client.derive_random_in_range(&id, &ctx, &100u64);
+    let c = client.derive_random_in_range(&id, &ctx, &100u64);
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+/// Tests derive_random_in_range across a spread of moduli, including
+/// powers of two (where modulo is exactly unbiased) and small primes.
 #[test]
 fn test_derive_random_in_range_worst_case_sampling() {
     let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();

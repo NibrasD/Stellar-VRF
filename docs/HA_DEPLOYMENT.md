@@ -43,7 +43,26 @@ Two backends are selected automatically at runtime:
 3. **Failover**: If the leader stops renewing, the key expires after `LEADER_LOCK_TTL_MS`; a standby's next `SET … NX` succeeds and it becomes leader.
 4. **Release**: On shutdown the leader runs a fenced Lua `del` (only deletes the key if it still owns it), so a standby takes over immediately.
 5. **Fail-closed**: Any Redis error makes `acquireOrRenew()` return `false` → the node drops to standby, so a Redis outage never produces two leaders.
-6. **Defense-in-depth**: Even in a rare split, the on-chain contract rejects duplicate `fulfill()` (idempotency + re-entrancy guard), so double-submission is impossible.
+6. **Pre-submit leadership re-check**: leadership is re-verified **immediately before spending money**, not just when a request is picked up. Processing a request involves a long wait (a future drand round is tens of seconds away), during which a paused, partitioned or GC-stalled leader can legitimately lose its lease to the standby. `handleRequest()` therefore checks `isLeader()` (a) on entry, (b) after proof generation and immediately before `submitFulfillment()`, and (c) inside the retry callback, since each retry adds more delay. A node that lost the lease mid-flight discards the work instead of submitting.
+7. **Defense-in-depth**: Even in a rare split, the on-chain contract rejects duplicate `fulfill()` (idempotency + re-entrancy guard), so double-submission is impossible.
+
+### What this guarantees — and what it does not
+
+To be precise about the strength of the claim (see also
+[`HA_FAILOVER_EVIDENCE.md`](HA_FAILOVER_EVIDENCE.md) § *Terminology*):
+
+- ✅ **Correctness of the result** is guaranteed unconditionally, by the contract's
+  on-chain `Fulfilled` flag — not by the lease. Two leaders cannot produce two
+  different randomness values for one request.
+- ✅ **Split-brain mitigation**: the Redis lease plus the pre-submit re-check means a
+  zombie leader that wakes up after its lease expired stops before submitting, so
+  duplicate transaction attempts and wasted fees are avoided in practice.
+- ⚠️ **Not a fencing token.** There is no monotonic epoch number carried into the
+  Stellar transaction and validated by the contract. The accurate description of this
+  design is **lease-based split-brain mitigation + on-chain idempotency**, not
+  "fencing" in the strict distributed-systems sense. The residual risk if a process
+  freezes between the final `isLeader()` check and the RPC call is a *duplicate
+  submission attempt* (rejected on-chain, wasted fee) — never a corrupted result.
 
 ## Failover Timing
 

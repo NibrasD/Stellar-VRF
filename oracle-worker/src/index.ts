@@ -17,14 +17,26 @@
  */
 
 import { printConfig } from "./config.js";
-import { createServer, startListenerLoop, fetchRequestContext, isRequestFulfilled } from "./listener.js";
+import {
+  createServer,
+  startListenerLoop,
+  fetchRequestContext,
+  isRequestFulfilled,
+  findPendingRequests,
+  fetchRequestRound,
+} from "./listener.js";
 import { waitAndFetchBeacon } from "./drand.js";
 import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
 import { submitFulfillment } from "./fulfiller.js";
 import { log, bytesToHex } from "./utils.js";
 import { startLeaderElection, isLeader, getInstanceId } from "./leader.js";
 import { startHealthServer } from "./health.js";
-import { recordFulfillment, recordFailure } from "./metrics.js";
+import {
+  recordFulfillment,
+  recordFailure,
+  recordRequestSeen,
+  recordRequestSettled,
+} from "./metrics.js";
 import { withRetry, withFulfillRetry, checkDrandLag } from "./retry.js";
 import { DRAND_PERIOD } from "./config.js";
 import type { VrfRequestEvent } from "./listener.js";
@@ -51,6 +63,7 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   }
 
   processingRequests.add(reqKey);
+  recordRequestSeen();
   const startMs = Date.now();
 
   try {
@@ -99,10 +112,36 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     log.info(`  Generating BLS-VRF proof…`);
     const proof = generateVrfProof(event.requestId, context, beacon);
 
-    // 5. Submit fulfill transaction (with retry for sequence conflicts)
+    // 5. Re-verify leadership immediately before spending money.
+    //
+    // Steps 2–4 can block for a long time (waiting for a future drand round can
+    // take tens of seconds). In that window this process may have been paused,
+    // partitioned or GC-stalled past the lease TTL, in which case the standby
+    // has legitimately taken over. Submitting now would make us a zombie
+    // leader: the on-chain `Fulfilled` flag still keeps the RESULT correct, but
+    // we would burn fees on a transaction that is going to be rejected, and
+    // behave like a split brain.
+    //
+    // The check is repeated inside the retry callback because retries add more
+    // delay after this point.
+    if (!isLeader()) {
+      log.warn(
+        `[${getInstanceId()}] Lost leadership while preparing request ${event.requestId} — ` +
+          `discarding instead of submitting.`
+      );
+      return;
+    }
+
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
-      () => submitFulfillment(server, event.requestId, proof)
+      () => {
+        if (!isLeader()) {
+          throw new Error(
+            `aborting fulfill(${event.requestId}): leadership lost before submit`
+          );
+        }
+        return submitFulfillment(server, event.requestId, proof);
+      }
     );
 
     const durationMs = Date.now() - startMs;
@@ -120,6 +159,7 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     }
   } finally {
     processingRequests.delete(reqKey);
+    recordRequestSettled();
   }
 }
 
@@ -129,6 +169,37 @@ async function startListening(): Promise<void> {
   log.info(`[${getInstanceId()}] Became LEADER — starting event listener.`);
   try {
     const server = createServer();
+
+    // Reconcile against contract state before relying on events.
+    //
+    // The event cursor is in-memory only and the RPC event window is finite, so
+    // a request whose `request` event has aged out would otherwise never be
+    // seen again — it would sit unfulfilled until the requester claimed
+    // timeout_refund(). This closes that liveness gap on every leadership
+    // acquisition (startup and failover alike).
+    try {
+      const pending = await findPendingRequests(server);
+      for (const requestId of pending) {
+        if (!isLeader()) break;
+        const requiredRound = await fetchRequestRound(server, requestId);
+        if (requiredRound === null) {
+          log.warn(`Skipping request ${requestId}: could not read its required round.`);
+          continue;
+        }
+        await handleRequest({
+          requestId,
+          requester: "(recovered)",
+          requiredRound,
+          ledger: 0,
+        });
+      }
+    } catch (err) {
+      // Reconciliation is best-effort: never block the live listener on it.
+      log.error(
+        `Startup reconciliation failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
     await startListenerLoop(server, handleRequest, () => listenerActive);
   } finally {
     // Reset flag so the listener can restart if it crashes or exits.

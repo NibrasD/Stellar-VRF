@@ -100,8 +100,10 @@ Returns JSON with:
 
 1. **XLM Balance** — Oracle account needs XLM for transaction fees
    - Alert if balance < 5 XLM
-   - Each `fulfill()` costs ~0.13 XLM in fees (mainnet measured: 1,284,508 stroops
-     = 0.1284508 XLM on TX `5190ba03...`). Budget ~0.15 XLM per fulfillment.
+   - Each `fulfill()` costs ~0.14 XLM in fees (mainnet measured: 1,387,682 stroops
+     = 0.1387682 XLM on TX
+     [`fafa522f...`](https://stellar.expert/explorer/public/tx/fafa522f31355e755d107eaeabe36c4e37a6b48baf794de42d402188b5de78b0)).
+     Budget ~0.15 XLM per fulfillment.
 
 2. **Fulfill Latency** — Time from request event to fulfill TX confirmation
    - Normal: 5–15 seconds
@@ -111,9 +113,27 @@ Returns JSON with:
    - If drand is down, oracle cannot generate proofs
    - Retry logic handles temporary outages (up to MAX_RETRIES)
 
-4. **Instruction Budget** — Monitor `fulfill()` instruction count
-   - Current: **58,641,186** / 100,000,000
-   - Alert if > 70,000,000 after contract upgrades
+4. **drand Beacon Verification Failures** — the worker verifies every beacon's BLS
+   signature locally before building a proof (`DRAND_VERIFY_BEACONS=true`, default).
+   - Log signature: `drand BEACON VERIFICATION FAILED`
+   - **One-off:** benign; `api.drand.sh` is load balanced and the retry hits a good node.
+   - **Persistent:** treat as an incident. Either the relay is compromised/misbehaving,
+     or `DRAND_PUBLIC_KEY` no longer matches `DRAND_CHAIN_HASH` (e.g. after a chain or
+     group-key change). Re-fetch the key and compare:
+     ```bash
+     curl -s https://api.drand.sh/$DRAND_CHAIN_HASH/info | jq -r .public_key
+     ```
+     If drand rotated its group key, update **both** `DRAND_PUBLIC_KEY` (compressed,
+     96 bytes) in the worker `.env` **and** the on-chain key via `rotate_drand_pk()`
+     (uncompressed, 192 bytes) — see *Rotate drand Public Key* below.
+   - Note this check protects **fees and CPU only**. The contract re-verifies drand
+     on-chain, so a forged beacon can never yield accepted randomness.
+
+5. **Instruction Budget** — Monitor `fulfill()` instruction count
+   - Current: **58,073,400** (fee=0) / **58,342,003** (nonzero-fee)
+   - Soroban protocol limit: **400,000,000** (85.4% headroom)
+   - Internal target: 75,000,000 — alert if > 70,000,000 after contract upgrades
+   - See [`PROFILING.md`](PROFILING.md) for the measurement method
 
 ## Key Rotation
 
@@ -142,6 +162,18 @@ curl https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94
 
 # Call rotate_drand_pk() on-chain with new uncompressed G2 key (192 bytes)
 ```
+
+Both sides must be updated, or the worker and the contract will disagree:
+
+| Where | Value | Encoding |
+| :--- | :--- | :--- |
+| Contract `DrandPK` (via `rotate_drand_pk()`) | drand group key | **uncompressed** G2, 192 bytes |
+| Worker `.env` → `DRAND_PUBLIC_KEY` | same key | **compressed** G2, 96 bytes (the `public_key` field from `/info`) |
+
+Order of operations: rotate on-chain first, then update the worker `.env` and restart.
+If only the worker is updated, every off-chain verification fails and no request is
+fulfilled; if only the contract is updated, the worker keeps submitting proofs that
+the contract rejects.
 
 ## Storage TTL Management
 

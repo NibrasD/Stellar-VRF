@@ -331,14 +331,25 @@ export class VrfClient {
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 /**
- * Derive a random number in [min, max] client-side from a beta output hex string.
- * Use this when you don't want to make an extra contract call.
+ * Derive a random number in the inclusive range [min, max] client-side from a
+ * beta output hex string. Use this when you don't want to make an extra
+ * contract call.
+ *
+ * Bias: this consumes **128 bits** of beta and reduces modulo the range. For a
+ * uniform `x` in [0, 2^128) and any range < 2^64, the deviation between residue
+ * classes is bounded by `range / 2^128 <= 2^-64` — cryptographically negligible.
+ *
+ * An earlier version used only the first 64 bits, which gave a bias of up to
+ * `range / 2^64`; that becomes significant for very large ranges (approaching
+ * 50% skew as the range approaches 2^63).
  */
 export function deriveRandomFromBeta(betaHex: string, min: bigint, max: bigint): bigint {
   if (max <= min) throw new Error("max must be greater than min");
+  const hex = betaHex.startsWith("0x") ? betaHex.slice(2) : betaHex;
+  if (hex.length < 32) throw new Error("beta must provide at least 16 bytes (32 hex chars)");
   const range = max - min + 1n;
-  // Use first 8 bytes (64 bits) of beta as source of entropy
-  const betaValue = BigInt("0x" + betaHex.slice(0, 16));
+  // 32 hex chars = 16 bytes = 128 bits of entropy.
+  const betaValue = BigInt("0x" + hex.slice(0, 32));
   return min + (betaValue % range);
 }
 

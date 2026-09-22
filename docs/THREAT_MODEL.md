@@ -25,6 +25,20 @@ The quicknet chain uses a BLS threshold scheme across a geographically distribut
 Historical uptime is >99.9%. If the chain rotates its group key, the oracle admin must call
 `rotate_drand_pk()` to update the on-chain verification key.
 
+We do **not** trust the drand *HTTP relay* that serves beacons. Verification happens twice:
+
+1. **On-chain (authoritative).** `verify_drand_signature()` runs a BLS pairing check
+   `e(sig, G2_gen) == e(H(sha256(round_be)), drand_pk)` against the `DrandPK` stored in
+   instance storage. A forged beacon therefore can **never** produce accepted randomness —
+   the transaction reverts.
+2. **Off-chain (resource protection).** The worker re-runs the *same* check locally in
+   `verifyDrandBeacon()` (`oracle-worker/src/drand.ts`) before building a proof, using the
+   compressed group key in `DRAND_PUBLIC_KEY`. Without this step a compromised or simply
+   buggy relay could feed the worker garbage and the worker would spend CPU on a BLS-VRF
+   proof and pay to submit a transaction guaranteed to be rejected — a **fee-drain / DoS**
+   vector, not an integrity break. Beacons served under the wrong round are rejected too.
+   Controlled by `DRAND_VERIFY_BEACONS` (default on; disable only for debugging).
+
 **Single oracle identity.** This is the most important trust boundary to understand. The design
 uses **one oracle key** (a single logical oracle), even though it is run by a primary plus a
 hot-standby worker instance for liveness. HA removes the *availability* single-point-of-failure,
@@ -136,5 +150,5 @@ verification (~56M instructions), not storage operations.
 - **Fee economics** — the `fee_amount` parameter and escrow mechanism are fully implemented and
   tested (fees are escrowed in the VRF contract on request, released to oracle on fulfill,
   refunded to requester on timeout). Currently deployed with `fee_amount = 0`.
-- **No formal audit** — the contract has 33 unit tests and has been manually reviewed,
+- **No formal audit** — the contract has 60 unit tests and has been manually reviewed,
   but has not undergone a formal third-party audit.

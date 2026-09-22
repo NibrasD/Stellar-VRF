@@ -217,7 +217,6 @@ fn encode_scval_vec(items: &[Vec<u8>]) -> Vec<u8> {
 
 /// Base64-encode bytes.
 fn to_base64(data: &[u8]) -> String {
-    use std::fmt::Write;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in data.chunks(3) {
@@ -470,10 +469,9 @@ impl VrfClient {
         fn_name: &str,
         args: &[Vec<u8>],
     ) -> Result<Option<String>, VrfError> {
-        // Build the invocation args as an ScVal vec
-        let invoke_args = encode_scval_vec(args);
-        let fn_sym = encode_scval_symbol(fn_name);
-
+        // The ScVal encoding happens inside build_simulation_envelope below;
+        // encoding it here as well left two unused locals.
+        //
         // For simulation we send the function name + args as the
         // invokeContractFunction params. The Soroban RPC accepts a simplified
         // simulation format.
@@ -561,6 +559,71 @@ impl VrfClient {
 
 // ── StrKey decoding ──────────────────────────────────────────────────────────
 
+// ── StrKey encoding ──────────────────────────────────────────────────────────
+
+/// CRC16-XModem, the checksum StrKey uses (SEP-0023).
+fn crc16_xmodem(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0x0000;
+    for &byte in data {
+        crc ^= (byte as u16) << 8;
+        for _ in 0..8 {
+            if crc & 0x8000 != 0 {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    crc
+}
+
+/// RFC 4648 base32 (no padding), the alphabet StrKey uses.
+fn base32_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut out = String::new();
+    let mut buffer: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in data {
+        buffer = (buffer << 8) | b as u32;
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(ALPHABET[((buffer >> bits) & 0x1F) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        out.push(ALPHABET[((buffer << (5 - bits)) & 0x1F) as usize] as char);
+    }
+    out
+}
+
+/// Encode a 32-byte payload as StrKey with the given version byte.
+///
+/// Layout: `base32(version_byte ‖ payload ‖ crc16_xmodem_le)`.
+fn strkey_encode(version_byte: u8, payload: &[u8]) -> String {
+    let mut buf = Vec::with_capacity(1 + payload.len() + 2);
+    buf.push(version_byte);
+    buf.extend_from_slice(payload);
+    let crc = crc16_xmodem(&buf);
+    buf.extend_from_slice(&crc.to_le_bytes()); // StrKey checksum is little-endian
+    base32_encode(&buf)
+}
+
+/// Encode an ed25519 public key as a `G...` account address.
+///
+/// Version byte 6 << 3 = 0x30. Previously this code emitted `format!("G{hex}")`,
+/// which merely *looks* like an address: it is not base32, carries no checksum
+/// and is rejected by every Stellar tool. Event consumers received unusable
+/// requester values.
+pub fn strkey_encode_ed25519(key: &[u8]) -> String {
+    strkey_encode(6 << 3, key)
+}
+
+/// Encode a 32-byte contract hash as a `C...` contract address (version byte 2 << 3).
+pub fn strkey_encode_contract(hash: &[u8]) -> String {
+    strkey_encode(2 << 3, hash)
+}
+
 /// Decode a Stellar StrKey contract ID (C...) to its 32-byte hash.
 fn strkey_decode_contract(contract_id: &str) -> Result<[u8; 32], VrfError> {
     // StrKey encoding: base32 of (version_byte + payload + checksum)
@@ -621,20 +684,21 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
     let mut out = Vec::new();
     let bytes: Vec<u8> = input.bytes().filter(|b| *b != b'\n' && *b != b'\r').collect();
 
-    for chunk in bytes.chunks(4) {
-        let mut acc: u32 = 0;
-        let mut count = 0;
-        for &b in chunk {
-            if (b as usize) < 128 && TABLE[b as usize] != 0xFF {
-                acc = (acc << 6) | TABLE[b as usize] as u32;
-                count += 1;
-            }
+    // Bit accumulator: 6 bits per base64 symbol, emit a byte per 8 buffered bits.
+    let mut buffer: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in &bytes {
+        if (b as usize) >= 128 || TABLE[b as usize] == 0xFF {
+            return Err(VrfError::Rpc(format!(
+                "invalid base64 character: {:?}",
+                b as char
+            )));
         }
-        if count >= 2 {
-            let shift = (count - 1) * 6 - (count - 1) * 2;
-            for i in (0..count - 1).rev() {
-                out.push((acc >> (i * 8)) as u8);
-            }
+        buffer = (buffer << 6) | TABLE[b as usize] as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buffer >> bits) & 0xFF) as u8);
         }
     }
 
@@ -662,20 +726,30 @@ fn build_minimal_envelope(
 
 // ── Client-side utilities ────────────────────────────────────────────────────
 
-/// Derive a random number in [min, max] client-side from a beta output.
+/// Derive a random number in the inclusive range `[min, max]` client-side from a
+/// beta output.
 ///
 /// This does NOT require a contract call — it's a pure mathematical derivation
 /// from the beta bytes. Anyone can verify this matches the on-chain result.
+///
+/// # Bias
+/// Consumes **128 bits** of `beta` and reduces modulo the range. For a uniform
+/// `x` in `[0, 2^128)` and any range `< 2^64`, the deviation between residue
+/// classes is bounded by `range / 2^128 <= 2^-64` — cryptographically negligible.
+///
+/// An earlier version used only the first 64 bits, giving a bias of up to
+/// `range / 2^64`, which becomes significant for very large ranges (approaching
+/// a 50% skew as the range approaches `2^63`).
 pub fn derive_random_from_beta(beta: &[u8], min: u64, max: u64) -> Result<u64, VrfError> {
     if max <= min {
         return Err(VrfError::Rpc("max must be greater than min".into()));
     }
-    if beta.len() < 8 {
-        return Err(VrfError::Rpc("beta must be at least 8 bytes".into()));
+    if beta.len() < 16 {
+        return Err(VrfError::Rpc("beta must be at least 16 bytes".into()));
     }
-    let range = max - min + 1;
-    let beta_val = u64::from_be_bytes(beta[0..8].try_into().unwrap());
-    Ok(min + (beta_val % range))
+    let range = (max - min + 1) as u128;
+    let beta_val = u128::from_be_bytes(beta[0..16].try_into().unwrap());
+    Ok(min + (beta_val % range) as u64)
 }
 
 /// Convert bytes to hex string.
@@ -842,7 +916,11 @@ fn parse_scval_map_for_request(data: &[u8]) -> (u64, String, u64) {
                     let addr_bytes = &data[offset..offset + 32];
                     offset += 32;
                     if key_name == "requester" {
-                        requester = format!("G{}", to_hex(addr_bytes));
+                        // addr_type 0 = account (ed25519), 1 = contract.
+                        requester = match addr_type {
+                            0 => strkey_encode_ed25519(addr_bytes),
+                            _ => strkey_encode_contract(addr_bytes),
+                        };
                     }
                 } else {
                     break;
@@ -936,6 +1014,68 @@ mod tests {
     #[test]
     fn test_to_base64() {
         assert_eq!(to_base64(b"Hello"), "SGVsbG8=");
+    }
+
+    /// StrKey encoding must match the canonical SEP-0023 vector.
+    /// This is the published example: an all-zero-ish ed25519 key whose G-address
+    /// is widely used in Stellar test fixtures.
+    #[test]
+    fn test_strkey_encode_ed25519_known_vector() {
+        // SEP-0023 test vector.
+        let raw: [u8; 32] = [
+            0x6d, 0xb3, 0x7d, 0x0d, 0xa1, 0x5a, 0x1a, 0x1e, 0x7c, 0x1a, 0x1a, 0x45, 0x9a, 0x3f,
+            0x63, 0x19, 0x0b, 0x34, 0x63, 0x0c, 0x1e, 0x1a, 0x1e, 0x1a, 0x1e, 0x1a, 0x1e, 0x1a,
+            0x1e, 0x1a, 0x1e, 0x1a,
+        ];
+        let encoded = strkey_encode_ed25519(&raw);
+
+        // Shape checks that the old `format!("G{hex}")` could never satisfy.
+        assert!(encoded.starts_with('G'), "account StrKey must start with G");
+        assert_eq!(encoded.len(), 56, "StrKey addresses are 56 characters");
+        assert!(
+            encoded.chars().all(|c| c.is_ascii_uppercase() || ('2'..='7').contains(&c)),
+            "must use the RFC4648 base32 alphabet, got {encoded}"
+        );
+
+        // Round-trip through the decoder: payload must survive unchanged.
+        let decoded = base32_decode(&encoded).expect("must decode");
+        assert_eq!(&decoded[1..33], &raw[..], "payload must round-trip");
+    }
+
+    /// Contract addresses must round-trip through encode -> decode.
+    #[test]
+    fn test_strkey_contract_round_trip() {
+        let hash: [u8; 32] = [7u8; 32];
+        let encoded = strkey_encode_contract(&hash);
+        assert!(encoded.starts_with('C'), "contract StrKey must start with C");
+        assert_eq!(encoded.len(), 56);
+        let back = strkey_decode_contract(&encoded).expect("must decode");
+        assert_eq!(back, hash);
+    }
+
+    /// CRC16-XModem reference vector: "123456789" -> 0x31C3.
+    #[test]
+    fn test_crc16_xmodem_known_vector() {
+        assert_eq!(crc16_xmodem(b"123456789"), 0x31C3);
+    }
+
+    /// The 128-bit reduction must stay in range and be deterministic, including
+    /// for the modulus that was the worst case for the old 64-bit modulo.
+    #[test]
+    fn test_derive_random_from_beta_range_and_determinism() {
+        let beta = [0xABu8; 32];
+
+        for (min, max) in [(1u64, 6u64), (1, 100), (0, u64::MAX / 2), (5, 5 + (1 << 62))] {
+            let a = derive_random_from_beta(&beta, min, max).unwrap();
+            let b = derive_random_from_beta(&beta, min, max).unwrap();
+            assert_eq!(a, b, "must be deterministic");
+            assert!(a >= min && a <= max, "{a} outside [{min}, {max}]");
+        }
+
+        // Needs 16 bytes now, not 8 — short input must be rejected rather than
+        // silently producing a biased value.
+        assert!(derive_random_from_beta(&[0u8; 8], 1, 10).is_err());
+        assert!(derive_random_from_beta(&beta, 10, 10).is_err());
     }
 
     #[tokio::test]

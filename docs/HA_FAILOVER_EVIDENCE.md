@@ -61,10 +61,31 @@ DRILL RESULT: ALL CHECKS PASSED
 | Redis | real `redis:7-alpine` server |
 
 **Why Phase 4 matters most.** Both instances share one oracle key, so the real risk
-is a *double* `fulfill()`. Phase 4 proves the fenced Lua renew (`GET == instanceId`
-before `PEXPIRE`) makes a resumed primary step down instead of continuing to submit.
-Combined with the on-chain `is_fulfilled()` idempotency check, that is two
-independent defenses against double submission.
+is a *double* `fulfill()`. Phase 4 proves the compare-and-set Lua renew
+(`GET == instanceId` before `PEXPIRE`) makes a resumed primary step down instead of
+continuing to submit. Combined with the on-chain `is_fulfilled()` idempotency check,
+that is two independent defenses against double submission.
+
+### Terminology — what "fenced" does and does not mean here
+
+To be precise about the guarantee, because "fencing" has a stronger meaning in the
+distributed-systems literature:
+
+- **What this is:** a *lease* with **compare-and-set renew/release**. A worker that
+  loses its lease can no longer renew or release it, and the worker also
+  **re-checks leadership immediately before submitting** a `fulfill()` transaction
+  (and again inside each retry) — see `oracle-worker/src/index.ts`.
+- **What this is not:** a true **fencing token** passed to and validated by the
+  resource being protected. The Stellar network does not receive a monotonically
+  increasing epoch number and so cannot itself reject a stale leader's transaction.
+- **Why the result is still safe:** correctness does not depend on the lease at all.
+  The contract enforces single fulfillment via the on-chain `Fulfilled` flag, so a
+  stale leader cannot corrupt or replace a result. The lease plus the pre-submit
+  re-check exist to avoid *wasted fees and duplicate transaction attempts*, not to
+  protect randomness integrity.
+
+Accurate one-line description: **lease-based split-brain mitigation with a
+pre-submit leadership re-check, backed by on-chain idempotency.**
 
 ---
 

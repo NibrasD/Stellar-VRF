@@ -4,10 +4,16 @@
 
 | SDK | Registry | Status |
 |---|---|---|
-| Rust — `stellar-vrf-sdk` | crates.io | ✅ **PUBLISHED v1.0.0** |
-| JS — `stellar-vrf-sdk` | npm | ✅ **PUBLISHED v1.0.0** — ⚠️ **v1.0.1 fix pending** |
+| Rust — `stellar-vrf-sdk` | crates.io | ✅ **PUBLISHED v1.0.1** (2026-09-22) |
+| JS — `stellar-vrf-sdk` | npm | ✅ **PUBLISHED v1.0.1** (`latest`, gitHead `e90347e`) |
 
-### ⚠️ Known issue in the published npm v1.0.0 — fix ready, publish pending
+> ⚠️ **Not yet released:** the 128-bit `deriveRandomInRange` / `derive_random_in_range`
+> bias fix and the Rust SDK's proper StrKey address encoding are in the repo but were
+> **not** part of 1.0.1 (npm 1.0.1 `gitHead` is `e90347e`; the fixes are newer than that
+> commit and the crates.io 1.0.1 code-line count is identical to 1.0.0). They require a new
+> release (changes random-in-range output for the same beta → treat as minor/breaking).
+
+### ✅ Resolved in v1.0.1 — `Networks.MAINNET` was undefined in npm v1.0.0
 
 Post-publish verification from a clean directory (`npm install stellar-vrf-sdk`)
 found that `Networks.MAINNET` — the exact expression used in the README and in
@@ -25,9 +31,9 @@ upstream names the live network **`PUBLIC`**, not `MAINNET`
 
 **Fixed in the repo** (`sdk/js/src/index.ts`): `Networks` is now re-exported with
 an added `MAINNET` alias for `PUBLIC`, so both spellings work and the documented
-example is correct. Version bumped to **1.0.1**.
+example is correct. Version bumped to **1.0.1** and **published** to npm.
 
-`npm publish` for 1.0.1 is blocked by the same staging-only token:
+(Historical) `npm publish` for 1.0.1 was initially blocked by a staging-only token:
 
 ```
 npm error 403 This token can only publish to a staging area.

@@ -7,7 +7,7 @@
 
 import http from "http";
 import { getLeaderState, getInstanceId } from "./leader.js";
-import { getMetrics } from "./metrics.js";
+import { getMetrics, getInFlightCount } from "./metrics.js";
 
 const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || "8080", 10);
 
@@ -39,14 +39,38 @@ export function startHealthServer(): void {
   });
 }
 
+/** A leader that has seen requests but stopped completing them is stuck. */
+const STALL_THRESHOLD_MS = parseInt(process.env.HEALTH_STALL_MS || "600000", 10); // 10 min
+
 function handleHealth(res: http.ServerResponse): void {
   const leaderState = getLeaderState();
   const metrics = getMetrics();
-  const uptimeSeconds = Math.floor((Date.now() - startTime) / 1000);
+  const now = Date.now();
+  const uptimeSeconds = Math.floor((now - startTime) / 1000);
 
-  // Mark unhealthy if no successful fulfillments in 10 min and we are leader
-  const isHealthy =
-    leaderState === "leader" || leaderState === "standby" || leaderState === "unknown";
+  // Liveness rules:
+  //  - "standby"/"unknown" are healthy: a standby is *supposed* to be idle, so
+  //    fulfillment staleness says nothing about it.
+  //  - A "leader" is degraded if it has fulfilled at least one request before
+  //    but nothing for STALL_THRESHOLD_MS — that is a genuine stall.
+  //  - A leader that has never fulfilled anything is only judged once it has
+  //    been up longer than the threshold, so a fresh start is not flagged.
+  //
+  // Previously this function accepted every leader state unconditionally, so a
+  // wedged leader still returned 200 OK and monitoring never fired.
+  let degradedReason: string | null = null;
+  const inFlight = getInFlightCount();
+  if (leaderState === "leader" && inFlight > 0) {
+    const reference = metrics.lastFulfillAt ?? startTime;
+    const idleMs = now - reference;
+    if (idleMs > STALL_THRESHOLD_MS) {
+      degradedReason =
+        `${inFlight} request(s) in flight but none completed for ` +
+        `${Math.floor(idleMs / 1000)}s (threshold ${Math.floor(STALL_THRESHOLD_MS / 1000)}s)`;
+    }
+  }
+
+  const isHealthy = degradedReason === null;
 
   const body = {
     status: isHealthy ? "ok" : "degraded",
@@ -58,6 +82,7 @@ function handleHealth(res: http.ServerResponse): void {
     last_fulfill_at: metrics.lastFulfillAt
       ? new Date(metrics.lastFulfillAt).toISOString()
       : null,
+    ...(degradedReason ? { degraded_reason: degradedReason } : {}),
   };
 
   res.writeHead(isHealthy ? 200 : 503, { "Content-Type": "application/json" });

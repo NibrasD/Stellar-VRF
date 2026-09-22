@@ -38,11 +38,118 @@ export function createServer(): rpc.Server {
  */
 export async function initListener(server: rpc.Server): Promise<void> {
   const health = await server.getHealth();
-  // Look back ~100 ledgers (~8 min) for any recently missed events, but never
-  // before the RPC's retention window (oldestLedger) or the request is rejected.
-  lastLedger = clampToRetention(health.latestLedger - 100, health);
+  // Look back as far as the RPC retention window allows, not a fixed ~100
+  // ledgers (~8 min). The cursor is in-memory only, so after a restart the
+  // event window is the ONLY way to rediscover work; an outage longer than the
+  // look-back would otherwise silently drop requests, leaving them unfulfilled
+  // until the requester claims timeout_refund(). Reconciliation below covers
+  // anything older still.
+  const lookback = parseInt(process.env.STARTUP_LOOKBACK_LEDGERS || "17280", 10); // ~24h
+  lastLedger = clampToRetention(health.latestLedger - lookback, health);
   lastCursor = undefined;
-  log.info(`Listener initialized. Starting from ledger ${lastLedger}`);
+  log.info(
+    `Listener initialized. Starting from ledger ${lastLedger} ` +
+      `(head ${health.latestLedger}, lookback ${lookback})`
+  );
+}
+
+/**
+ * Reconcile state directly against the contract at startup.
+ *
+ * The event cursor lives only in memory, and the RPC event window is finite, so
+ * events alone cannot guarantee that every request is eventually served. This
+ * walks request IDs from the contract and reports the ones that are neither
+ * fulfilled nor refunded, so the caller can process them regardless of whether
+ * their original `request` event is still visible.
+ *
+ * Bounded by `maxScan` so startup cost stays predictable.
+ */
+export async function findPendingRequests(
+  server: rpc.Server,
+  maxScan = 200
+): Promise<bigint[]> {
+  const pending: bigint[] = [];
+  let consecutiveMissing = 0;
+
+  for (let id = 1n; id <= BigInt(maxScan); id++) {
+    // `requester_of` panics for unknown IDs, so a simulation error means the
+    // request does not exist.
+    const exists = (await simulateByRequestId(server, "requester_of", id)) !== null;
+    if (!exists) {
+      // Tolerate small gaps, but stop once clearly past the last request.
+      if (++consecutiveMissing >= 3) break;
+      continue;
+    }
+    consecutiveMissing = 0;
+
+    const fulfilled = await simulateByRequestId(server, "is_fulfilled", id);
+    const refunded = await simulateByRequestId(server, "is_refunded", id);
+    if (fulfilled !== true && refunded !== true) pending.push(id);
+  }
+
+  if (pending.length) {
+    log.warn(
+      `Reconciliation found ${pending.length} unfulfilled request(s): ` +
+        pending.map(String).join(", ")
+    );
+  } else {
+    log.info("Reconciliation: no outstanding requests.");
+  }
+  return pending;
+}
+
+/**
+ * Read the drand round locked in at request time.
+ *
+ * Needed when a request is recovered by reconciliation rather than from an
+ * event, because the round is carried in the event payload.
+ */
+export async function fetchRequestRound(
+  server: rpc.Server,
+  requestId: bigint
+): Promise<bigint | null> {
+  const value = await simulateByRequestId(server, "request_round", requestId);
+  if (value === null || value === undefined) return null;
+  try {
+    return BigInt(value as string | number | bigint);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Simulate a read-only contract function that takes a single u64 request ID.
+ * Returns the decoded value, or `null` if the call failed (e.g. the contract
+ * panicked because the request does not exist).
+ */
+async function simulateByRequestId(
+  server: rpc.Server,
+  fnName: string,
+  requestId: bigint
+): Promise<unknown | null> {
+  try {
+    const account = await server.getAccount(ORACLE_PUBLIC_KEY);
+    const tx = new TransactionBuilder(account, {
+      fee: "100000",
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        Operation.invokeContractFunction({
+          contract: CONTRACT_ADDRESS,
+          function: fnName,
+          args: [nativeToScVal(requestId, { type: "u64" })],
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    const sim = await server.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(sim)) return null;
+    const retval = (sim as any).result?.retval;
+    return retval ? scValToNative(retval) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
