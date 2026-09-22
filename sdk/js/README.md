@@ -39,7 +39,7 @@ Your dApp ──request()──▶ VRF Contract ◀──fulfill()── Oracle
                               │                  drand beacon
                               ▼                  BLS-VRF proof
                    ✓ pairing check verified on-chain
-                   ✓ random output stored permanently
+                   ✓ random output recorded on-chain
 ```
 
 1. You call `request()` with arbitrary context bytes.

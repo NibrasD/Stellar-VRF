@@ -4,7 +4,8 @@
  * Tests cover:
  *   - startListenerLoop exits gracefully when isActive returns false
  *   - startListenerLoop continues on handler errors (no crash)
- *   - pollRequestEvents cursor resync on retention errors
+ *   - startListenerLoop throws after repeated poll failures (supervisor hook)
+ *   - periodic task (reconciliation) runs while active
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -99,5 +100,37 @@ describe("startListenerLoop", () => {
     await expect(
       startListenerLoop(mockServer, handler, isActive)
     ).resolves.toBeUndefined();
+  });
+
+  it("gives up (throws) after repeated poll failures so the supervisor can act", async () => {
+    // Previously every poll error was swallowed forever: a dead RPC produced a
+    // leader that looked alive but never saw another event.
+    const mockServer = {
+      getHealth: vi
+        .fn()
+        .mockResolvedValueOnce({ latestLedger: 1000, oldestLedger: 500 }) // init
+        .mockRejectedValue(new Error("ECONNREFUSED")),                    // every poll
+      getEvents: vi.fn(),
+    } as any;
+
+    await expect(
+      startListenerLoop(mockServer, vi.fn(), () => true)
+    ).rejects.toThrow(/failed \d+ times in a row/);
+  });
+
+  it("runs the periodic task (reconciliation) while active", async () => {
+    const mockServer = {
+      getHealth: vi.fn().mockResolvedValue({ latestLedger: 1000, oldestLedger: 500 }),
+      getEvents: vi.fn().mockResolvedValue({ events: [] }),
+    } as any;
+    const periodic = vi.fn().mockResolvedValue(undefined);
+    let n = 0;
+
+    await startListenerLoop(mockServer, vi.fn(), () => ++n <= 3, {
+      periodic,
+      periodicEveryMs: 0, // due on every iteration
+    });
+
+    expect(periodic).toHaveBeenCalled();
   });
 });

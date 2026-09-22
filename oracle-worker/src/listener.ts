@@ -14,6 +14,7 @@ import {
   NETWORK_PASSPHRASE,
 } from "./config.js";
 import { log, sleep } from "./utils.js";
+import { recordListenerHeartbeat } from "./metrics.js";
 
 export interface VrfRequestEvent {
   requestId: bigint;
@@ -22,9 +23,32 @@ export interface VrfRequestEvent {
   ledger: number;
 }
 
+export interface PendingRequest {
+  requestId: bigint;
+  requiredRound: bigint;
+}
+
+/**
+ * The listener loop gives up (throws) after this many consecutive failed polls
+ * so the supervisor can restart it with a fresh RPC client and cursor — and,
+ * if restarts do not help, hand leadership to the standby. Previously every
+ * poll error was swallowed, so a dead RPC produced a leader that looked alive
+ * but never saw another event.
+ */
+const MAX_CONSECUTIVE_POLL_FAILURES = parseInt(
+  process.env.LISTENER_MAX_POLL_FAILURES || "20",
+  10
+);
+
+/** getLedgerEntries accepts at most 200 keys; 3 keys per request ID. */
+const RECONCILE_BATCH_IDS = 50;
+
 // Persistent cursor for event pagination
 let lastCursor: string | undefined;
 let lastLedger: number | undefined;
+
+/** Polls that threw since the last successful one. */
+let consecutivePollFailures = 0;
 
 /**
  * Create a Soroban RPC server instance.
@@ -54,102 +78,130 @@ export async function initListener(server: rpc.Server): Promise<void> {
 }
 
 /**
- * Reconcile state directly against the contract at startup.
+ * Read the contract's request counter (`DataKey::Counter`, instance storage).
  *
- * The event cursor lives only in memory, and the RPC event window is finite, so
- * events alone cannot guarantee that every request is eventually served. This
- * walks request IDs from the contract and reports the ones that are neither
- * fulfilled nor refunded, so the caller can process them regardless of whether
- * their original `request` event is still visible.
+ * Request IDs are assigned sequentially as `Counter + 1`, so the counter is
+ * the highest ID ever issued. This is what lets reconciliation look at the
+ * NEWEST requests instead of guessing where the ID range ends.
+ */
+export async function readRequestCounter(server: rpc.Server): Promise<bigint> {
+  const entry = await server.getContractData(
+    CONTRACT_ADDRESS,
+    xdr.ScVal.scvLedgerKeyContractInstance(),
+    rpc.Durability.Persistent
+  );
+  const val = (entry.val as any).contractData.val;
+  const storage: Array<{ key: xdr.ScVal; val: xdr.ScVal }> = val.instance.storage ?? [];
+  for (const item of storage) {
+    const key = scValToNative(item.key);
+    if (Array.isArray(key) && key.length === 1 && key[0] === "Counter") {
+      return BigInt(scValToNative(item.val) as bigint | number | string);
+    }
+  }
+  // Counter is written by init(), so an initialised contract always has it.
+  return 0n;
+}
+
+/** Ledger key for a per-request persistent entry, e.g. `Fulfilled(id)`. */
+function requestEntryKey(name: string, id: bigint): xdr.LedgerKey {
+  return xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: new Address(CONTRACT_ADDRESS).toScAddress(),
+      key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(name), xdr.ScVal.scvU64(id)]),
+      durability: xdr.ContractDataDurability.persistent,
+    })
+  );
+}
+
+/**
+ * Reconcile against contract STATE rather than events.
  *
- * Bounded by `maxScan` so startup cost stays predictable.
+ * Events alone cannot guarantee delivery: the cursor is in-memory, and the RPC
+ * only retains a finite event window. After an outage longer than that window,
+ * a request whose `request` event has aged out would never be seen again.
+ *
+ * How it works:
+ *   1. Read `Counter` — the highest request ID issued.
+ *   2. Walk IDs from the newest downwards (bounded by `maxScan`), reading
+ *      `Fulfilled`, `Refunded` and `RequestRound` for each directly from ledger
+ *      storage via batched `getLedgerEntries` — one RPC call per 50 IDs, no
+ *      simulations, no oracle account lookup.
+ *   3. A request is pending iff `Fulfilled == false` and `Refunded != true`.
+ *
+ * Entries that no longer exist (TTL-expired / archived) are skipped: `fulfill()`
+ * could not succeed on them anyway.
+ *
+ * Returned oldest-first so the requests closest to their timeout are served
+ * first.
+ *
+ * The previous implementation scanned IDs 1..200 upwards and stopped at the
+ * first gap, which silently stopped finding new requests once the contract had
+ * issued more than 200 IDs.
  */
 export async function findPendingRequests(
   server: rpc.Server,
-  maxScan = 200
-): Promise<bigint[]> {
-  const pending: bigint[] = [];
-  let consecutiveMissing = 0;
-
-  for (let id = 1n; id <= BigInt(maxScan); id++) {
-    // `requester_of` panics for unknown IDs, so a simulation error means the
-    // request does not exist.
-    const exists = (await simulateByRequestId(server, "requester_of", id)) !== null;
-    if (!exists) {
-      // Tolerate small gaps, but stop once clearly past the last request.
-      if (++consecutiveMissing >= 3) break;
-      continue;
-    }
-    consecutiveMissing = 0;
-
-    const fulfilled = await simulateByRequestId(server, "is_fulfilled", id);
-    const refunded = await simulateByRequestId(server, "is_refunded", id);
-    if (fulfilled !== true && refunded !== true) pending.push(id);
+  maxScan = parseInt(process.env.RECONCILE_MAX_SCAN || "1000", 10)
+): Promise<PendingRequest[]> {
+  const counter = await readRequestCounter(server);
+  const pending: PendingRequest[] = [];
+  if (counter === 0n) {
+    recordListenerHeartbeat();
+    log.info("Reconciliation: contract has issued no requests yet.");
+    return pending;
   }
+
+  const lowest = counter - BigInt(Math.max(1, maxScan)) + 1n;
+  const floor = lowest > 1n ? lowest : 1n;
+
+  for (let hi = counter; hi >= floor; hi -= BigInt(RECONCILE_BATCH_IDS)) {
+    const ids: bigint[] = [];
+    for (let id = hi; id >= floor && id > hi - BigInt(RECONCILE_BATCH_IDS); id--) {
+      ids.push(id);
+    }
+
+    const keys = ids.flatMap((id) => [
+      requestEntryKey("Fulfilled", id),
+      requestEntryKey("Refunded", id),
+      requestEntryKey("RequestRound", id),
+    ]);
+    const res = await server.getLedgerEntries(...keys);
+
+    const fulfilled = new Map<bigint, boolean>();
+    const refunded = new Map<bigint, boolean>();
+    const rounds = new Map<bigint, bigint>();
+    for (const entry of res.entries) {
+      const data = (entry.val as any).contractData;
+      const key = scValToNative(data.key);
+      if (!Array.isArray(key) || key.length !== 2) continue;
+      const [name, rawId] = key;
+      const id = BigInt(rawId);
+      const value = scValToNative(data.val);
+      if (name === "Fulfilled") fulfilled.set(id, value === true);
+      else if (name === "Refunded") refunded.set(id, value === true);
+      else if (name === "RequestRound") rounds.set(id, BigInt(value));
+    }
+
+    for (const id of ids) {
+      const round = rounds.get(id);
+      if (fulfilled.get(id) === false && refunded.get(id) !== true && round !== undefined) {
+        pending.push({ requestId: id, requiredRound: round });
+      }
+    }
+  }
+
+  pending.sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
+  recordListenerHeartbeat();
 
   if (pending.length) {
     log.warn(
-      `Reconciliation found ${pending.length} unfulfilled request(s): ` +
-        pending.map(String).join(", ")
+      `Reconciliation found ${pending.length} unfulfilled request(s) ` +
+        `(scanned ${floor}..${counter}): ` +
+        pending.map((p) => String(p.requestId)).join(", ")
     );
   } else {
-    log.info("Reconciliation: no outstanding requests.");
+    log.info(`Reconciliation: no outstanding requests (scanned ${floor}..${counter}).`);
   }
   return pending;
-}
-
-/**
- * Read the drand round locked in at request time.
- *
- * Needed when a request is recovered by reconciliation rather than from an
- * event, because the round is carried in the event payload.
- */
-export async function fetchRequestRound(
-  server: rpc.Server,
-  requestId: bigint
-): Promise<bigint | null> {
-  const value = await simulateByRequestId(server, "request_round", requestId);
-  if (value === null || value === undefined) return null;
-  try {
-    return BigInt(value as string | number | bigint);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Simulate a read-only contract function that takes a single u64 request ID.
- * Returns the decoded value, or `null` if the call failed (e.g. the contract
- * panicked because the request does not exist).
- */
-async function simulateByRequestId(
-  server: rpc.Server,
-  fnName: string,
-  requestId: bigint
-): Promise<unknown | null> {
-  try {
-    const account = await server.getAccount(ORACLE_PUBLIC_KEY);
-    const tx = new TransactionBuilder(account, {
-      fee: "100000",
-      networkPassphrase: NETWORK_PASSPHRASE,
-    })
-      .addOperation(
-        Operation.invokeContractFunction({
-          contract: CONTRACT_ADDRESS,
-          function: fnName,
-          args: [nativeToScVal(requestId, { type: "u64" })],
-        })
-      )
-      .setTimeout(30)
-      .build();
-
-    const sim = await server.simulateTransaction(tx);
-    if (rpc.Api.isSimulationError(sim)) return null;
-    const retval = (sim as any).result?.retval;
-    return retval ? scValToNative(retval) : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -248,7 +300,11 @@ export async function pollRequestEvents(
       // we never fall behind the retention window on quiet chains.
       lastLedger = clampToRetention(health.latestLedger, health);
     }
+
+    consecutivePollFailures = 0;
+    recordListenerHeartbeat();
   } catch (err: unknown) {
+    consecutivePollFailures++;
     // Don't crash on transient RPC errors. If the cursor became invalid (e.g.
     // it aged out of the retention window), drop it so the next poll re-syncs
     // from a fresh, in-window startLedger instead of failing forever.
@@ -379,20 +435,43 @@ export async function isRequestFulfilled(
   }
 }
 
+export interface ListenerLoopOptions {
+  /**
+   * Called every `periodicEveryMs` while the loop is active (e.g. state
+   * reconciliation). Errors are logged, never fatal.
+   */
+  periodic?: () => Promise<void>;
+  periodicEveryMs?: number;
+}
+
 /**
  * Start the event polling loop. Calls the handler for each new request.
- * Exits gracefully when isActive() returns false.
+ *
+ * - Returns normally when `isActive()` turns false (leadership lost).
+ * - THROWS after `LISTENER_MAX_POLL_FAILURES` consecutive failed polls, so the
+ *   caller's supervisor can restart it or step down. A loop that silently
+ *   keeps failing is indistinguishable from a healthy idle one.
  */
 export async function startListenerLoop(
   server: rpc.Server,
   handler: (event: VrfRequestEvent) => Promise<void>,
-  isActive?: () => boolean
+  isActive?: () => boolean,
+  options: ListenerLoopOptions = {}
 ): Promise<void> {
   await initListener(server);
+  consecutivePollFailures = 0;
   log.info(`Polling for VRF request events every ${POLL_INTERVAL_MS}ms…`);
+
+  let lastPeriodicAt = Date.now();
 
   while (!isActive || isActive()) {
     const events = await pollRequestEvents(server);
+
+    if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+      throw new Error(
+        `event polling failed ${consecutivePollFailures} times in a row — listener giving up`
+      );
+    }
 
     for (const event of events) {
       if (isActive && !isActive()) break;
@@ -403,6 +482,22 @@ export async function startListenerLoop(
           `Failed to handle request ${event.requestId}: ${
             err instanceof Error ? err.message : err
           }`
+        );
+      }
+    }
+
+    if (
+      options.periodic &&
+      options.periodicEveryMs !== undefined &&
+      Date.now() - lastPeriodicAt >= options.periodicEveryMs &&
+      (!isActive || isActive())
+    ) {
+      lastPeriodicAt = Date.now();
+      try {
+        await options.periodic();
+      } catch (err) {
+        log.error(
+          `Periodic listener task failed: ${err instanceof Error ? err.message : err}`
         );
       }
     }

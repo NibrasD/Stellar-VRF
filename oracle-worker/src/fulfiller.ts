@@ -25,19 +25,39 @@ import { log, sleep, bytesToHex } from "./utils.js";
 import type { VrfProofData } from "./vrf.js";
 
 /**
+ * Thrown when submission is aborted on purpose (e.g. leadership lost). Callers
+ * must NOT retry this — retrying is exactly what the abort is preventing.
+ */
+export class FulfillAbortedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FulfillAbortedError";
+  }
+}
+
+/**
  * Submit a fulfill() transaction to the VRF contract.
  *
  * @param server    - Soroban RPC server
  * @param requestId - The on-chain request ID
  * @param proof     - The complete VRF proof data
+ * @param canSubmit - Checked immediately before EVERY attempt (including
+ *                    internal retries). Return false to abort — used to stop a
+ *                    node that lost leadership mid-retry from submitting.
  * @returns The transaction hash on success
  */
 export async function submitFulfillment(
   server: rpc.Server,
   requestId: bigint,
-  proof: VrfProofData
+  proof: VrfProofData,
+  canSubmit: () => boolean = () => true
 ): Promise<string> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (!canSubmit()) {
+      throw new FulfillAbortedError(
+        `aborting fulfill(${requestId}) before attempt ${attempt}: no longer allowed to submit (leadership lost)`
+      );
+    }
     try {
       log.info(
         `Submitting fulfill for request ${requestId} (attempt ${attempt}/${MAX_RETRIES})…`

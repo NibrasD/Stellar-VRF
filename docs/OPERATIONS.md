@@ -81,6 +81,16 @@ The replica will:
 | `POLL_INTERVAL_MS` | No | `3000` | Event polling interval |
 | `MAX_RETRIES` | No | `3` | Max fulfill retry attempts |
 | `TX_FEE` | No | `1000000` | Transaction fee (stroops) |
+| `LISTENER_MAX_POLL_FAILURES` | No | `20` | Consecutive failed polls before the listener restarts |
+| `LISTENER_MAX_RESTARTS` / `LISTENER_RESTART_WINDOW_MS` | No | `5` / `600000` | Crash budget before relinquishing leadership |
+| `LISTENER_RESTART_BASE_MS` / `LISTENER_RESTART_MAX_MS` | No | `2000` / `60000` | Listener restart backoff |
+| `LEADER_LEASE_SAFETY_MS` | No | `TTL/5` | Local fail-closed margin before lease expiry |
+| `LEADER_RELINQUISH_COOLDOWN_MS` | No | `2×TTL` | No re-acquire after relinquishing |
+| `RECONCILE_MAX_SCAN` | No | `1000` | Newest request IDs re-checked on each reconciliation |
+| `RECONCILE_INTERVAL_MS` | No | `120000` | Periodic reconciliation interval while leader |
+| `HEALTH_LISTENER_STALE_MS` / `HEALTH_LISTENER_GRACE_MS` | No | `120000` / `60000` | Leader listener staleness threshold / grace |
+
+Leader-election variables (`REDIS_URL`, `LEADER_LOCK_TTL_MS`, …) are listed in [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md#environment-variables).
 
 ## Monitoring
 
@@ -90,11 +100,35 @@ The replica will:
 curl http://localhost:8080/health
 ```
 
-Returns JSON with:
-- `status`: "healthy" or "unhealthy"
-- `role`: "LEADER" or "STANDBY"
-- `lastPoll`: timestamp of last successful poll
-- `uptime`: seconds since start
+Returns HTTP **200** when healthy and **503** when degraded, with JSON:
+- `status`: `"ok"` or `"degraded"` (plus `degraded_reason` when degraded)
+- `role`: `"leader"`, `"standby"` or `"unknown"`
+- `uptime_seconds`, `requests_fulfilled`, `requests_failed`, `last_fulfill_at`
+- `listener`: `{ running, last_progress_at, restarts, last_error }`
+
+A **standby is always healthy**. It's supposed to be idle. A **leader is degraded** when any of these is true:
+- no listener session is running while it holds the lease;
+- the listener made no progress (successful poll or reconciliation) for `HEALTH_LISTENER_STALE_MS` (default 120s, after a `HEALTH_LISTENER_GRACE_MS` 60s grace period from session start);
+- requests are in flight but none completed within the stall threshold.
+
+Point your load balancer / uptime monitor at `/health` and alert on non-200 from the **leader**.
+
+### Prometheus Metrics (`/metrics`)
+
+| Metric | Type | Alert on |
+|---|---|---|
+| `vrf_is_leader` | gauge | `sum(vrf_is_leader)` across instances ≠ 1 for > 1 min |
+| `vrf_listener_running` | gauge | `vrf_is_leader == 1 and vrf_listener_running == 0` for > 1 min |
+| `vrf_listener_restarts_total` | counter | `increase(...[10m]) > 2`. A flapping RPC endpoint, or a node about to relinquish |
+| `vrf_requests_fulfilled_total` / `vrf_requests_failed_total` | counter | failure ratio rising |
+| `vrf_fulfill_duration_ms_avg` | gauge | > 60000 |
+| `vrf_drand_delays_total` | counter | sustained growth |
+
+### Listener crash / relinquish behaviour
+
+- Log `[Supervisor] Listener crashed (<error>). Restart i/N in Xms.` means the supervisor is recovering automatically. Look at `listener.last_error` on `/health`.
+- Log `[Supervisor] Listener crashed K times within …s … Relinquishing leadership so the standby can take over.` means the listener crashed `LISTENER_MAX_RESTARTS` times within `LISTENER_RESTART_WINDOW_MS`. The node released the lease and won't re-acquire for `LEADER_RELINQUISH_COOLDOWN_MS`. **Confirm the standby became leader** (`/status` on both hosts), then investigate the relinquishing node's RPC connectivity.
+- Log `Reconciliation found N unfulfilled request(s)` after a failover or restart is expected. These are requests whose events the previous leader never finished handling. If it keeps appearing on every periodic run, fulfillment is failing for those IDs. Check the logs for their `request_id`.
 
 ### Key Metrics to Watch
 
@@ -154,7 +188,10 @@ console.log('Public (192 bytes):', Buffer.from(pk.toRawBytes(false)).toString('h
 
 ### Rotate drand Public Key
 
-Only needed if drand quicknet rotates their key (extremely rare):
+Only needed if drand quicknet rotates their key (extremely rare).
+
+> **Scope: key rotation for the *same* chain only. This is not a chain migration.**
+> `rotate_drand_pk()` replaces only the stored `DrandPK`. `DrandGenesis`, `DrandPeriod`, and the drand signature DST are fixed at `init()` or compiled into the contract. `DRAND_DST` is the quicknet `bls-unchained-g1-rfc9380` scheme (G1 signatures, unchained). The contract has no upgrade entrypoint. So you **can't** move an existing deployment to a drand chain with a different genesis time, period, or signature scheme by rotating the key. The pairing check would reject every beacon, or the round↔time mapping would be wrong. Switching chains means deploying and initializing a new contract instance and migrating consumers to it.
 
 ```bash
 # Fetch new key from drand API
@@ -181,8 +218,14 @@ Soroban storage entries expire. The oracle worker extends TTLs during `fulfill()
 
 - **Instance storage** (contract state): extended on every `fulfill()`
 - **Request data**: extended to at least 100,000 ledgers (~5.7 days)
-- **Proof cleanup**: `cleanup_proof()` removes bulky proof data while retaining
-  the `Fulfilled` flag permanently
+- **Proof cleanup**: `cleanup_proof()` (callable by the requester **or the oracle**)
+  removes the proof, request context and callback metadata while retaining the
+  `Fulfilled` flag. After cleanup, `get_proof()` / `derive_random()` for that
+  request panic, so consumers must read or cache their result first.
+- **Nothing is permanent**: every persistent entry, including `Fulfilled`, is
+  subject to Soroban TTL and is archived if not extended. Results are durably
+  verifiable through the `fulfill` transaction and its events, which are
+  independent of contract storage.
 
 Manual TTL extension is not typically needed if the oracle processes requests
 regularly.

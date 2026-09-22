@@ -4,7 +4,10 @@
  * Main event loop with leader election:
  *   1. Start health HTTP server (all instances)
  *   2. Run leader election — only leader processes requests
- *   3. Leader: poll for VRF request events from the contract
+ *   3. Leader: a supervised listener session (restarted on crash; leadership
+ *      relinquished if it keeps crashing) that first reconciles against
+ *      contract state, then polls for VRF request events, re-reconciling
+ *      every RECONCILE_INTERVAL_MS
  *   4. For each new request:
  *      a. Check if already fulfilled (idempotency)
  *      b. Wait for the required drand round (with lag detection)
@@ -23,29 +26,43 @@ import {
   fetchRequestContext,
   isRequestFulfilled,
   findPendingRequests,
-  fetchRequestRound,
 } from "./listener.js";
 import { waitAndFetchBeacon } from "./drand.js";
 import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
 import { submitFulfillment } from "./fulfiller.js";
-import { log, bytesToHex } from "./utils.js";
-import { startLeaderElection, isLeader, getInstanceId } from "./leader.js";
+import { log, bytesToHex, sleep } from "./utils.js";
+import {
+  startLeaderElection,
+  isLeader,
+  getInstanceId,
+  relinquishLeadership,
+} from "./leader.js";
 import { startHealthServer } from "./health.js";
 import {
   recordFulfillment,
   recordFailure,
   recordRequestSeen,
   recordRequestSettled,
+  recordListenerStarted,
+  recordListenerStopped,
+  recordListenerRestart,
 } from "./metrics.js";
 import { withRetry, withFulfillRetry, checkDrandLag } from "./retry.js";
 import { DRAND_PERIOD } from "./config.js";
+import { ListenerSupervisor } from "./supervisor.js";
+import type { rpc } from "@stellar/stellar-sdk";
 import type { VrfRequestEvent } from "./listener.js";
 
 // Track in-flight requests to avoid double-processing
 const processingRequests = new Set<string>();
 
-// Is the event listener active? (only when leader)
-let listenerActive = false;
+/**
+ * How often the leader re-reconciles against contract state while running.
+ * Startup reconciliation alone is not enough: a request whose event is missed
+ * mid-session (RPC hiccup, cursor resync that skips ahead) would otherwise
+ * wait for the next leadership change to be noticed.
+ */
+const RECONCILE_INTERVAL_MS = parseInt(process.env.RECONCILE_INTERVAL_MS || "120000", 10);
 
 async function handleRequest(event: VrfRequestEvent): Promise<void> {
   // Double-check leadership before every request
@@ -132,16 +149,12 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
       return;
     }
 
+    // Leadership is re-checked before EVERY submission attempt: the outer
+    // withFulfillRetry attempts and submitFulfillment's own inner retries.
+    // A FulfillAbortedError is terminal — withFulfillRetry does not retry it.
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
-      () => {
-        if (!isLeader()) {
-          throw new Error(
-            `aborting fulfill(${event.requestId}): leadership lost before submit`
-          );
-        }
-        return submitFulfillment(server, event.requestId, proof);
-      }
+      () => submitFulfillment(server, event.requestId, proof, isLeader)
     );
 
     const durationMs = Date.now() - startMs;
@@ -163,56 +176,76 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   }
 }
 
-async function startListening(): Promise<void> {
-  if (listenerActive) return;
-  listenerActive = true;
-  log.info(`[${getInstanceId()}] Became LEADER — starting event listener.`);
-  try {
-    const server = createServer();
-
-    // Reconcile against contract state before relying on events.
-    //
-    // The event cursor is in-memory only and the RPC event window is finite, so
-    // a request whose `request` event has aged out would otherwise never be
-    // seen again — it would sit unfulfilled until the requester claimed
-    // timeout_refund(). This closes that liveness gap on every leadership
-    // acquisition (startup and failover alike).
-    try {
-      const pending = await findPendingRequests(server);
-      for (const requestId of pending) {
-        if (!isLeader()) break;
-        const requiredRound = await fetchRequestRound(server, requestId);
-        if (requiredRound === null) {
-          log.warn(`Skipping request ${requestId}: could not read its required round.`);
-          continue;
-        }
-        await handleRequest({
-          requestId,
-          requester: "(recovered)",
-          requiredRound,
-          ledger: 0,
-        });
-      }
-    } catch (err) {
-      // Reconciliation is best-effort: never block the live listener on it.
-      log.error(
-        `Startup reconciliation failed: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    await startListenerLoop(server, handleRequest, () => listenerActive);
-  } finally {
-    // Reset flag so the listener can restart if it crashes or exits.
-    // Without this, a crash leaves listenerActive = true permanently,
-    // and the guard above prevents any restart attempt (zombie state).
-    listenerActive = false;
+/**
+ * Recover work from contract STATE (not events) and process it.
+ *
+ * Runs at the start of every listener session — i.e. on process start, on
+ * failover, and after every listener restart — and then periodically. Safe to
+ * run repeatedly: `handleRequest()` skips anything already fulfilled or in
+ * flight, and the contract rejects duplicates regardless.
+ */
+async function reconcile(server: rpc.Server, isCurrent: () => boolean): Promise<void> {
+  const pending = await findPendingRequests(server);
+  for (const p of pending) {
+    if (!isCurrent()) break;
+    await handleRequest({
+      requestId: p.requestId,
+      requester: "(recovered by reconciliation)",
+      requiredRound: p.requiredRound,
+      ledger: 0,
+    });
   }
 }
 
+/** One listener session: reconcile, then poll events (with periodic reconcile). */
+async function runListenerSession(isCurrent: () => boolean): Promise<void> {
+  log.info(`[${getInstanceId()}] Starting listener session.`);
+  const server = createServer();
+
+  try {
+    await reconcile(server, isCurrent);
+  } catch (err) {
+    // Not fatal: live events still flow, and the periodic pass below retries.
+    log.error(
+      `Startup reconciliation failed (will retry every ${RECONCILE_INTERVAL_MS}ms): ` +
+        `${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!isCurrent()) return;
+
+  await startListenerLoop(server, handleRequest, isCurrent, {
+    periodic: () => reconcile(server, isCurrent),
+    periodicEveryMs: RECONCILE_INTERVAL_MS,
+  });
+}
+
+const supervisor = new ListenerSupervisor({
+  runSession: runListenerSession,
+  isLeader,
+  relinquish: relinquishLeadership,
+  sleep,
+  now: Date.now,
+  log,
+  onSessionStart: recordListenerStarted,
+  onSessionEnd: recordListenerStopped,
+  onRestart: recordListenerRestart,
+});
+
+function onBecomeLeader(): void {
+  log.info(`[${getInstanceId()}] Became LEADER — starting supervised event listener.`);
+  supervisor.start().catch((err) => {
+    // The supervisor itself handles session crashes; reaching here means a
+    // bug in the supervisor. Do not keep a lease we cannot serve.
+    log.error(`Supervisor failed unexpectedly: ${err}`);
+    void relinquishLeadership(`supervisor failure: ${err}`);
+  });
+}
+
 function onLoseLeadership(): void {
-  listenerActive = false;
-  log.warn(`[${getInstanceId()}] Lost leadership — pausing fulfillments.`);
-  // Note: in-flight requests complete naturally; new ones won't be started
+  supervisor.stop();
+  log.warn(`[${getInstanceId()}] Not leader — listener stopped, no new fulfillments.`);
+  // In-flight requests re-check isLeader() before submitting and abort.
 }
 
 async function main(): Promise<void> {
@@ -234,10 +267,7 @@ async function main(): Promise<void> {
 
   // Start leader election
   // Only the leader runs the event listener and submits transactions
-  startLeaderElection(
-    () => startListening().catch((err) => log.error(`Listener error: ${err}`)),
-    onLoseLeadership
-  );
+  startLeaderElection(onBecomeLeader, onLoseLeadership);
 }
 
 // ─── Run ────────────────────────────────────────────────────────────────────

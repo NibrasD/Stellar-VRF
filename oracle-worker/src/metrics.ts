@@ -76,3 +76,55 @@ export function recordRequestSettled(): void {
 export function getInFlightCount(): number {
   return inFlight;
 }
+
+// ─── Listener liveness ──────────────────────────────────────────────────────
+//
+// Holding the leader lease is not the same as doing the leader's job. The
+// lease lives in Redis and is renewed by a timer, so it stays valid even if the
+// event loop has crashed or is stuck on a dead RPC. These fields let /health
+// tell "leader and working" apart from "leader in name only".
+
+export interface ListenerStatus {
+  /** A listener session is currently running on this instance. */
+  running: boolean;
+  /** Last time the listener made verified progress (poll OK / request reconciled). */
+  lastHeartbeatAt: number | null;
+  /** When the current session started (null when not running). */
+  sessionStartedAt: number | null;
+  /** Total number of times the supervisor restarted a crashed session. */
+  restarts: number;
+  /** Most recent session failure, for operators. */
+  lastError: string | null;
+}
+
+const listener: ListenerStatus = {
+  running: false,
+  lastHeartbeatAt: null,
+  sessionStartedAt: null,
+  restarts: 0,
+  lastError: null,
+};
+
+export function getListenerStatus(): Readonly<ListenerStatus> {
+  return listener;
+}
+
+export function recordListenerStarted(): void {
+  listener.running = true;
+  listener.sessionStartedAt = Date.now();
+}
+
+export function recordListenerStopped(error?: string): void {
+  listener.running = false;
+  listener.sessionStartedAt = null;
+  if (error) listener.lastError = error;
+}
+
+/** Call whenever the listener proves it can still talk to the chain. */
+export function recordListenerHeartbeat(): void {
+  listener.lastHeartbeatAt = Date.now();
+}
+
+export function recordListenerRestart(): void {
+  listener.restarts++;
+}

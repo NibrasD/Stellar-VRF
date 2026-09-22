@@ -11,7 +11,7 @@ Your dApp  ──request()──▶  VRF Contract  ◀──fulfill()──  Ora
                                 │                    BLS-VRF proof
                                 ▼
                       ✓ Pairing check verified on-chain
-                      ✓ Random output stored permanently
+                      ✓ Random output recorded on-chain
                                 │
 Your dApp  ◀─derive_random_in_range()──┘
 ```
@@ -20,7 +20,7 @@ Your dApp  ◀─derive_random_in_range()──┘
 2. The oracle fetches a **future** drand quicknet beacon (`round_offset ≥ 2` — prevents prediction)
 3. Oracle generates a BLS12-381 VRF proof bound to your context + drand randomness
 4. The contract verifies the proof with **on-chain BLS12-381 pairing checks** (~58M CPU instructions)
-5. The verified random output is stored permanently on-chain
+5. The verified random output is written to contract storage and emitted in the `fulfill` event. The `Fulfilled` flag is retained, but the proof data can later be removed by `cleanup_proof()` (requester or oracle), and all entries are subject to Soroban storage TTL. Read or cache your result after fulfillment (see [Storage TTL Management](docs/OPERATIONS.md#storage-ttl-management)).
 6. Anyone can independently re-verify — no trust required
 
 ## Live
@@ -124,6 +124,16 @@ docs/               — Operational and security documentation
 - **High availability** — primary + hot-standby on separate hosts with Redis leader election, validated by a live failover drill on Mainnet ([evidence](docs/HA_FAILOVER_EVIDENCE.md))
 - **Re-entrancy protection** — transient lock per request ID
 - **Storage TTL extension** — automatic TTL renewal on all persistent entries
+
+## Trust Assumptions & Known Limitations
+
+Please read these before integrating on Mainnet. Details are in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
+- **Single oracle identity.** One oracle key (Stellar account + BLS + Ed25519) controls `fulfill()`, `rotate_oracle_keys()` and `rotate_drand_pk()`. HA removes the *availability* single point of failure, but not the *key* single point of failure. If that key is lost, the oracle can't be rotated and requests can only be refunded. If it's stolen, the attacker can rotate the oracle to themselves and withhold service. The attacker still can't bias outputs, because the VRF output is deterministic and verified on-chain. Keep the oracle account under a multisig / hardware signer.
+- **Request fee is currently 0 on Mainnet.** The deployed instance was initialised with `fee_amount = 0`, and `fee_amount` is immutable (no setter, no upgrade entrypoint). Anyone can create requests for the cost of the network fee alone. The oracle then pays about 0.14 XLM per `fulfill()`. **Spam requests can drain the oracle account.** Mitigations: the operator monitors the oracle balance and request rate (see [OPERATIONS.md](docs/OPERATIONS.md#key-metrics-to-watch)) and may stop fulfilling, and requesters are always protected by `timeout_refund()`. A deployment with `fee_amount > 0` is required to make fulfillment self-funding.
+- **drand chain is fixed.** `rotate_drand_pk()` rotates the key of the *configured* drand chain. It can't migrate the contract to a different drand chain (genesis/period/scheme are fixed). See [OPERATIONS.md](docs/OPERATIONS.md#rotate-drand-public-key).
+- **Results are not stored forever.** See step 5 above.
+- **SDK scope.** The Rust SDK is a read/verify client. It doesn't submit transactions ([details](sdk/rust/README.md#scope--read-this-first)).
 
 ## Performance
 

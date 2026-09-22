@@ -101,7 +101,7 @@ Your dApp ──request()──▶ VRF Contract ◀──fulfill()── Oracle
                               │                  drand beacon
                               ▼                  BLS-VRF proof
                    ✓ pairing check verified on-chain
-                   ✓ random output stored permanently
+                   ✓ random output recorded on-chain
 ```
 
 1. Call `request()` with arbitrary context bytes.
@@ -111,7 +111,9 @@ Your dApp ──request()──▶ VRF Contract ◀──fulfill()── Oracle
 
 ## Independently verifying a result
 
-You do not have to trust the oracle. The proof is stored on-chain permanently:
+You do not have to trust the oracle. The proof is stored in contract storage after
+fulfillment (until it is removed via `cleanup_proof()` or archived by storage TTL)
+and is always recoverable from the `fulfill` transaction itself:
 
 ```text
 alpha = sha256(request_id ‖ context ‖ drand_round ‖ sha256(drand_signature))

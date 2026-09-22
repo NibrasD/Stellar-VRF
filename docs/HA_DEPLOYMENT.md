@@ -43,6 +43,9 @@ Two backends are selected automatically at runtime:
 3. **Failover**: If the leader stops renewing, the key expires after `LEADER_LOCK_TTL_MS`; a standby's next `SET … NX` succeeds and it becomes leader.
 4. **Release**: On shutdown the leader runs a fenced Lua `del` (only deletes the key if it still owns it), so a standby takes over immediately.
 5. **Fail-closed**: Any Redis error makes `acquireOrRenew()` return `false` → the node drops to standby, so a Redis outage never produces two leaders.
+   - **Every Redis command has a deadline** (default `min(5s, TTL/3)`). A hung Redis connection can't hold up a renewal forever. On timeout the socket is destroyed, because RESP replies are matched to commands by order, so a late reply can't be trusted. The client reconnects on the next command.
+   - **Commands are serialised** (single-flight queue), so concurrent callers never interleave on one socket.
+   - **Local lease deadline.** `isLeader()` doesn't rely on the *last renewal result*. After each successful acquire/renew the node records `leaseValidUntil = sentAt + TTL − LEADER_LEASE_SAFETY_MS`. `sentAt` is when the command was **sent**, not when it returned. When that deadline passes, `isLeader()` returns `false` immediately, even if the renewal call is still hanging. Redis can only expire the key *after* this local deadline, so a node never thinks it is leader while a standby could already hold the lease.
 6. **Pre-submit leadership re-check**: leadership is re-verified **immediately before spending money**, not just when a request is picked up. Processing a request involves a long wait (a future drand round is tens of seconds away), during which a paused, partitioned or GC-stalled leader can legitimately lose its lease to the standby. `handleRequest()` therefore checks `isLeader()` (a) on entry, (b) after proof generation and immediately before `submitFulfillment()`, and (c) inside the retry callback, since each retry adds more delay. A node that lost the lease mid-flight discards the work instead of submitting.
 7. **Defense-in-depth**: Even in a rare split, the on-chain contract rejects duplicate `fulfill()` (idempotency + re-entrancy guard), so double-submission is impossible.
 
@@ -63,6 +66,21 @@ To be precise about the strength of the claim (see also
   "fencing" in the strict distributed-systems sense. The residual risk if a process
   freezes between the final `isLeader()` check and the RPC call is a *duplicate
   submission attempt* (rejected on-chain, wasted fee) — never a corrupted result.
+
+## Listener Supervision & Reconciliation
+
+Holding the lease isn't enough. The leader must also be *processing requests*. A leader whose listener loop has died, while it keeps renewing the lease, is the worst failure mode because the standby never takes over. The worker handles this in four ways:
+
+1. **Session-numbered listener** (`src/supervisor.ts`). Each leadership acquisition starts a new listener *session* with a monotonically increasing number. A loop keeps running only while `isCurrent(session) && isLeader()`. After a lose→regain leadership flap, the old loop sees it's no longer current and exits, so **two listener loops never run at the same time**.
+2. **Crash recovery.** If the loop throws, for example after `LISTENER_MAX_POLL_FAILURES` consecutive failed RPC polls, the supervisor restarts it with exponential backoff (`LISTENER_RESTART_BASE_MS` → `LISTENER_RESTART_MAX_MS`). It doesn't restart if leadership was lost during the backoff.
+3. **Demotion on repeated failure.** After `LISTENER_MAX_RESTARTS` crashes within `LISTENER_RESTART_WINDOW_MS`, the node calls `relinquishLeadership()`. This releases the Redis lease (fenced `del`) and enters a cooldown (`LEADER_RELINQUISH_COOLDOWN_MS`, default 2×TTL) during which it won't re-acquire, so the **standby takes over** instead of the broken node taking the lease back. An unexpected error inside the supervisor itself also triggers a relinquish.
+4. **Reconciliation.** Event polling alone can miss requests: events that fell out of the RPC retention window during downtime, a crash between seeing an event and fulfilling it, or a failover. Reconciliation catches these. It runs **when each listener session starts** and **every `RECONCILE_INTERVAL_MS`** (default 120s) while leader. It reads the on-chain `Counter`, then batch-reads `Fulfilled` / `Refunded` / `RequestRound` for the newest `RECONCILE_MAX_SCAN` request IDs (newest first, ≤150 ledger keys per `getLedgerEntries` call). Every ID that is neither fulfilled nor refunded is handed to the normal fulfillment path. The on-chain `Fulfilled` flag makes this idempotent.
+
+   > Requests older than the newest `RECONCILE_MAX_SCAN` IDs are not reconciled. After `TIMEOUT_ROUNDS` (~60s) such requests can be refunded by the requester anyway, so raise the window only if you expect very long outages with very high request volume.
+
+**Pre-submit gate inside retries.** `submitFulfillment()` takes a `canSubmit` callback (wired to `isLeader()`) and checks it before **every** internal attempt, including simulate/send retries. A node that loses the lease mid-retry throws `FulfillAbortedError`, and the outer retry wrapper does not retry that error.
+
+**Health.** A LEADER reports `degraded` on `/health` if no listener session is running, or if the listener made no progress (successful poll or reconciliation) for `HEALTH_LISTENER_STALE_MS`. A grace period of `HEALTH_LISTENER_GRACE_MS` applies after a session starts. Alert on this. It is exactly the "leader holds the lease but isn't working" case.
 
 ## Failover Timing
 
@@ -135,4 +153,14 @@ Expected output:
 | `LEADER_LOCK_TTL_MS` | `30000` | Lease/lock expiry in ms |
 | `LEADER_HEARTBEAT_MS` | `10000` | How often the leader renews |
 | `LEADER_POLL_MS` | `5000` | How often a standby tries to acquire |
+| `LEADER_LEASE_SAFETY_MS` | `TTL/5` | `isLeader()` fails closed this long before the lease could expire |
+| `LEADER_RELINQUISH_COOLDOWN_MS` | `2×TTL` | No re-acquire for this long after voluntarily relinquishing |
+| `LISTENER_MAX_POLL_FAILURES` | `20` | Consecutive failed polls before the listener loop throws |
+| `LISTENER_MAX_RESTARTS` | `5` | Crashes within the window before leadership is relinquished |
+| `LISTENER_RESTART_WINDOW_MS` | `600000` | Sliding window for counting listener crashes |
+| `LISTENER_RESTART_BASE_MS` / `LISTENER_RESTART_MAX_MS` | `2000` / `60000` | Restart backoff (exponential, capped) |
+| `RECONCILE_MAX_SCAN` | `1000` | Newest request IDs re-checked per reconciliation |
+| `RECONCILE_INTERVAL_MS` | `120000` | Periodic reconciliation interval while leader |
+| `HEALTH_LISTENER_STALE_MS` | `120000` | Leader is degraded if the listener made no progress for this long |
+| `HEALTH_LISTENER_GRACE_MS` | `60000` | Grace period after a listener session starts |
 | `HEALTH_PORT` | `8080` | HTTP health/metrics port |

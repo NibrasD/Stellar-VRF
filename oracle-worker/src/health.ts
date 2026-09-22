@@ -7,7 +7,7 @@
 
 import http from "http";
 import { getLeaderState, getInstanceId } from "./leader.js";
-import { getMetrics, getInFlightCount } from "./metrics.js";
+import { getMetrics, getInFlightCount, getListenerStatus } from "./metrics.js";
 
 const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || "8080", 10);
 
@@ -42,9 +42,52 @@ export function startHealthServer(): void {
 /** A leader that has seen requests but stopped completing them is stuck. */
 const STALL_THRESHOLD_MS = parseInt(process.env.HEALTH_STALL_MS || "600000", 10); // 10 min
 
+/**
+ * A leader whose listener has not made progress (successful poll or
+ * reconciliation) for this long is not doing its job, even with zero traffic.
+ * Default: 2 minutes (≈40 polls at the default 3s interval).
+ */
+const LISTENER_STALE_MS = parseInt(process.env.HEALTH_LISTENER_STALE_MS || "120000", 10);
+
+/** Grace period after a listener session starts before staleness is judged. */
+const LISTENER_GRACE_MS = parseInt(process.env.HEALTH_LISTENER_GRACE_MS || "60000", 10);
+
+/**
+ * Pure liveness evaluation for a leader's listener — exported for tests.
+ * Returns a human-readable reason if degraded, else null.
+ */
+export function evaluateListenerHealth(
+  role: string,
+  listener: {
+    running: boolean;
+    lastHeartbeatAt: number | null;
+    sessionStartedAt: number | null;
+  },
+  now: number,
+  staleMs = LISTENER_STALE_MS,
+  graceMs = LISTENER_GRACE_MS
+): string | null {
+  if (role !== "leader") return null;
+  if (!listener.running) {
+    return "leader holds the lease but no listener session is running";
+  }
+  const started = listener.sessionStartedAt ?? now;
+  if (now - started < graceMs) return null;
+  const last = listener.lastHeartbeatAt ?? started;
+  const idle = now - last;
+  if (idle > staleMs) {
+    return (
+      `listener has made no progress for ${Math.floor(idle / 1000)}s ` +
+      `(threshold ${Math.floor(staleMs / 1000)}s) — RPC unreachable or loop stuck`
+    );
+  }
+  return null;
+}
+
 function handleHealth(res: http.ServerResponse): void {
   const leaderState = getLeaderState();
   const metrics = getMetrics();
+  const listener = getListenerStatus();
   const now = Date.now();
   const uptimeSeconds = Math.floor((now - startTime) / 1000);
 
@@ -58,9 +101,13 @@ function handleHealth(res: http.ServerResponse): void {
   //
   // Previously this function accepted every leader state unconditionally, so a
   // wedged leader still returned 200 OK and monitoring never fired.
-  let degradedReason: string | null = null;
+  //  - A "leader" is ALSO degraded if its listener is not running or has made
+  //    no progress recently. Holding the lease does not prove the event loop
+  //    is alive, and an idle leader with a dead listener would otherwise look
+  //    exactly like an idle healthy one.
+  let degradedReason: string | null = evaluateListenerHealth(leaderState, listener, now);
   const inFlight = getInFlightCount();
-  if (leaderState === "leader" && inFlight > 0) {
+  if (!degradedReason && leaderState === "leader" && inFlight > 0) {
     const reference = metrics.lastFulfillAt ?? startTime;
     const idleMs = now - reference;
     if (idleMs > STALL_THRESHOLD_MS) {
@@ -82,6 +129,14 @@ function handleHealth(res: http.ServerResponse): void {
     last_fulfill_at: metrics.lastFulfillAt
       ? new Date(metrics.lastFulfillAt).toISOString()
       : null,
+    listener: {
+      running: listener.running,
+      last_progress_at: listener.lastHeartbeatAt
+        ? new Date(listener.lastHeartbeatAt).toISOString()
+        : null,
+      restarts: listener.restarts,
+      last_error: listener.lastError,
+    },
     ...(degradedReason ? { degraded_reason: degradedReason } : {}),
   };
 
@@ -116,6 +171,14 @@ function handleMetrics(res: http.ServerResponse): void {
     `# HELP vrf_is_leader 1 if this instance is leader, 0 otherwise`,
     `# TYPE vrf_is_leader gauge`,
     `vrf_is_leader ${getLeaderState() === "leader" ? 1 : 0}`,
+    ``,
+    `# HELP vrf_listener_running 1 if an event listener session is running`,
+    `# TYPE vrf_listener_running gauge`,
+    `vrf_listener_running ${getListenerStatus().running ? 1 : 0}`,
+    ``,
+    `# HELP vrf_listener_restarts_total Listener sessions restarted after a crash`,
+    `# TYPE vrf_listener_restarts_total counter`,
+    `vrf_listener_restarts_total ${getListenerStatus().restarts}`,
   ].join("\n");
 
   res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });

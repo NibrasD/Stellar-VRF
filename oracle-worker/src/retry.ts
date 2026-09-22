@@ -27,7 +27,8 @@ const DRAND_LAG_THRESHOLD_ROUNDS = parseInt(
 export async function withRetry<T>(
   label: string,
   fn: () => Promise<T>,
-  retries = MAX_RETRIES
+  retries = MAX_RETRIES,
+  shouldRetry: (err: unknown) => boolean = () => true
 ): Promise<T> {
   let lastError: unknown;
 
@@ -36,6 +37,10 @@ export async function withRetry<T>(
       return await fn();
     } catch (err) {
       lastError = err;
+      if (!shouldRetry(err)) {
+        log.warn(`[Retry] ${label} not retried: ${err instanceof Error ? err.message : err}`);
+        throw err;
+      }
       const isLast = attempt === retries;
 
       if (isLast) {
@@ -87,12 +92,20 @@ export function checkDrandLag(
 /**
  * Retry a fulfill() transaction with sequence number refresh on conflict.
  * Soroban transactions can fail with "txBadSeq" if two nodes submit simultaneously.
+ *
+ * Errors named `FulfillAbortedError` (deliberate abort, e.g. leadership lost)
+ * are rethrown immediately instead of being retried.
  */
 export async function withFulfillRetry<T>(
   label: string,
   fn: () => Promise<T>
 ): Promise<T> {
-  return withRetry(label, fn, MAX_RETRIES);
+  return withRetry(
+    label,
+    fn,
+    MAX_RETRIES,
+    (err) => !(err instanceof Error && err.name === "FulfillAbortedError")
+  );
 }
 
 function sleep(ms: number): Promise<void> {

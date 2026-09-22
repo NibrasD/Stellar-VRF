@@ -41,8 +41,42 @@ interface LockFile {
 
 const INSTANCE_ID = process.env.INSTANCE_ID || `oracle-${process.pid}`;
 
+/**
+ * Safety margin subtracted from the TTL when computing how long we may keep
+ * acting as leader after the last *confirmed* renewal. Covers clock-rate drift
+ * between this host and Redis plus event-loop scheduling delay.
+ */
+const LEASE_SAFETY_MS = parseInt(
+  process.env.LEADER_LEASE_SAFETY_MS || String(Math.floor(LOCK_TTL_MS / 5)),
+  10
+);
+
+/**
+ * After voluntarily giving up leadership (e.g. the listener is broken), wait
+ * this long before competing again so a healthy standby gets the lease.
+ */
+const RELINQUISH_COOLDOWN_MS = parseInt(
+  process.env.LEADER_RELINQUISH_COOLDOWN_MS || String(LOCK_TTL_MS * 2),
+  10
+);
+
 let state: LeaderState = "unknown";
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Local deadline for our lease: `start of last successful renewal + TTL −
+ * safety margin`. Measured from when the renewal was *sent*, so it can only
+ * under-estimate how long Redis will keep the key.
+ *
+ * Without this, `state` is only corrected when a renewal *returns*. If Redis
+ * (or the network) stalls, the renewal never returns, the key expires in
+ * Redis, the standby takes over, and this process still reports "leader" —
+ * a genuine split brain. With it, `isLeader()` turns false on its own once the
+ * deadline passes, regardless of whether Redis ever answers.
+ */
+let leaseValidUntil = 0;
+let cooldownUntil = 0;
+let loseLeadershipCb: (() => void) | null = null;
 
 // Distributed backend (only instantiated when REDIS_URL is present).
 const useRedis = REDIS_URL.length > 0;
@@ -56,15 +90,20 @@ const redisLease: RedisLease | null = useRedis
  * so a Redis outage never causes two leaders.
  */
 async function tryAcquire(): Promise<boolean> {
+  const sentAt = Date.now();
+  let ok: boolean;
   if (redisLease) {
     try {
-      return await redisLease.acquireOrRenew();
+      ok = await redisLease.acquireOrRenew();
     } catch (err) {
       log.error(`[Leader] Redis lease error (failing closed to standby): ${err}`);
-      return false;
+      ok = false;
     }
+  } else {
+    ok = tryAcquireLock();
   }
-  return tryAcquireLock();
+  leaseValidUntil = ok ? sentAt + LOCK_TTL_MS - LEASE_SAFETY_MS : 0;
+  return ok;
 }
 
 /**
@@ -182,6 +221,42 @@ async function release(): Promise<void> {
  * Start the leader election loop.
  * Calls onBecomeLeader / onLoseLeadership when state changes.
  */
+function demote(reason: string): void {
+  const wasLeader = state === "leader";
+  state = "standby";
+  leaseValidUntil = 0;
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (wasLeader) log.warn(`[Leader] ${INSTANCE_ID} stepping down: ${reason}`);
+  loseLeadershipCb?.();
+}
+
+/**
+ * Voluntarily give up leadership, release the lease so a standby can take over
+ * immediately, and stay out of the election for RELINQUISH_COOLDOWN_MS.
+ *
+ * Used when this node holds the lease but cannot do the leader's job (e.g. its
+ * event listener keeps crashing). Keeping the lease in that state would block
+ * a healthy standby forever, because the lease heartbeat is independent of the
+ * listener and would keep renewing.
+ */
+export async function relinquishLeadership(reason: string): Promise<void> {
+  if (state !== "leader") return;
+  cooldownUntil = Date.now() + RELINQUISH_COOLDOWN_MS;
+  demote(`relinquished — ${reason}`);
+  try {
+    await release();
+  } catch (err) {
+    // Lease will simply expire after TTL instead.
+    log.error(`[Leader] Failed to release lease: ${err}`);
+  }
+  log.warn(
+    `[Leader] Not competing for leadership for ${RELINQUISH_COOLDOWN_MS}ms so a standby can take over.`
+  );
+}
+
 export function startLeaderElection(
   onBecomeLeader: () => void,
   onLoseLeadership: () => void
@@ -189,41 +264,41 @@ export function startLeaderElection(
   log.info(
     `[Leader] Starting election. Instance: ${INSTANCE_ID}, backend: ${useRedis ? "redis (multi-server)" : "file (single-server)"}, TTL: ${LOCK_TTL_MS}ms`
   );
+  loseLeadershipCb = onLoseLeadership;
 
-  let running = false; // prevent overlapping async ticks
+  // One guard shared by the election tick AND the heartbeat. Previously the
+  // heartbeat was an unguarded async setInterval, so a slow Redis round-trip
+  // let renewals pile up on top of each other and of the election tick.
+  let running = false;
 
   const runElection = async () => {
     if (running) return;
     running = true;
     try {
+      if (Date.now() < cooldownUntil) {
+        if (state !== "standby") demote("in post-relinquish cooldown");
+        return;
+      }
+
       const leader = await tryAcquire();
 
       if (leader && state !== "leader") {
         state = "leader";
         log.success(`[Leader] ${INSTANCE_ID} is now the LEADER.`);
 
-        // Start heartbeat (renew the lease well before it expires)
+        // Renew the lease well before it expires.
         if (heartbeatTimer) clearInterval(heartbeatTimer);
-        heartbeatTimer = setInterval(async () => {
-          const stillLeader = await tryAcquire();
-          if (!stillLeader) {
-            log.warn("[Leader] Lost leadership during heartbeat renewal!");
-            state = "standby";
-            if (heartbeatTimer) clearInterval(heartbeatTimer);
-            heartbeatTimer = null;
-            onLoseLeadership();
-          }
-        }, HEARTBEAT_MS);
+        heartbeatTimer = setInterval(() => { void runElection(); }, HEARTBEAT_MS);
 
         onBecomeLeader();
       } else if (!leader && state !== "standby") {
-        state = "standby";
-        log.info(`[Leader] ${INSTANCE_ID} is STANDBY. Watching for leader failure.`);
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
+        if (state === "leader") {
+          demote("lease renewal failed");
+        } else {
+          state = "standby";
+          log.info(`[Leader] ${INSTANCE_ID} is STANDBY. Watching for leader failure.`);
+          onLoseLeadership();
         }
-        onLoseLeadership();
       }
     } finally {
       running = false;
@@ -240,11 +315,27 @@ export function startLeaderElection(
   process.on("SIGTERM", async () => { await release(); process.exit(0); });
 }
 
+/**
+ * True only while we hold the lease AND its local deadline has not passed.
+ *
+ * The deadline check is what makes this safe to call right before spending
+ * money: it does not depend on the last renewal having *returned*.
+ */
 export function isLeader(): boolean {
-  return state === "leader";
+  if (state !== "leader") return false;
+  if (Date.now() >= leaseValidUntil) {
+    // Lease may already be gone in Redis. Demote now rather than waiting for
+    // the next tick, so callbacks fire and the listener stops.
+    demote("lease deadline passed without a confirmed renewal");
+    return false;
+  }
+  return true;
 }
 
 export function getLeaderState(): LeaderState {
+  // Report the effective state, so /health never claims "leader" on a lease
+  // that has locally expired.
+  if (state === "leader" && !isLeader()) return "standby";
   return state;
 }
 

@@ -22,8 +22,10 @@ instance holds the leader lease at a time and submits transactions; the others s
 
 **drand quicknet.** We rely on the drand distributed randomness beacon for unpredictability.
 The quicknet chain uses a BLS threshold scheme across a geographically distributed committee.
-Historical uptime is >99.9%. If the chain rotates its group key, the oracle admin must call
-`rotate_drand_pk()` to update the on-chain verification key.
+Historical uptime is >99.9%. If the chain rotates its group key, the oracle account must call
+`rotate_drand_pk()` to update the on-chain verification key. This covers key rotation within the
+same chain only. Switching to a drand chain with a different genesis, period or signature scheme
+needs a new contract deployment (see *Known limitations*).
 
 We do **not** trust the drand *HTTP relay* that serves beacons. Verification happens twice:
 
@@ -147,8 +149,29 @@ verification (~56M instructions), not storage operations.
 - **Single oracle identity** — liveness is addressed by HA (primary + hot-standby sharing one
   oracle key via a Redis leader lease), but *trust* is not distributed. A future improvement is a
   multi-oracle threshold committee so that no single key can withhold service.
-- **Fee economics** — the `fee_amount` parameter and escrow mechanism are fully implemented and
-  tested (fees are escrowed in the VRF contract on request, released to oracle on fulfill,
-  refunded to requester on timeout). Currently deployed with `fee_amount = 0`.
+- **Fee economics / request spam** — the `fee_amount` parameter and escrow mechanism are fully
+  implemented and tested (fees are escrowed in the VRF contract on request, released to oracle on
+  fulfill, refunded to requester on timeout). The Mainnet instance is deployed with
+  `fee_amount = 0` (verified from instance storage), and `fee_amount` is immutable after `init()`.
+  Consequence: a requester pays only the Stellar network fee per `request()`, while the oracle
+  pays ~0.14 XLM per `fulfill()`. An attacker can therefore **drain the oracle's XLM balance**
+  (an availability/cost attack, not an integrity one). Current mitigations are operational:
+  balance and request-rate alerting, and the operator's ability to stop fulfilling (requesters
+  stay protected by `timeout_refund()`). The structural fix is a deployment with
+  `fee_amount > 0`.
+- **Oracle key is a single point of failure for administration** — there is no separate admin
+  role. The oracle Stellar account authorizes `fulfill()`, `rotate_oracle_keys()` and
+  `rotate_drand_pk()`. Losing it makes the deployment unrotatable (requests can only time out
+  and be refunded). Compromising it lets an attacker rotate the oracle to their own keys and
+  withhold or censor service. They still can't bias outputs, which are deterministic and
+  verified on-chain. The oracle account should be protected with Stellar multisig (signer
+  weights/thresholds) and/or a hardware signer, and the HA hosts should hold only the
+  operational key material they need.
+- **`rotate_drand_pk()` is not a chain migration** — it swaps the group key only. drand genesis,
+  period and the signature DST (quicknet, G1, unchained) are fixed, and there is no upgrade
+  entrypoint, so moving to a different drand chain requires a new deployment.
+- **Results are not permanent in contract storage** — `cleanup_proof()` (requester or oracle)
+  deletes proof/context/callback data, and all persistent entries are subject to Soroban TTL
+  archival. The `fulfill` transaction and event remain the durable record.
 - **No formal audit** — the contract has 60 unit tests and has been manually reviewed,
   but has not undergone a formal third-party audit.
