@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stellar VRF Oracle â€” Dashboard</title>
+  <title>Stellar VRF Oracle — Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #060b18; color: #e0e6f0; min-height: 100vh; }
 
-    /* â”€â”€ Header â”€â”€ */
+    /* ── Header ── */
     .header {
       background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
       border-bottom: 1px solid rgba(59,130,246,0.2);
@@ -50,7 +50,7 @@
     .net-btn.active { background: #1e40af; color: #fff; box-shadow: 0 2px 8px rgba(30,64,175,0.4); }
     .net-btn:not(.active):hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
 
-    /* â”€â”€ Stat cards grid â”€â”€ */
+    /* ── Stat cards grid ── */
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; padding: 28px 40px 20px; }
     .stat-card {
       background: linear-gradient(135deg, #111827 0%, #0f1a2e 100%);
@@ -70,7 +70,7 @@
     .stat-card .value { font-size: 2rem; font-weight: 700; color: #60a5fa; font-family: 'JetBrains Mono', monospace; letter-spacing: -1px; }
     .stat-card .sub { color: #374151; font-size: 0.7rem; margin-top: 6px; font-weight: 500; }
 
-    /* â”€â”€ Sections â”€â”€ */
+    /* ── Sections ── */
     .section { padding: 0 40px 28px; }
     .section-title {
       color: #475569; font-size: 0.72rem; font-weight: 700;
@@ -79,7 +79,7 @@
     }
     .section-title::after { content:''; flex:1; height:1px; background: rgba(255,255,255,0.05); }
 
-    /* â”€â”€ drand card â”€â”€ */
+    /* ── drand card ── */
     .drand-card {
       background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
       border: 1px solid rgba(59,130,246,0.15); border-radius: 14px;
@@ -90,7 +90,7 @@
     .progress-bar { flex: 1; min-width: 120px; background: rgba(255,255,255,0.05); border-radius: 99px; height: 6px; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); border-radius: 99px; transition: width 0.5s ease; box-shadow: 0 0 8px rgba(139,92,246,0.4); }
 
-    /* â”€â”€ Activity table â”€â”€ */
+    /* ── Activity table ── */
     .table { background: linear-gradient(135deg, #0d1526 0%, #111827 100%); border: 1px solid rgba(59,130,246,0.15); border-radius: 14px; overflow: hidden; }
     .table-header {
       display: grid; grid-template-columns: 70px 80px 1fr 1fr 100px;
@@ -110,10 +110,10 @@
     .hash-link { color: #60a5fa; text-decoration: none; }
     .hash-link:hover { color: #93c5fd; text-decoration: underline; }
 
-    /* â”€â”€ Footer / error â”€â”€ */
+    /* ── Footer / error ── */
     .error-box { background: rgba(127,29,29,0.2); border: 1px solid rgba(239,68,68,0.3); border-radius: 10px; padding: 12px 16px; color: #fca5a5; font-size: 0.8rem; margin: 0 40px 16px; }
 
-    /* â”€â”€ Site Navigation â”€â”€ */
+    /* ── Site Navigation ── */
     .site-nav {
       background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
       padding: 0 36px; display: flex; gap: 2px; align-items: center;
@@ -131,21 +131,21 @@
 </head>
 <body>
   <div class="header">
-    <h1>ðŸ“Š Stellar VRF Oracle â€” Dashboard</h1>
+    <h1>📊 Stellar VRF Oracle — Dashboard</h1>
     <div style="display:flex;gap:12px;align-items:center">
       <div class="net-switcher">
         <button class="net-btn" id="btn-testnet" onclick="switchNetwork('testnet')">Testnet</button>
         <button class="net-btn active" id="btn-mainnet" onclick="switchNetwork('mainnet')">Mainnet</button>
       </div>
-      <span id="last-updated" style="color:#6b7280;font-size:0.75rem">Loadingâ€¦</span>
+      <span id="last-updated" style="color:#6b7280;font-size:0.75rem">Loading…</span>
       <span class="live-badge">LIVE</span>
     </div>
   </div>
 
   <nav class="site-nav">
-    <a href="../dashboard/" class="nav-link active">ðŸ“Š Dashboard</a>
-    <a href="../playground/" class="nav-link">ðŸ”¬ Playground</a>
-    <a href="../example-dapp/" class="nav-link">ðŸ“˜ Integration Guide</a>
+    <a href="../dashboard/" class="nav-link active">📊 Dashboard</a>
+    <a href="../playground/" class="nav-link">🔬 Playground</a>
+    <a href="../example-dapp/" class="nav-link">📘 Integration Guide</a>
   </nav>
 
   <div id="error-area"></div>
@@ -153,44 +153,44 @@
   <div class="grid">
     <div class="stat-card">
       <div class="label">Total Requests</div>
-      <div class="value" id="stat-total">â€”</div>
+      <div class="value" id="stat-total">—</div>
       <div class="sub">All time on-chain</div>
     </div>
     <div class="stat-card">
       <div class="label">Fulfilled</div>
-      <div class="value" id="stat-fulfilled" style="color:#34d399">â€”</div>
-      <div class="sub">Success rate: <span id="stat-rate">â€”</span>%</div>
+      <div class="value" id="stat-fulfilled" style="color:#34d399">—</div>
+      <div class="sub">Success rate: <span id="stat-rate">—</span>%</div>
     </div>
     <div class="stat-card">
       <div class="label">Avg Fulfill Time</div>
-      <div class="value" id="stat-avg-time">â€”</div>
+      <div class="value" id="stat-avg-time">—</div>
       <div class="sub">seconds (~5s per ledger)</div>
     </div>
     <div class="stat-card">
       <div class="label">drand Round</div>
-      <div class="value" id="stat-drand-round">â€”</div>
+      <div class="value" id="stat-drand-round">—</div>
       <div class="sub">Latest quicknet beacon</div>
     </div>
     <div class="stat-card">
       <div class="label">Latest Ledger</div>
-      <div class="value" id="stat-ledger">â€”</div>
+      <div class="value" id="stat-ledger">—</div>
       <div class="sub" id="stat-ledger-sub">Soroban RPC</div>
     </div>
   </div>
 
   <div class="section">
-    <h2 class="section-title">âš¡ drand Chain Status</h2>
+    <h2 class="section-title">⚡ drand Chain Status</h2>
     <div class="drand-card">
       <div class="drand-info"><div class="label">Chain</div><div class="value">quicknet</div></div>
       <div class="drand-info"><div class="label">Period</div><div class="value">3 seconds</div></div>
-      <div class="drand-info"><div class="label">Current Round</div><div class="value" id="drand-current">â€”</div></div>
-      <div class="drand-info"><div class="label">Next round in</div><div class="value" id="drand-next">â€”s</div></div>
+      <div class="drand-info"><div class="label">Current Round</div><div class="value" id="drand-current">—</div></div>
+      <div class="drand-info"><div class="label">Next round in</div><div class="value" id="drand-next">—s</div></div>
       <div class="progress-bar"><div class="progress-fill" id="drand-progress" style="width:0%"></div></div>
     </div>
   </div>
 
   <div class="section">
-    <h2 class="section-title">ðŸ“‹ Recent VRF Activity</h2>
+    <h2 class="section-title">📋 Recent VRF Activity</h2>
     <div class="table">
       <div class="table-header">
         <span>Req ID</span>
@@ -200,22 +200,22 @@
         <span>Status</span>
       </div>
       <div id="activity-feed">
-        <div style="padding:24px;text-align:center;color:#6b7280">Loading contract eventsâ€¦</div>
+        <div style="padding:24px;text-align:center;color:#6b7280">Loading contract events…</div>
       </div>
     </div>
   </div>
 
   <div class="section">
     <div style="color:#6b7280;font-size:0.72rem">
-      Contract: <span id="contract-display">â€”</span>
+      Contract: <span id="contract-display">—</span>
       &nbsp;|&nbsp;
-      <a id="explorer-link" class="hash-link" href="#" target="_blank" rel="noopener noreferrer">View on Stellar Expert â†—</a>
+      <a id="explorer-link" class="hash-link" href="#" target="_blank" rel="noopener noreferrer">View on Stellar Expert ↗</a>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
   <script>
-    // â”€â”€ Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Config ───────────────────────────────────────────────────────────────
     const NETWORKS = {
       testnet: {
         soroban: "https://soroban-testnet.stellar.org",
@@ -239,7 +239,7 @@
     let requestEvents = []; // {requestId, requester, ledger}
     let fulfillEvents = {}; // requestId -> {betaOutput, ledger}
 
-    // â”€â”€ Network switch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Network switch ────────────────────────────────────────────────────────
     function switchNetwork(net) {
       currentNetwork = net;
       cfg = NETWORKS[net];
@@ -267,7 +267,7 @@
       document.getElementById("error-area").innerHTML = "";
     }
 
-    // â”€â”€ Soroban RPC helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Soroban RPC helpers ───────────────────────────────────────────────────
     async function rpcCall(method, params) {
       const res = await fetch(cfg.soroban, {
         method: "POST",
@@ -285,7 +285,7 @@
     }
 
     // Encode a Soroban Symbol topic to base64 XDR using the official SDK.
-    // (ScVal::Symbol has discriminant 15 and requires XDR 4-byte alignment â€”
+    // (ScVal::Symbol has discriminant 15 and requires XDR 4-byte alignment —
     //  hand-rolling this is error-prone, so we delegate to stellar-sdk.)
     function encodeSymbolTopic(sym) {
       return StellarSdk.xdr.ScVal.scvSymbol(sym).toXDR("base64");
@@ -294,7 +294,7 @@
     // Soroban RPC only scans a bounded window (~12k ledgers) per call, so a
     // single getEvents call starting at the oldest retained ledger will NOT
     // reach events that are further ahead. We must follow the returned cursor
-    // page-by-page until we reach the latest ledger â€” even across empty pages.
+    // page-by-page until we reach the latest ledger — even across empty pages.
     async function getContractEvents(topicSymbol, fromLedger) {
       const topicBase64 = encodeSymbolTopic(topicSymbol);
       const out = [];
@@ -321,7 +321,7 @@
       return out;
     }
 
-    // â”€â”€ XDR parsing via the official SDK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── XDR parsing via the official SDK ──────────────────────────────────────
     // The VRF contract emits:
     //   request: value = (request_id: u64, requester: Address, required_round: u64)
     //   fulfill: value = (request_id: u64, beta_output: Bytes<32>)
@@ -347,7 +347,7 @@
       return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
-    // â”€â”€ Event fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Event fetching ────────────────────────────────────────────────────────
     async function fetchEvents() {
       if (!cfg.contract) return;
 
@@ -405,7 +405,7 @@
     function renderActivity() {
       const feed = document.getElementById("activity-feed");
       if (requestEvents.length === 0) {
-        feed.innerHTML = '<div style="padding:28px;text-align:center;color:#374151;font-size:0.82rem">No VRF requests found in the current retention window.<br>Submit one via the <a class="hash-link" href="../playground/">Playground â†—</a></div>';
+        feed.innerHTML = '<div style="padding:28px;text-align:center;color:#374151;font-size:0.82rem">No VRF requests found in the current retention window.<br>Submit one via the <a class="hash-link" href="../playground/">Playground ↗</a></div>';
         return;
       }
 
@@ -413,7 +413,7 @@
       const sorted = [...requestEvents].reverse().slice(0, 20);
       feed.innerHTML = sorted.map(req => {
         const fulfilled   = fulfillEvents[req.requestId];
-        const betaHex     = fulfilled?.betaOutput ? (fulfilled.betaOutput.slice(0, 8) + "…") : "—";
+        const betaHex     = fulfilled?.betaOutput ? (fulfilled.betaOutput.slice(0, 8) + "") : "";
         const explorerBase = cfg.explorer;
         const safeReqId   = esc(req.requestId);
         const safeLedger  = esc(String(req.ledger));
@@ -431,7 +431,7 @@
             <span style="color:#475569">${safeLedger}</span>
             <span>
               <a class="hash-link" href="${esc(acctLink)}" target="_blank" rel="noopener noreferrer" title="${safeReq}">
-                ${safeReqShort}…
+                ${safeReqShort}
               </a>
             </span>
             <span style="color:${fulfilled ? '#34d399' : '#374151'};font-size:0.72rem">${safeBetaHex}</span>
@@ -447,14 +447,14 @@
       const fulfilled = Object.keys(fulfillEvents).length;
       const rate = total > 0 ? Math.round((fulfilled / total) * 100) : 100;
 
-      document.getElementById("stat-total").textContent = total || "â€”";
-      document.getElementById("stat-fulfilled").textContent = fulfilled || "â€”";
-      document.getElementById("stat-rate").textContent = total > 0 ? rate : "â€”";
+      document.getElementById("stat-total").textContent = total || "—";
+      document.getElementById("stat-fulfilled").textContent = fulfilled || "—";
+      document.getElementById("stat-rate").textContent = total > 0 ? rate : "—";
       document.getElementById("last-updated").textContent =
         "Updated " + new Date().toLocaleTimeString();
     }
 
-    // â”€â”€ drand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── drand ─────────────────────────────────────────────────────────────────
     async function fetchDrand() {
       try {
         const r = await fetch(`${cfg.drand}/public/latest`);
@@ -470,7 +470,7 @@
       } catch {}
     }
 
-    // â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Init ──────────────────────────────────────────────────────────────────
     async function refresh() {
       try {
         await fetchDrand();

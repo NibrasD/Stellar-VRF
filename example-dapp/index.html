@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stellar VRF â€” Integration Guide</title>
+  <title>Stellar VRF — Integration Guide</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Inter', sans-serif; background: #060b18; color: #e0e6f0; min-height: 100vh; }
 
-    /* â”€â”€ Header â”€â”€ */
+    /* ── Header ── */
     .header {
       background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
       border-bottom: 1px solid rgba(96,165,250,0.15);
@@ -29,10 +29,10 @@
       display: flex; align-items: center; gap: 5px;
     }
 
-    /* â”€â”€ Layout â”€â”€ */
+    /* ── Layout ── */
     .container { max-width: 820px; margin: 0 auto; padding: 36px 20px; }
 
-    /* â”€â”€ Cards â”€â”€ */
+    /* ── Cards ── */
     .card {
       background: linear-gradient(145deg, #111827 0%, #0d1a2e 100%);
       border: 1px solid rgba(59,130,246,0.15);
@@ -50,7 +50,7 @@
     .card ul, .card ol { padding-left: 20px; margin-bottom: 12px; }
     .card li { margin-bottom: 4px; }
 
-    /* â”€â”€ Code blocks â”€â”€ */
+    /* ── Code blocks ── */
     pre {
       background: rgba(0,0,0,0.45); border: 1px solid rgba(59,130,246,0.12);
       border-radius: 10px; padding: 16px 18px; margin: 10px 0 16px;
@@ -71,7 +71,7 @@
       margin-bottom: -1px; position: relative; z-index: 1;
     }
 
-    /* â”€â”€ Flow diagram â”€â”€ */
+    /* ── Flow diagram ── */
     .flow-diagram {
       background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.12);
       border-radius: 10px; padding: 20px; margin: 12px 0 16px;
@@ -81,7 +81,7 @@
     .flow-diagram .hl { color: #60a5fa; }
     .flow-diagram .gr { color: #34d399; }
 
-    /* â”€â”€ Step indicators â”€â”€ */
+    /* ── Step indicators ── */
     .step { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
     .step-num {
       background: linear-gradient(135deg, #1e3a8a, #2563eb);
@@ -91,7 +91,7 @@
       box-shadow: 0 4px 12px rgba(37,99,235,0.3);
     }
 
-    /* â”€â”€ Form elements â”€â”€ */
+    /* ── Form elements ── */
     label { display: block; color: #64748b; font-size: 0.78rem; font-weight: 500; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
     input, textarea {
       width: 100%; background: rgba(0,0,0,0.3);
@@ -102,7 +102,7 @@
     }
     input:focus, textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
 
-    /* â”€â”€ Buttons â”€â”€ */
+    /* ── Buttons ── */
     button {
       background: linear-gradient(135deg, #1e40af, #2563eb);
       color: #fff; border: none; padding: 12px 24px;
@@ -114,13 +114,13 @@
     button:hover { background: linear-gradient(135deg, #2563eb, #3b82f6); box-shadow: 0 6px 20px rgba(37,99,235,0.45); transform: translateY(-1px); }
     button:disabled { background: #1f2937; color: #374151; cursor: not-allowed; box-shadow: none; transform: none; }
 
-    /* â”€â”€ Status â”€â”€ */
+    /* ── Status ── */
     .status { padding: 12px 16px; border-radius: 10px; font-size: 0.85rem; margin-top: 12px; }
     .status.pending { background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); color: #60a5fa; }
     .status.success { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); color: #34d399; }
     .status.error { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); color: #f87171; }
 
-    /* â”€â”€ Result display â”€â”€ */
+    /* ── Result display ── */
     .result-box {
       background: linear-gradient(145deg, rgba(0,0,0,0.4) 0%, rgba(16,185,129,0.04) 100%);
       border: 1px solid rgba(16,185,129,0.2);
@@ -140,7 +140,7 @@
     }
     .result-label { color: #374151; font-size: 0.75rem; margin-top: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
 
-    /* â”€â”€ Proof display â”€â”€ */
+    /* ── Proof display ── */
     .proof-display {
       background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.12);
       border-radius: 10px; padding: 16px; margin-top: 16px;
@@ -151,15 +151,15 @@
     .proof-display .field-label { color: #60a5fa; margin-bottom: 4px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
     .proof-display .field-value { color: #34d399; }
 
-    /* â”€â”€ Spinner â”€â”€ */
+    /* ── Spinner ── */
     .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(59,130,246,0.3); border-top-color: #60a5fa; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* â”€â”€ Links â”€â”€ */
+    /* ── Links ── */
     .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.8rem; transition: color 0.15s; }
     .tx-link:hover { color: #93c5fd; text-decoration: underline; }
 
-    /* â”€â”€ Network info box â”€â”€ */
+    /* ── Network info box ── */
     .net-info {
       background: rgba(30,58,95,0.25); border: 1px solid rgba(59,130,246,0.15);
       border-radius: 8px; padding: 12px 16px; font-size: 0.82rem;
@@ -167,7 +167,7 @@
     }
     .net-info.mainnet { background: rgba(220,38,38,0.06); border-color: rgba(220,38,38,0.2); color: #fca5a5; }
 
-    /* â”€â”€ Section divider â”€â”€ */
+    /* ── Section divider ── */
     .section-divider {
       display: flex; align-items: center; gap: 12px;
       margin: 36px 0 24px; color: #374151; font-size: 0.72rem;
@@ -177,7 +177,7 @@
       content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.06);
     }
 
-    /* â”€â”€ Site Navigation â”€â”€ */
+    /* ── Site Navigation ── */
     .site-nav {
       background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
       padding: 0 36px; display: flex; gap: 2px; align-items: center;
@@ -195,37 +195,37 @@
 </head>
 <body>
   <div class="header">
-    <h1>ðŸ“˜ Stellar VRF â€” Integration Guide</h1>
-    <span id="network-badge" class="badge">â— Testnet</span>
+    <h1>📘 Stellar VRF — Integration Guide</h1>
+    <span id="network-badge" class="badge">● Testnet</span>
   </div>
 
   <nav class="site-nav">
-    <a href="../dashboard/" class="nav-link">ðŸ“Š Dashboard</a>
-    <a href="../playground/" class="nav-link">ðŸ”¬ Playground</a>
-    <a href="../example-dapp/" class="nav-link active">ðŸ“˜ Integration Guide</a>
+    <a href="../dashboard/" class="nav-link">📊 Dashboard</a>
+    <a href="../playground/" class="nav-link">🔬 Playground</a>
+    <a href="../example-dapp/" class="nav-link active">📘 Integration Guide</a>
   </nav>
 
   <div class="container">
 
-    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
     <!-- INTEGRATION GUIDE                                                  -->
-    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
 
     <div class="card">
-      <h2>ðŸ”® What is Stellar VRF?</h2>
+      <h2>🔮 What is Stellar VRF?</h2>
       <p>Stellar VRF is a <strong style="color:#e0e6f0">Verifiable Random Function</strong> oracle for the Stellar/Soroban blockchain. It generates cryptographically provable random numbers using BLS12-381 cryptography and the drand distributed randomness beacon.</p>
-      <p>Any dApp can request on-chain randomness by calling the VRF smart contract. The oracle fulfills the request with a BLS proof that is verified on-chain â€” ensuring the result is <strong style="color:#e0e6f0">tamper-proof, unbiased, and publicly auditable</strong>.</p>
+      <p>Any dApp can request on-chain randomness by calling the VRF smart contract. The oracle fulfills the request with a BLS proof that is verified on-chain — ensuring the result is <strong style="color:#e0e6f0">tamper-proof, unbiased, and publicly auditable</strong>.</p>
 
       <h3>Request Flow</h3>
-      <div class="flow-diagram"><span class="hl">Your dApp</span>  â”€â”€request()â”€â”€â–¶  <span class="hl">VRF Contract</span>  â—€â”€â”€fulfill()â”€â”€  <span class="hl">Oracle</span>
-                                        â”‚                      â”‚
-                                        â”‚               <span class="gr">drand beacon</span>
-                                        â”‚               <span class="gr">BLS-VRF proof</span>
-                                        â–¼
-                              <span class="gr">âœ“ Pairing check verified</span>
-                              <span class="gr">âœ“ Random output stored</span>
-                                        â”‚
-<span class="hl">Your dApp</span>  â—€â”€derive_random_in_range()â”€â”€â”˜</div>
+      <div class="flow-diagram"><span class="hl">Your dApp</span>  ──request()──▶  <span class="hl">VRF Contract</span>  ◀──fulfill()──  <span class="hl">Oracle</span>
+                                        │                      │
+                                        │               <span class="gr">drand beacon</span>
+                                        │               <span class="gr">BLS-VRF proof</span>
+                                        ▼
+                              <span class="gr">✓ Pairing check verified</span>
+                              <span class="gr">✓ Random output stored</span>
+                                        │
+<span class="hl">Your dApp</span>  ◀─derive_random_in_range()──┘</div>
 
       <h3>Mainnet Contract</h3>
       <p style="margin-bottom:4px">
@@ -236,9 +236,9 @@
       </p>
     </div>
 
-    <!-- â”€â”€ JS SDK â”€â”€ -->
+    <!-- ── JS SDK ── -->
     <div class="card">
-      <h2>âš¡ Option A â€” JavaScript SDK</h2>
+      <h2>⚡ Option A — JavaScript SDK</h2>
       <p>The fastest way to integrate. Install the SDK and call the contract with a few lines of code. Works in Node.js and browser environments.</p>
 
       <h3>1. Install</h3>
@@ -264,7 +264,7 @@ console.log("Request ID:", requestId);</pre>
 
       <h3>3. Wait for Fulfillment &amp; Get Result</h3>
       <span class="code-label">JavaScript / TypeScript</span>
-      <pre>// The oracle typically fulfills within 10â€“30 seconds
+      <pre>// The oracle typically fulfills within 10–30 seconds
 const proof = await client.waitForFulfillment(requestId, 120_000);
 console.log("Beta output:", Buffer.from(proof.betaOutput).toString("hex"));
 
@@ -277,19 +277,19 @@ console.log("Random number:", result);</pre>
       <span class="code-label">JavaScript / TypeScript</span>
       <pre>import { deriveRandomFromBeta } from "stellar-vrf-sdk";
 
-// No network call needed â€” works offline
+// No network call needed — works offline
 const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
 
       <h3>SDK API Reference</h3>
       <p>
-        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/tree/main/sdk/js" target="_blank" rel="noopener noreferrer">Full API documentation on GitHub â†—</a>
+        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/tree/main/sdk/js" target="_blank" rel="noopener noreferrer">Full API documentation on GitHub ↗</a>
       </p>
     </div>
 
-    <!-- â”€â”€ Rust Consumer â”€â”€ -->
+    <!-- ── Rust Consumer ── -->
     <div class="card">
-      <h2>ðŸ¦€ Option B â€” Soroban Consumer Contract (Rust)</h2>
-      <p>For fully on-chain integration, your Soroban contract can request randomness and receive the result via a callback. This is the most secure approach â€” everything happens on-chain.</p>
+      <h2>🦀 Option B — Soroban Consumer Contract (Rust)</h2>
+      <p>For fully on-chain integration, your Soroban contract can request randomness and receive the result via a callback. This is the most secure approach — everything happens on-chain.</p>
 
       <h3>1. Request with Callback</h3>
       <p>Your contract calls <span class="inline-code">request_with_callback()</span> on the VRF contract. When the oracle fulfills the request, the VRF contract calls your <span class="inline-code">on_vrf()</span> function automatically.</p>
@@ -322,7 +322,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
 }</pre>
 
       <h3>2. Receive the Callback</h3>
-      <p><strong style="color:#fbbf24">âš ï¸ Important:</strong> The VRF contract is the caller of <span class="inline-code">on_vrf()</span>, not the user or the oracle. You must call <span class="inline-code">vrf_contract.require_auth()</span> to verify the caller.</p>
+      <p><strong style="color:#fbbf24">⚠️ Important:</strong> The VRF contract is the caller of <span class="inline-code">on_vrf()</span>, not the user or the oracle. You must call <span class="inline-code">vrf_contract.require_auth()</span> to verify the caller.</p>
       <span class="code-label">Rust (Soroban)</span>
       <pre>pub fn on_vrf(env: Env, sample_id: u64, beta_output: BytesN&lt;32&gt;, _alpha_seed: BytesN&lt;32&gt;) {
     // CRITICAL: Only the trusted VRF contract may call this
@@ -351,15 +351,15 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
 
       <h3>Full Working Example</h3>
       <p>
-        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/tree/main/consumer-example" target="_blank" rel="noopener noreferrer">consumer-example/ on GitHub â†—</a>
-        &nbsp;Â·&nbsp;
-        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/blob/main/docs/CONSUMER_AUTHORIZATION.md" target="_blank" rel="noopener noreferrer">Authorization Guide â†—</a>
+        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/tree/main/consumer-example" target="_blank" rel="noopener noreferrer">consumer-example/ on GitHub ↗</a>
+        &nbsp;·&nbsp;
+        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/blob/main/docs/CONSUMER_AUTHORIZATION.md" target="_blank" rel="noopener noreferrer">Authorization Guide ↗</a>
       </p>
     </div>
 
-    <!-- â”€â”€ Direct SDK (Browser) â”€â”€ -->
+    <!-- ── Direct SDK (Browser) ── -->
     <div class="card">
-      <h2>ðŸŒ Option C â€” Direct Browser Integration</h2>
+      <h2>🌐 Option C — Direct Browser Integration</h2>
       <p>If you prefer not to use the SDK package, you can call the VRF contract directly using the Stellar SDK from a CDN. This is exactly how the <a class="tx-link" href="../playground/">Playground</a> works.</p>
       <span class="code-label">HTML</span>
       <pre>&lt;script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js"&gt;&lt;/script&gt;
@@ -394,14 +394,14 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
     </div>
 
 
-    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
     <!-- INTERACTIVE DEMO                                                   -->
-    <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
 
-    <div class="section-divider">ðŸš€ Try it Live</div>
+    <div class="section-divider">🚀 Try it Live</div>
 
     <div class="card">
-      <h2>ðŸ”— Connect &amp; Test</h2>
+      <h2>🔗 Connect &amp; Test</h2>
       <p>Connect a funded Stellar account below to submit a real VRF request and see the full flow in action.</p>
       <div style="display:flex;gap:8px;margin-bottom:14px">
         <button id="btn-testnet" onclick="switchNetwork('testnet')"
@@ -410,30 +410,30 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
           style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:0.82rem">Mainnet</button>
       </div>
       <div id="network-info-box" class="net-info">
-        âš ï¸ <strong>Stellar Testnet</strong> â€” free to use. Click the fund button to get a funded keypair instantly.
+        ⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.
       </div>
       <form onsubmit="return false;">
-        <label>Secret Key (Sâ€¦)</label>
-        <input type="password" id="secret-key" placeholder="Sâ€¦ (signs locally, never sent to any server)" autocomplete="off" />
+        <label>Secret Key (S…)</label>
+        <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
         <div id="keypair-hint" style="margin-top:6px"></div>
         <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
           <button type="button" id="connect-btn" onclick="initClient()">Connect</button>
           <button type="button" id="fund-btn" onclick="createTestnetAccount()"
-            style="background:#065f46">âš¡ Create &amp; Fund Testnet Account</button>
+            style="background:#065f46">⚡ Create &amp; Fund Testnet Account</button>
         </div>
       </form>
       <div id="connect-status" style="margin-top:12px;font-size:0.85rem"></div>
     </div>
 
     <div class="card">
-      <h2>ðŸ“¡ Request Verifiable Randomness</h2>
+      <h2>📡 Request Verifiable Randomness</h2>
 
       <div class="step">
         <div class="step-num">1</div>
         <div style="flex:1">
           <label>Context / Purpose</label>
           <input type="text" id="context-input" placeholder="e.g. audit-round-42, nft-trait-gen" value="stellar-vrf-demo" />
-          <small style="color:#475569">Becomes part of the randomness seed â€” bind it to your use case</small>
+          <small style="color:#475569">Becomes part of the randomness seed — bind it to your use case</small>
         </div>
       </div>
 
@@ -458,7 +458,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       <div class="step">
         <div class="step-num">3</div>
         <div style="flex:1">
-          <button id="request-btn" onclick="submitRequest()">ðŸ”’ Request Verifiable Randomness</button>
+          <button id="request-btn" onclick="submitRequest()">🔒 Request Verifiable Randomness</button>
         </div>
       </div>
 
@@ -466,9 +466,9 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
     </div>
 
     <div class="card" id="result-card" style="display:none">
-      <h2>âœ… Verified Random Output</h2>
+      <h2>✅ Verified Random Output</h2>
       <div class="result-box">
-        <div class="result-number" id="result-number">â€”</div>
+        <div class="result-number" id="result-number">—</div>
         <div class="result-label" id="result-label">Verified on Stellar</div>
       </div>
       <div class="proof-display" id="proof-display"></div>
@@ -507,7 +507,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       keypair = null; server = null;
       const isMain = net === "mainnet";
       const badge = document.getElementById("network-badge");
-      badge.textContent = isMain ? "â— Mainnet" : "â— Testnet";
+      badge.textContent = isMain ? "● Mainnet" : "● Testnet";
       badge.style.cssText = isMain
         ? "background:rgba(220,38,38,0.12);color:#fca5a5;border:1px solid rgba(220,38,38,0.3);padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600"
         : "";
@@ -520,12 +520,12 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       const infoBox = document.getElementById("network-info-box");
       infoBox.className = isMain ? "net-info mainnet" : "net-info";
       infoBox.innerHTML = isMain
-        ? `ðŸ”´ <strong>Stellar Mainnet</strong> â€” real XLM will be spent. Enter a dedicated keypair with a small balance. Your secret key signs locally and is <strong>never sent to any server</strong>.`
-        : `âš ï¸ <strong>Stellar Testnet</strong> â€” free to use. Click the fund button to get a funded keypair instantly.`;
+        ? `🔴 <strong>Stellar Mainnet</strong> — real XLM will be spent. Enter a dedicated keypair with a small balance. Your secret key signs locally and is <strong>never sent to any server</strong>.`
+        : `⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.`;
 
       document.getElementById("keypair-hint").innerHTML = isMain
-        ? `<small style="color:#fbbf24">âš ï¸ Never enter a wallet holding large funds. Use a dedicated keypair.</small>`
-        : `<small style="color:#475569">No account? Use the fund button â†’</small>`;
+        ? `<small style="color:#fbbf24">⚠️ Never enter a wallet holding large funds. Use a dedicated keypair.</small>`
+        : `<small style="color:#475569">No account? Use the fund button →</small>`;
       document.getElementById("fund-btn").style.display = isMain ? "none" : "inline-block";
       document.getElementById("connect-status").innerHTML = "";
       document.getElementById("request-btn").disabled = true;
@@ -535,13 +535,13 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       const status = document.getElementById("connect-status");
       try {
         const kp = Keypair.random();
-        status.innerHTML = `<span class="spinner"></span> Funding new testnet account via Friendbotâ€¦`;
+        status.innerHTML = `<span class="spinner"></span> Funding new testnet account via Friendbot…`;
         const res = await fetch(`https://friendbot.stellar.org?addr=${kp.publicKey()}`);
         if (!res.ok) throw new Error("Friendbot funding failed");
         document.getElementById("secret-key").value = kp.secret();
         await window.initClient();
       } catch (e) {
-        status.innerHTML = `<span style="color:#fca5a5">âŒ ${esc(e.message)}</span>`;
+        status.innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
       }
     };
 
@@ -552,11 +552,11 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         keypair = Keypair.fromSecret(secret);
         server = new rpc.Server(NETWORK.soroban, { allowHttp: false });
         await server.getAccount(keypair.publicKey());
-        status.innerHTML = `âœ… Connected: <span style="color:#34d399">${esc(keypair.publicKey().slice(0, 20))}â€¦</span>`;
+        status.innerHTML = `✅ Connected: <span style="color:#34d399">${esc(keypair.publicKey().slice(0, 20))}…</span>`;
         document.getElementById("request-btn").disabled = false;
       } catch (e) {
         keypair = null;
-        status.innerHTML = `<span style="color:#fca5a5">âŒ ${esc(e.message)}</span>`;
+        status.innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
         document.getElementById("request-btn").disabled = true;
       }
     };
@@ -594,7 +594,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
     window.submitRequest = async function () {
       if (!keypair) {
         document.getElementById("status-area").innerHTML =
-          `<div class="status error">âŒ Connect a funded account first (use the Connect card above).</div>`;
+          `<div class="status error">❌ Connect a funded account first (use the Connect card above).</div>`;
         return;
       }
       const btn = document.getElementById("request-btn");
@@ -605,7 +605,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
       btn.disabled = true;
       try {
         const netName = NETWORK === NETWORKS.mainnet ? "Mainnet" : "Testnet";
-        statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar ${esc(netName)}â€¦</div>`;
+        statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>Submitting request to Stellar ${esc(netName)}…</div>`;
 
         const contextBytes = new TextEncoder().encode(ctx);
         const { result: reqResult, hash } = await submitTx("request", [
@@ -630,8 +630,8 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
 
         statusArea.innerHTML = `<div class="status pending"><span class="spinner"></span>
           Request #${safeReqId} submitted (<a class="tx-link" href="${esc(safeHashUrl)}" target="_blank" rel="noopener noreferrer">tx ↗</a>).
-          Waiting for oracle fulfillment…
-          <br><small style="color:#475569">The oracle generates a BLS-VRF proof (~10–30s)</small></div>`;
+          Waiting for oracle fulfillment
+          <br><small style="color:#475569">The oracle generates a BLS-VRF proof (~1030s)</small></div>`;
 
         let fulfilled = false;
         for (let i = 0; i < 40; i++) {
@@ -652,14 +652,14 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         document.getElementById("result-card").style.display = "block";
         document.getElementById("result-number").textContent = result.toString();
         document.getElementById("result-label").textContent =
-          `Range [${rangeMin} – ${rangeMax}] · Context: "${ctx}" · Request #${safeReqId}`;
+          `Range [${rangeMin}  ${rangeMax}] · Context: "${ctx}" · Request #${safeReqId}`;
         document.getElementById("proof-display").innerHTML = `
           <div class="field"><div class="field-label">Request ID</div><div class="field-value">${safeReqId}</div></div>
           <div class="field"><div class="field-label">Request TX</div><div class="field-value"><a class="tx-link" href="${esc(safeHashUrl)}" target="_blank" rel="noopener noreferrer">${safeHash}</a></div></div>
           <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${esc(String(result))} ∈ [${esc(String(rangeMin))}, ${esc(String(rangeMax))}]</div></div>`;
-        statusArea.innerHTML = `<div class="status success">âœ… Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
+        statusArea.innerHTML = `<div class="status success">✅ Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
       } catch (e) {
-        statusArea.innerHTML = `<div class="status error">â Œ ${esc(e.message)}</div>`;
+        statusArea.innerHTML = `<div class="status error">â  ${esc(e.message)}</div>`;
       } finally {
         btn.disabled = false;
       }
