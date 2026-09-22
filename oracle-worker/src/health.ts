@@ -7,7 +7,7 @@
 
 import http from "http";
 import { getLeaderState, getInstanceId } from "./leader.js";
-import { getMetrics, getInFlightCount, getListenerStatus } from "./metrics.js";
+import { getMetrics, getInFlightCount, getListenerStatus, getFeeGuardStats } from "./metrics.js";
 
 const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || "8080", 10);
 
@@ -147,6 +147,7 @@ function handleHealth(res: http.ServerResponse): void {
 function handleMetrics(res: http.ServerResponse): void {
   // Prometheus text format
   const m = getMetrics();
+  const fg = getFeeGuardStats();
   const lines = [
     `# HELP vrf_requests_fulfilled_total Total VRF requests successfully fulfilled`,
     `# TYPE vrf_requests_fulfilled_total counter`,
@@ -179,6 +180,22 @@ function handleMetrics(res: http.ServerResponse): void {
     `# HELP vrf_listener_restarts_total Listener sessions restarted after a crash`,
     `# TYPE vrf_listener_restarts_total counter`,
     `vrf_listener_restarts_total ${getListenerStatus().restarts}`,
+    ``,
+    `# HELP vrf_fee_guard_deferred_total Requests deferred by the fee guard (balance floor or unpaid cap)`,
+    `# TYPE vrf_fee_guard_deferred_total counter`,
+    `vrf_fee_guard_deferred_total ${fg.deferred}`,
+    ``,
+    `# HELP vrf_unpaid_fulfillments_total Fulfillments whose on-chain fee did not cover the network cost`,
+    `# TYPE vrf_unpaid_fulfillments_total counter`,
+    `vrf_unpaid_fulfillments_total ${fg.unpaidFulfilled}`,
+    ...(fg.oracleBalanceStroops !== null
+      ? [
+          ``,
+          `# HELP vrf_oracle_balance_stroops Last observed native balance of the oracle account`,
+          `# TYPE vrf_oracle_balance_stroops gauge`,
+          `vrf_oracle_balance_stroops ${fg.oracleBalanceStroops}`,
+        ]
+      : []),
   ].join("\n");
 
   res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });

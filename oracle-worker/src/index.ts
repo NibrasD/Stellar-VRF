@@ -26,7 +26,11 @@ import {
   fetchRequestContext,
   isRequestFulfilled,
   findPendingRequests,
+  readFeeAmount,
+  readOracleBalance,
+  readRequester,
 } from "./listener.js";
+import { FeeGuard, feeGuardOptionsFromEnv, formatXlm } from "./feeGuard.js";
 import { waitAndFetchBeacon } from "./drand.js";
 import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
 import { submitFulfillment } from "./fulfiller.js";
@@ -46,6 +50,9 @@ import {
   recordListenerStarted,
   recordListenerStopped,
   recordListenerRestart,
+  recordFeeDeferred,
+  recordUnpaidFulfilled,
+  recordOracleBalance,
 } from "./metrics.js";
 import { withRetry, withFulfillRetry, checkDrandLag } from "./retry.js";
 import { DRAND_PERIOD } from "./config.js";
@@ -55,6 +62,22 @@ import type { VrfRequestEvent } from "./listener.js";
 
 // Track in-flight requests to avoid double-processing
 const processingRequests = new Set<string>();
+
+/** A real Stellar account (G…) or contract (C…) StrKey. */
+const STRKEY_RE = /^[GC][A-Z2-7]{55}$/;
+
+const feeGuardOptions = feeGuardOptionsFromEnv();
+const feeGuardServer = createServer();
+const feeGuard = new FeeGuard(
+  {
+    readFeeAmount: () => readFeeAmount(feeGuardServer),
+    readBalance: () => readOracleBalance(feeGuardServer),
+    readRequester: (id) => readRequester(feeGuardServer, id),
+    now: Date.now,
+    onBalance: recordOracleBalance,
+  },
+  feeGuardOptions
+);
 
 /**
  * How often the leader re-reconciles against contract state while running.
@@ -82,6 +105,8 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   processingRequests.add(reqKey);
   recordRequestSeen();
   const startMs = Date.now();
+  let unpaid = false;
+  let submitAttempted = false;
 
   try {
     const server = createServer();
@@ -95,6 +120,23 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
       log.info(`Request ${event.requestId} already fulfilled, skipping.`);
       return;
     }
+
+    // 1b. Economic guard — decide BEFORE waiting for drand or doing any work
+    // whether this request may cost the oracle money (see feeGuard.ts).
+    const decision = await feeGuard.check(
+      event.requestId,
+      STRKEY_RE.test(event.requester) ? event.requester : null
+    );
+    if (!decision.allow) {
+      recordFeeDeferred();
+      log.warn(
+        `Deferring request ${event.requestId}: ${decision.reason}. It stays pending on-chain ` +
+          `(reconciliation will retry; the requester can timeout_refund()).`
+      );
+      return;
+    }
+    unpaid = !decision.paid;
+    if (unpaid) log.info(`  Fee guard: ${decision.reason}`);
 
     log.info(`═══ Processing VRF request #${event.requestId} ═══`);
     log.info(`  Requester:      ${event.requester}`);
@@ -146,12 +188,14 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
         `[${getInstanceId()}] Lost leadership while preparing request ${event.requestId} — ` +
           `discarding instead of submitting.`
       );
+      if (unpaid) feeGuard.refundUnpaidSlot(); // nothing was spent
       return;
     }
 
     // Leadership is re-checked before EVERY submission attempt: the outer
     // withFulfillRetry attempts and submitFulfillment's own inner retries.
     // A FulfillAbortedError is terminal — withFulfillRetry does not retry it.
+    submitAttempted = true; // from here on, fees may have been spent
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
       () => submitFulfillment(server, event.requestId, proof, isLeader)
@@ -159,6 +203,8 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
 
     const durationMs = Date.now() - startMs;
     recordFulfillment(durationMs);
+    if (unpaid) recordUnpaidFulfilled();
+    feeGuard.invalidateBalance(); // the submission just changed it
 
     log.success(`═══ Request #${event.requestId} fulfilled (${durationMs}ms) ═══`);
     log.success(`  TX hash: ${txHash}`);
@@ -166,6 +212,9 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     recordFailure(msg);
+    // Failed before any transaction was sent (drand / context / proof): the
+    // unpaid budget slot was not actually spent.
+    if (unpaid && !submitAttempted) feeGuard.refundUnpaidSlot();
     log.error(`Failed to process request ${event.requestId}: ${msg}`);
     if (err instanceof Error && err.stack) {
       log.error(`  Stack: ${err.stack}`);
@@ -261,6 +310,24 @@ async function main(): Promise<void> {
   const blsPubKey = deriveBlsPublicKey();
   log.info(`Oracle BLS public key: ${bytesToHex(blsPubKey).slice(0, 40)}…`);
   log.info(`Instance ID: ${getInstanceId()}`);
+
+  // Report the economic posture up front so operators see it in the first log lines.
+  const { fulfillCostStroops, minBalanceStroops, maxUnpaidPerHour, allowlist } = feeGuardOptions;
+  try {
+    const fee = await readFeeAmount(feeGuardServer);
+    if (fee < fulfillCostStroops) {
+      log.warn(
+        `Contract FeeAmount (${fee} stroops) is below the fulfill cost (${fulfillCostStroops} stroops): ` +
+          `requests do not pay for themselves. Fee guard: at most ${maxUnpaidPerHour} unpaid ` +
+          `fulfillment(s)/hour + ${allowlist.size} allowlisted requester(s), ` +
+          `balance floor ${formatXlm(minBalanceStroops)}.`
+      );
+    } else {
+      log.info(`Contract FeeAmount ${fee} stroops covers the fulfill cost; balance floor ${formatXlm(minBalanceStroops)}.`);
+    }
+  } catch (err) {
+    log.warn(`Could not read contract FeeAmount at startup (${err instanceof Error ? err.message : err}); treating requests as unpaid.`);
+  }
 
   // Start health server on all instances (primary + standby)
   startHealthServer();

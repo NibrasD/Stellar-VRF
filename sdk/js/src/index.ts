@@ -142,6 +142,10 @@ export class VrfClient {
    * @param max        Inclusive upper bound.
    * @param context    Domain-separation bytes (must match what the consumer
    *                   used); defaults to an empty byte string.
+   *
+   * Range limit: the contract takes an exclusive u64 bound, so `[min, max]` must
+   * lie within u64 and contain at most 2^64 - 1 values. `[0, 2^64 - 1]` itself
+   * is rejected; use `deriveRandomFromBeta()` for full-width randomness.
    */
   async deriveRandomInRange(
     requestId: bigint,
@@ -149,8 +153,7 @@ export class VrfClient {
     max: bigint,
     context: Uint8Array = new Uint8Array()
   ): Promise<bigint> {
-    if (max < min) throw new Error("max must be >= min");
-    const span = max - min + 1n;
+    const span = inclusiveSpan(min, max);
     const result = await this.simulate("derive_random_in_range", [
       nativeToScVal(requestId, { type: "u64" }),
       nativeToScVal(context, { type: "bytes" }),
@@ -330,10 +333,35 @@ export class VrfClient {
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
+const U64_MAX = (1n << 64n) - 1n;
+
+/**
+ * Number of values in [min, max], as the contract's exclusive u64 bound.
+ * Throws for ranges outside u64 and for [0, 2^64 - 1], whose span (2^64) can't
+ * be encoded as a u64 (nativeToScVal would otherwise fail with a less useful
+ * error).
+ */
+function inclusiveSpan(min: bigint, max: bigint): bigint {
+  if (max < min) throw new Error("max must be >= min");
+  if (min < 0n || max > U64_MAX) throw new Error("min and max must be within u64 [0, 2^64 - 1]");
+  const span = max - min + 1n;
+  if (span > U64_MAX) {
+    throw new Error(
+      "range [0, 2^64 - 1] has 2^64 values and cannot be expressed as the contract's " +
+        "exclusive u64 bound; use deriveRandomFromBeta() or the raw beta instead"
+    );
+  }
+  return span;
+}
+
 /**
  * Derive a random number in the inclusive range [min, max] client-side from a
- * beta output hex string. Use this when you don't want to make an extra
- * contract call.
+ * beta output hex string, without a contract call.
+ *
+ * This is a pure, deterministic function of beta, so anyone holding the
+ * verified beta can reproduce it. It is **not** the same function as the
+ * contract's `derive_random_in_range(request_id, context, max)`, which first
+ * hashes `domain ‖ beta ‖ context`. Don't mix the two for the same purpose.
  *
  * Bias: this consumes **128 bits** of beta and reduces modulo the range. For a
  * uniform `x` in [0, 2^128) and any range < 2^64, the deviation between residue

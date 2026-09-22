@@ -54,6 +54,39 @@ export function recordDrandDelay(): void {
   metrics.drandDelays++;
 }
 
+// ─── Fee guard (spend on requests that don't pay for themselves) ────────────
+
+export interface FeeGuardStats {
+  /** Requests deferred by the fee guard (balance floor or unpaid cap). */
+  deferred: number;
+  /** Fulfillments submitted where the on-chain fee did not cover the cost. */
+  unpaidFulfilled: number;
+  /** Last observed oracle balance in stroops (null until first read). */
+  oracleBalanceStroops: bigint | null;
+}
+
+const feeGuardStats: FeeGuardStats = {
+  deferred: 0,
+  unpaidFulfilled: 0,
+  oracleBalanceStroops: null,
+};
+
+export function getFeeGuardStats(): Readonly<FeeGuardStats> {
+  return feeGuardStats;
+}
+
+export function recordFeeDeferred(): void {
+  feeGuardStats.deferred++;
+}
+
+export function recordUnpaidFulfilled(): void {
+  feeGuardStats.unpaidFulfilled++;
+}
+
+export function recordOracleBalance(stroops: bigint): void {
+  feeGuardStats.oracleBalanceStroops = stroops;
+}
+
 /**
  * Number of requests the listener has picked up but not yet completed.
  *

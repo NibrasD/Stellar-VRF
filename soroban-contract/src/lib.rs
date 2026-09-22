@@ -163,8 +163,11 @@ impl VRFOracleContract {
 
     /// Rotate the drand public key used to verify BLS beacon signatures.
     ///
-    /// This is required when the drand network performs a key rotation or when
-    /// switching to a different drand chain (e.g., quicknet → a future chain).
+    /// Use this when the configured drand chain rotates its group key. It is
+    /// **not** a chain migration: `DrandGenesis`, `DrandPeriod` and the signature
+    /// DST (quicknet, G1, unchained) are fixed at `init()` or compiled in, and the
+    /// contract has no upgrade entrypoint. Moving to a different drand chain
+    /// requires deploying a new contract instance.
     ///
     /// # Authorization model
     /// The current oracle must authorize this call.

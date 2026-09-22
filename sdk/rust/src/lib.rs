@@ -290,6 +290,12 @@ impl VrfClient {
     /// consumer used); pass an empty slice for the default.
     ///
     /// This calls the contract via simulation, so no transaction fee is charged.
+    ///
+    /// # Range limit
+    /// The contract takes an exclusive `u64` upper bound, so the widest inclusive
+    /// range it can serve has `2^64 - 1` values. The single range it can't
+    /// express, `[0, u64::MAX]`, returns an error instead of overflowing. For
+    /// full-width randomness use [`derive_random_from_beta`] or the raw beta.
     pub async fn derive_random_in_range(
         &self,
         request_id: u64,
@@ -297,11 +303,7 @@ impl VrfClient {
         max: u64,
         context: &[u8],
     ) -> Result<u64, VrfError> {
-        if max < min {
-            return Err(VrfError::Rpc("max must be >= min".into()));
-        }
-
-        let span = max - min + 1;
+        let span = inclusive_span(min, max)?;
         let result = self
             .simulate_call(
                 "derive_random_in_range",
@@ -726,16 +728,42 @@ fn build_minimal_envelope(
 
 // ── Client-side utilities ────────────────────────────────────────────────────
 
-/// Derive a random number in the inclusive range `[min, max]` client-side from a
-/// beta output.
+/// Number of values in the inclusive range `[min, max]`, as the contract's
+/// exclusive `u64` bound.
 ///
-/// This does NOT require a contract call — it's a pure mathematical derivation
-/// from the beta bytes. Anyone can verify this matches the on-chain result.
+/// `max - min + 1` overflows `u64` for exactly one input, `[0, u64::MAX]`
+/// (`2^64` values). That range can't be expressed to the contract, so it's
+/// rejected with an explicit error instead of panicking in debug builds or
+/// silently wrapping to `0` in release builds.
+fn inclusive_span(min: u64, max: u64) -> Result<u64, VrfError> {
+    if max < min {
+        return Err(VrfError::Rpc("max must be >= min".into()));
+    }
+    (max - min).checked_add(1).ok_or_else(|| {
+        VrfError::Rpc(
+            "range [0, u64::MAX] has 2^64 values and cannot be expressed as the contract's \
+             exclusive u64 bound; use derive_random_from_beta() or the raw beta instead"
+                .into(),
+        )
+    })
+}
+
+/// Derive a random number in the inclusive range `[min, max]` client-side from a
+/// beta output, without a contract call.
+///
+/// This is a pure, deterministic function of `beta`, so anyone holding the
+/// verified beta can reproduce it. It is **not** the same function as the
+/// contract's `derive_random_in_range(request_id, context, max)`, which first
+/// hashes `domain ‖ beta ‖ context`. Don't mix the two for the same purpose. Use
+/// one consistently and document which one your application uses.
+///
+/// The full range `[0, u64::MAX]` is supported.
 ///
 /// # Bias
 /// Consumes **128 bits** of `beta` and reduces modulo the range. For a uniform
-/// `x` in `[0, 2^128)` and any range `< 2^64`, the deviation between residue
-/// classes is bounded by `range / 2^128 <= 2^-64` — cryptographically negligible.
+/// `x` in `[0, 2^128)` and any range `<= 2^64`, the deviation between residue
+/// classes is bounded by `range / 2^128 <= 2^-64`, which is cryptographically
+/// negligible.
 ///
 /// An earlier version used only the first 64 bits, giving a bias of up to
 /// `range / 2^64`, which becomes significant for very large ranges (approaching
@@ -747,8 +775,10 @@ pub fn derive_random_from_beta(beta: &[u8], min: u64, max: u64) -> Result<u64, V
     if beta.len() < 16 {
         return Err(VrfError::Rpc("beta must be at least 16 bytes".into()));
     }
-    let range = (max - min + 1) as u128;
+    // Widen BEFORE adding 1: `(max - min + 1)` in u64 overflows for [0, u64::MAX].
+    let range = (max - min) as u128 + 1;
     let beta_val = u128::from_be_bytes(beta[0..16].try_into().unwrap());
+    // beta_val % range <= max - min, so the u64 cast and the addition can't overflow.
     Ok(min + (beta_val % range) as u64)
 }
 
@@ -1076,6 +1106,37 @@ mod tests {
         // silently producing a biased value.
         assert!(derive_random_from_beta(&[0u8; 8], 1, 10).is_err());
         assert!(derive_random_from_beta(&beta, 10, 10).is_err());
+    }
+
+    /// Regression: `max - min + 1` overflowed u64 for the full range, which
+    /// panics in debug builds and wraps to a modulus of 0 in release builds.
+    #[test]
+    fn test_derive_random_from_beta_full_u64_range() {
+        // The whole domain must be reachable, including both ends.
+        let lo = derive_random_from_beta(&[0x00u8; 16], 0, u64::MAX).unwrap();
+        let hi = derive_random_from_beta(&[0xFFu8; 16], 0, u64::MAX).unwrap();
+        assert_eq!(lo, 0);
+        assert_eq!(hi, u64::MAX, "2^128-1 mod 2^64 = 2^64-1");
+
+        // Near-full ranges at either edge stay in bounds.
+        let beta = [0xABu8; 32];
+        for (min, max) in [(1u64, u64::MAX), (0, u64::MAX - 1), (u64::MAX - 1, u64::MAX)] {
+            let v = derive_random_from_beta(&beta, min, max).unwrap();
+            assert!(v >= min && v <= max, "{v} outside [{min}, {max}]");
+        }
+    }
+
+    /// The on-chain span sent to `derive_random_in_range` must never overflow.
+    #[test]
+    fn test_inclusive_span_boundaries() {
+        assert_eq!(inclusive_span(1, 100).unwrap(), 100);
+        assert_eq!(inclusive_span(7, 7).unwrap(), 1);
+        assert_eq!(inclusive_span(1, u64::MAX).unwrap(), u64::MAX);
+        assert_eq!(inclusive_span(0, u64::MAX - 1).unwrap(), u64::MAX);
+        // The one range the contract's exclusive u64 bound cannot express.
+        let err = inclusive_span(0, u64::MAX).unwrap_err().to_string();
+        assert!(err.contains("2^64"), "unexpected error: {err}");
+        assert!(inclusive_span(10, 9).is_err());
     }
 
     #[tokio::test]

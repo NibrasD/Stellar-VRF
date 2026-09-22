@@ -103,7 +103,8 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
   - `derive_random_in_range` draws **128 bits** of hash entropy and reduces modulo `max`.
   - For uniform $x \in [0, 2^{128})$ and any $max < 2^{64}$, the deviation between residue classes is bounded by $max / 2^{128} \le 2^{-64}$ — cryptographically negligible.
   - Properties: **no biased fallback path**, **constant cost** (exactly one `sha256`, no loop, deterministic instruction count), and **deterministic** output for identical inputs.
-  - The client-side helpers mirror this exactly: `deriveRandomFromBeta()` (JS SDK) and `derive_random_from_beta()` (Rust SDK) both consume 128 bits of beta.
+  - The client-side helpers `deriveRandomFromBeta()` (JS SDK) and `derive_random_from_beta()` (Rust SDK) use the same 128-bit reduction, but they are **not the same function** as the contract's: they reduce the first 16 bytes of `beta` directly, while the contract reduces `sha256("VREP_DERIVE_V1" ‖ beta ‖ context)`. Their outputs differ for the same request.
+  - **Deployment status:** the 128-bit method is in the source. The live Mainnet contract (`CBTCC5QL…`, WASM `90ad8499…`) was deployed **before** this change and still runs the earlier bounded rejection loop. This was confirmed by calling it on Mainnet request #1 with `max = 2^63 + 12345` and matching the old algorithm's output. The biased fallback affects only very large `max` values (see above). Ranges used in practice (dice, percentages, indices) are unaffected. A redeployment is needed to ship the fix on-chain.
   - Verified by tests: `test_derive_random_in_range_bounds`, `test_derive_random_in_range_worst_case_sampling`, `test_property_derive_random_in_range_boundary_max_one`, and `test_property_derive_random_in_range_fuzz_various_ranges`.
 
 ### [SL-01] Storage Rent Reclamation & Bounded Growth [VERIFIED-SECURE]

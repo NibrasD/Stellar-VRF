@@ -30,6 +30,7 @@ for (const p of candidates) {
 }
 
 import { Keypair, Networks } from "@stellar/stellar-sdk";
+import { drandVerificationPolicyError } from "./policy.js";
 
 function requireEnv(key: string): string {
   const val = process.env[key];
@@ -113,10 +114,20 @@ export const DRAND_PUBLIC_KEY = optionalEnv(
  * instead: without it a compromised or buggy relay can feed the worker garbage,
  * and the worker will happily spend CPU on a BLS-VRF proof and submit a
  * transaction that is guaranteed to be rejected on-chain — wasting fees on
- * every request. Disable only for debugging.
+ * every request. Disable only for local debugging: startup REFUSES `false` on
+ * Mainnet or with `NODE_ENV=production` (see policy.ts).
  */
 export const DRAND_VERIFY_BEACONS =
   optionalEnv("DRAND_VERIFY_BEACONS", "true").toLowerCase() !== "false";
+
+{
+  const policyError = drandVerificationPolicyError(
+    DRAND_VERIFY_BEACONS,
+    NETWORK_PASSPHRASE,
+    process.env.NODE_ENV
+  );
+  if (policyError) throw new Error(policyError);
+}
 
 /** drand DST for quicknet (`bls-unchained-g1-rfc9380`); matches DRAND_DST on-chain. */
 export const DRAND_DST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";

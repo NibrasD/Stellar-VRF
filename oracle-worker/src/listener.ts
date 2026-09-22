@@ -85,6 +85,20 @@ export async function initListener(server: rpc.Server): Promise<void> {
  * NEWEST requests instead of guessing where the ID range ends.
  */
 export async function readRequestCounter(server: rpc.Server): Promise<bigint> {
+  // Counter is written by init(), so an initialised contract always has it.
+  return (await readInstanceInteger(server, "Counter")) ?? 0n;
+}
+
+/**
+ * Read the contract's per-request fee (`DataKey::FeeAmount`, instance storage).
+ * Immutable after init(); `0` on the current Mainnet instance.
+ */
+export async function readFeeAmount(server: rpc.Server): Promise<bigint> {
+  return (await readInstanceInteger(server, "FeeAmount")) ?? 0n;
+}
+
+/** Read an integer-valued unit `DataKey` variant from contract instance storage. */
+async function readInstanceInteger(server: rpc.Server, name: string): Promise<bigint | null> {
   const entry = await server.getContractData(
     CONTRACT_ADDRESS,
     xdr.ScVal.scvLedgerKeyContractInstance(),
@@ -94,12 +108,25 @@ export async function readRequestCounter(server: rpc.Server): Promise<bigint> {
   const storage: Array<{ key: xdr.ScVal; val: xdr.ScVal }> = val.instance.storage ?? [];
   for (const item of storage) {
     const key = scValToNative(item.key);
-    if (Array.isArray(key) && key.length === 1 && key[0] === "Counter") {
+    if (Array.isArray(key) && key.length === 1 && key[0] === name) {
       return BigInt(scValToNative(item.val) as bigint | number | string);
     }
   }
-  // Counter is written by init(), so an initialised contract always has it.
-  return 0n;
+  return null;
+}
+
+/** Requester address of a request (`DataKey::Requester(id)`), or null if absent. */
+export async function readRequester(server: rpc.Server, id: bigint): Promise<string | null> {
+  const res = await server.getLedgerEntries(requestEntryKey("Requester", id));
+  const entry = res.entries[0];
+  if (!entry) return null;
+  return Address.fromScVal((entry.val as any).contractData.val).toString();
+}
+
+/** Native XLM balance of the oracle account, in stroops. */
+export async function readOracleBalance(server: rpc.Server): Promise<bigint> {
+  const account = await server.getAccountEntry(ORACLE_PUBLIC_KEY);
+  return BigInt(account.balance); // stellar-sdk v17: `balance` is an int64 bigint (stroops)
 }
 
 /** Ledger key for a per-request persistent entry, e.g. `Fulfilled(id)`. */

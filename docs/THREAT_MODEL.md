@@ -39,7 +39,9 @@ We do **not** trust the drand *HTTP relay* that serves beacons. Verification hap
    buggy relay could feed the worker garbage and the worker would spend CPU on a BLS-VRF
    proof and pay to submit a transaction guaranteed to be rejected — a **fee-drain / DoS**
    vector, not an integrity break. Beacons served under the wrong round are rejected too.
-   Controlled by `DRAND_VERIFY_BEACONS` (default on; disable only for debugging).
+   Controlled by `DRAND_VERIFY_BEACONS` (default on). The worker **refuses to start** with it
+   disabled on Mainnet or with `NODE_ENV=production` (set in the Docker image), so it can only be
+   turned off for local testnet debugging.
 
 **Single oracle identity.** This is the most important trust boundary to understand. The design
 uses **one oracle key** (a single logical oracle), even though it is run by a primary plus a
@@ -154,11 +156,21 @@ verification (~56M instructions), not storage operations.
   fulfill, refunded to requester on timeout). The Mainnet instance is deployed with
   `fee_amount = 0` (verified from instance storage), and `fee_amount` is immutable after `init()`.
   Consequence: a requester pays only the Stellar network fee per `request()`, while the oracle
-  pays ~0.14 XLM per `fulfill()`. An attacker can therefore **drain the oracle's XLM balance**
-  (an availability/cost attack, not an integrity one). Current mitigations are operational:
-  balance and request-rate alerting, and the operator's ability to stop fulfilling (requesters
-  stay protected by `timeout_refund()`). The structural fix is a deployment with
-  `fee_amount > 0`.
+  pays ~0.14 XLM per `fulfill()`. Unchecked, an attacker could **drain the oracle's XLM
+  balance**. That's an availability/cost attack, not an integrity one. **Mitigation in the
+  worker (fee guard, `src/feeGuard.ts`):** before any drand wait or proof work, each request is
+  checked:
+  1. The oracle never submits below `MIN_ORACLE_BALANCE_XLM`, and fails closed if the balance
+     is unreadable.
+  2. Requests whose on-chain fee covers `FULFILL_COST_STROOPS` are served.
+  3. Requesters on `UNPAID_REQUESTER_ALLOWLIST` are served.
+  4. Anyone else gets at most `UNPAID_FULFILL_MAX_PER_HOUR` unpaid fulfillments per rolling hour.
+
+  The worst-case spend goes from "entire balance" to about `cap × 0.15 XLM` per hour, and never
+  below the floor. **Residual risk:** during spam, requests from non-allowlisted users are
+  deferred. That's a liveness degradation for them, but they're refundable via
+  `timeout_refund()`. An attacker can't bias or forge outputs. The structural fix is a deployment
+  with `fee_amount` ≥ the fulfill cost. `mainnet_deploy.mjs` enforces this.
 - **Oracle key is a single point of failure for administration** — there is no separate admin
   role. The oracle Stellar account authorizes `fulfill()`, `rotate_oracle_keys()` and
   `rotate_drand_pk()`. Losing it makes the deployment unrotatable (requests can only time out

@@ -2,16 +2,34 @@
 
 ## Status
 
-| SDK | Registry | Status |
-|---|---|---|
-| Rust — `stellar-vrf-sdk` | crates.io | ✅ **PUBLISHED v1.0.1** (2026-09-22) |
-| JS — `stellar-vrf-sdk` | npm | ✅ **PUBLISHED v1.0.1** (`latest`, gitHead `e90347e`) |
+_Registry state verified 2026-09-22 against the live registries (`npm view`, crates.io API)._
 
-> ⚠️ **Not yet released:** the 128-bit `deriveRandomInRange` / `derive_random_in_range`
-> bias fix and the Rust SDK's proper StrKey address encoding are in the repo but were
-> **not** part of 1.0.1 (npm 1.0.1 `gitHead` is `e90347e`; the fixes are newer than that
-> commit and the crates.io 1.0.1 code-line count is identical to 1.0.0). They require a new
-> release (changes random-in-range output for the same beta → treat as minor/breaking).
+| SDK | Registry | Published | `latest` |
+|---|---|---|---|
+| JS — `stellar-vrf-sdk` | npm | 1.0.0 (2026-09-21 20:02 UTC), **1.0.1 (2026-09-22 13:12 UTC)** | **1.0.1** (`gitHead` `e90347e`) |
+| Rust — `stellar-vrf-sdk` | crates.io | 1.0.0 (2026-09-21 19:29 UTC), **1.0.1 (2026-09-22 13:05 UTC)** | **1.0.1** |
+
+npm 1.0.1 includes the `Networks.MAINNET` alias: commit `cde82d9` is an ancestor of `e90347e`.
+
+### Unreleased (in `main`, not in any published version)
+
+These changes are newer than `e90347e` and need a new release (proposed **1.1.0**):
+
+- **Both SDKs:** client-side `deriveRandomFromBeta` / `derive_random_from_beta` now use 128 bits
+  of beta instead of 64, which reduces bias for very large ranges. This **changes the output**
+  for the same beta, so treat it as a minor release with a changelog note.
+- **Both SDKs:** `deriveRandomInRange` / `derive_random_in_range` reject `[0, 2^64 − 1]` with a
+  clear error. Its span (2^64) can't be passed as the contract's exclusive u64 bound. The Rust
+  SDK previously overflowed here (panic in debug, wrap-to-0 in release). The Rust
+  `derive_random_from_beta` now supports the full `[0, u64::MAX]` range; it previously
+  overflowed before widening.
+- **Rust SDK:** event `requester` values are proper StrKey addresses. Previously they were a
+  non-decodable `G<hex>` string.
+- **Docs:** the client-side helpers are documented as **not** the same function as the
+  contract's `derive_random_in_range`, which hashes `domain ‖ beta ‖ context` first.
+
+Publishing needs maintainer credentials: `npm login` with a publish-capable token, and
+`cargo login`. After publishing, update the table above.
 
 ### ✅ Resolved in v1.0.1 — `Networks.MAINNET` was undefined in npm v1.0.0
 
@@ -33,31 +51,20 @@ upstream names the live network **`PUBLIC`**, not `MAINNET`
 an added `MAINNET` alias for `PUBLIC`, so both spellings work and the documented
 example is correct. Version bumped to **1.0.1** and **published** to npm.
 
-(Historical) `npm publish` for 1.0.1 was initially blocked by a staging-only token:
-
-```
-npm error 403 This token can only publish to a staging area.
-npm error Run `npm stage publish` to publish this version, then approve it.
-npm error (E_STAGE_REQUIRED)
-```
-
-**Action required:** publish 1.0.1 with a direct-capable token so npm users get
-the working `Networks.MAINNET`:
-
-```powershell
-cd sdk/js
-npm login
-npm publish --otp=<6-digit-code>
-```
+(Historical) `npm publish` for 1.0.1 was first blocked by a staging-only token
+(`E_STAGE_REQUIRED`). It was later published with a publish-capable token. See the status
+table above.
 
 ### Rust SDK — PUBLISHED ✅
+
+Initial publish (1.0.0); 1.0.1 followed on 2026-09-22:
 
 ```
 Uploaded stellar-vrf-sdk v1.0.0 to registry `crates-io`
 Published stellar-vrf-sdk v1.0.0 at registry `crates-io`
 ```
 
-Independently verified from a clean scratch project:
+1.0.0 was independently verified from a clean scratch project:
 
 ```bash
 cargo init --bin crate_check && cargo add stellar-vrf-sdk
@@ -66,7 +73,7 @@ cargo init --bin crate_check && cargo add stellar-vrf-sdk
 #      Locking 164 packages to latest Rust 1.95.0 compatible versions
 ```
 
-Registry API confirms: `stellar-vrf-sdk v1.0.0`.
+The registry API now lists `1.0.1` and `1.0.0`.
 URL: <https://crates.io/crates/stellar-vrf-sdk>
 
 ### JS SDK — PUBLISHED ✅
@@ -87,9 +94,7 @@ node -e 'import("stellar-vrf-sdk").then(m => console.log(typeof m.VrfClient))'
 # function
 ```
 
-Registry API confirms `dist-tags.latest = 1.0.0`.
-
-**See the known issue above — v1.0.1 still needs publishing.**
+The registry API now reports `dist-tags.latest = 1.0.1`.
 
 ## Pre-flight (already verified)
 
@@ -102,15 +107,16 @@ Registry API confirms `dist-tags.latest = 1.0.0`.
 
 ## 1. Publish the JavaScript SDK
 
-`stellar-vrf-sdk` is a **scoped** package, so it would default to restricted
-access. `publishConfig.access = "public"` is set in `package.json` to prevent a
-paid-org error. `prepublishOnly` rebuilds `dist/` so a stale build can't ship.
+`stellar-vrf-sdk` is **unscoped**. `publishConfig.access = "public"` is kept in
+`package.json` anyway, so it's harmless if the package is ever scoped again.
+`prepublishOnly` rebuilds `dist/` so a stale build can't ship.
 
 ```bash
 cd sdk/js
-npm login                 # must be a member of the @stellar-vrf org/scope
+npm version minor --no-git-tag-version   # e.g. 1.0.1 -> 1.1.0 (also bump sdk/rust/Cargo.toml)
+npm login
 npm whoami                # confirm auth (E401 means not logged in)
-npm publish               # access:public comes from publishConfig
+npm publish --otp=<code>
 ```
 
 Verify:
@@ -119,9 +125,6 @@ Verify:
 npm view stellar-vrf-sdk version
 cd /tmp && npm install stellar-vrf-sdk @stellar/stellar-sdk
 ```
-
-> If the `@stellar-vrf` scope is not yet registered, create the org on npm first,
-> or rename the package to an unscoped name you control.
 
 ## 2. Publish the Rust SDK
 

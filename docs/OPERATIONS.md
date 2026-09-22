@@ -89,6 +89,11 @@ The replica will:
 | `RECONCILE_MAX_SCAN` | No | `1000` | Newest request IDs re-checked on each reconciliation |
 | `RECONCILE_INTERVAL_MS` | No | `120000` | Periodic reconciliation interval while leader |
 | `HEALTH_LISTENER_STALE_MS` / `HEALTH_LISTENER_GRACE_MS` | No | `120000` / `60000` | Leader listener staleness threshold / grace |
+| `DRAND_VERIFY_BEACONS` | No | `true` | Local drand verification. `false` is **refused** on Mainnet or with `NODE_ENV=production` |
+| `FULFILL_COST_STROOPS` | No | `1500000` | Estimated fulfill cost. On-chain fee ≥ this counts as "paid" |
+| `MIN_ORACLE_BALANCE_XLM` | No | `5` | Never submit below this balance |
+| `UNPAID_FULFILL_MAX_PER_HOUR` | No | `10` | Unpaid fulfillments/hour for non-allowlisted requesters |
+| `UNPAID_REQUESTER_ALLOWLIST` | No | — | Comma-separated requester addresses always served |
 
 Leader-election variables (`REDIS_URL`, `LEADER_LOCK_TTL_MS`, …) are listed in [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md#environment-variables).
 
@@ -123,6 +128,32 @@ Point your load balancer / uptime monitor at `/health` and alert on non-200 from
 | `vrf_requests_fulfilled_total` / `vrf_requests_failed_total` | counter | failure ratio rising |
 | `vrf_fulfill_duration_ms_avg` | gauge | > 60000 |
 | `vrf_drand_delays_total` | counter | sustained growth |
+| `vrf_oracle_balance_stroops` | gauge | < 2 × `MIN_ORACLE_BALANCE_XLM` |
+| `vrf_fee_guard_deferred_total` | counter | `increase(...[1h]) > 0`. Spam, an exhausted unpaid budget, or a balance at the floor |
+| `vrf_unpaid_fulfillments_total` | counter | informational: XLM spent on requests that didn't pay for themselves |
+
+### Economic guard (zero-fee contract)
+
+The live Mainnet contract has `FeeAmount = 0`, which is immutable. So each `fulfill()` costs the
+oracle about 0.14 XLM, and the requester pays nothing towards it. Before any drand wait, proof
+generation, or submission, the worker checks each request in this order:
+
+| # | Rule | Setting (default) |
+|---|---|---|
+| 1 | Refuse if balance − cost would drop below the floor. Fail closed if the balance can't be read. Applies to **all** requests. | `MIN_ORACLE_BALANCE_XLM` (`5`) |
+| 2 | Serve if the on-chain `FeeAmount` ≥ the estimated fulfill cost. | `FULFILL_COST_STROOPS` (`1500000`) |
+| 3 | Serve requesters on the allowlist without limit. | `UNPAID_REQUESTER_ALLOWLIST` (empty) |
+| 4 | Serve anyone else up to N per rolling hour, then defer. | `UNPAID_FULFILL_MAX_PER_HOUR` (`10`) |
+
+- Log `Deferring request N: …` shows the reason. A deferred request is **not dropped**. It stays
+  pending on-chain, periodic reconciliation retries it once budget frees up, and the requester can
+  call `timeout_refund()` after the timeout window.
+- The startup log states the posture, e.g. `Contract FeeAmount (0 stroops) is below the fulfill cost …`.
+- Put your own consumer contracts (`C…`) on the allowlist so they're always served. Set
+  `UNPAID_FULFILL_MAX_PER_HOUR=0` to serve **only** the allowlist.
+- On a deployment whose fee covers the cost, rule 2 applies to every request and the cap never
+  triggers. `mainnet_deploy.mjs` requires `FEE_AMOUNT_STROOPS` and refuses values below
+  `1500000` unless explicitly overridden.
 
 ### Listener crash / relinquish behaviour
 
@@ -133,6 +164,8 @@ Point your load balancer / uptime monitor at `/health` and alert on non-200 from
 ### Key Metrics to Watch
 
 1. **XLM Balance** — Oracle account needs XLM for transaction fees
+   - `vrf_oracle_balance_stroops` (gauge, updated by the fee guard). Alert well above
+     `MIN_ORACLE_BALANCE_XLM`, e.g. at 2× the floor. At the floor the worker stops submitting.
    - Alert if balance < 5 XLM
    - Each `fulfill()` costs ~0.14 XLM in fees (mainnet measured: 1,387,682 stroops
      = 0.1387682 XLM on TX

@@ -140,6 +140,8 @@ $max / 2^{128} \le 2^{-64}$ for any `max < 2^64`, with **no biased fallback path
 that fell back to a plain 64-bit `% max` after 10 attempts was removed — that fallback was
 biased and its documented $2^{-640}$ failure probability was incorrect (the true
 per-attempt rejection probability approaches $1/2$ for `max` near $2^{63}$).
+**Deployment note:** the live Mainnet contract predates this change and still runs the
+old loop (verified on-chain). That matters only for very large `max`. A redeployment ships the fix.
 
 ---
 

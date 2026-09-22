@@ -19,6 +19,10 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Production image: makes the worker refuse unsafe debug settings
+# (e.g. DRAND_VERIFY_BEACONS=false) at startup — see src/policy.ts.
+ENV NODE_ENV=production
+
 # Copy built output and production deps
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules

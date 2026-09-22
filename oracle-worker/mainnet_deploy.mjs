@@ -1,7 +1,9 @@
 /**
  * mainnet_deploy.mjs — Deploy and initialize VRF contract on Stellar Mainnet
  *
- * Usage: node mainnet_deploy.mjs
+ * Usage: FEE_AMOUNT_STROOPS=2000000 node mainnet_deploy.mjs
+ *
+ * FEE_AMOUNT_STROOPS is required and immutable after init(); see below.
  */
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -48,6 +50,34 @@ const G2_GEN        = "13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbd
 
 // XLM SAC on mainnet
 const XLM_SAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+
+// ── Per-request fee (immutable after init) ──────────────────────────────────
+// The requester escrows FEE_AMOUNT_STROOPS in XLM on request(); fulfill()
+// releases it to the oracle. The oracle pays the fulfill() network fee
+// (measured ~1.39–1.49M stroops on Mainnet, see docs/PROFILING.md). A fee below
+// that lets anyone drain the oracle with permissionless requests. The live
+// instance CBTCC5QL… was initialised with 0 and can't be changed.
+// So this script refuses to deploy unless the fee is set explicitly and covers
+// the cost. There is no default.
+const MIN_SELF_FUNDING_FEE = 1_500_000n; // 0.15 XLM, ≈ measured fulfill cost + margin
+const feeEnv = process.env.FEE_AMOUNT_STROOPS;
+if (!feeEnv || !/^\d+$/.test(feeEnv)) {
+  console.error(
+    "ERROR: set FEE_AMOUNT_STROOPS (integer stroops, e.g. 2000000 = 0.2 XLM).\n" +
+      "       It is immutable after init() and must cover the oracle's fulfill() cost."
+  );
+  process.exit(1);
+}
+const FEE_AMOUNT = BigInt(feeEnv);
+if (FEE_AMOUNT < MIN_SELF_FUNDING_FEE && process.env.ALLOW_UNFUNDED_FEE !== "yes-i-accept-oracle-drain") {
+  console.error(
+    `ERROR: FEE_AMOUNT_STROOPS=${FEE_AMOUNT} is below the fulfill cost (${MIN_SELF_FUNDING_FEE}).\n` +
+      "       Requests would not pay for themselves and the oracle could be drained by spam.\n" +
+      "       To deploy anyway (e.g. a private/allowlisted instance), also set\n" +
+      "       ALLOW_UNFUNDED_FEE=yes-i-accept-oracle-drain and run the worker fee guard."
+  );
+  process.exit(1);
+}
 const WASM_PATH = path.resolve(__dirname, "../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.optimized.wasm");
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -200,7 +230,7 @@ const initRes = await simAndSend(ORACLE_KP, contractId, "init", [
   u32Val(3),
   u32Val(2),
   new Address(XLM_SAC).toScVal(),
-  i128Val(0n),
+  i128Val(FEE_AMOUNT),
 ]);
 
 const deployedRecord = {
@@ -217,6 +247,7 @@ const deployedRecord = {
   uploadTxHash: uploadSent.hash,
   deployTxHash: deploySent.hash,
   initTxHash: initRes.hash || "confirmed",
+  feeAmountStroops: FEE_AMOUNT.toString(),
   securityFeatures: [
     "require_auth() — only oracle address can call fulfill()",
     "requester == callback_contract — prevents confused-deputy callback attacks",
