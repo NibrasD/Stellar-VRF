@@ -12,7 +12,7 @@
 //!     let client = VrfClient::new(VrfClientConfig {
 //!         contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE".into(),
 //!         network: Network::Testnet,
-//!         secret_key: "S...".into(),
+//!         secret_key: String::new(), // unused: read-only client
 //!     });
 //!
 //!     // Check if request #1 is fulfilled
@@ -72,7 +72,12 @@ pub struct VrfClientConfig {
     pub contract_id: String,
     /// Network to connect to
     pub network: Network,
-    /// Stellar secret key (S...) for signing transactions
+    /// Stellar secret key (S...).
+    ///
+    /// **Currently unused.** This SDK is read-only: every call is an unsigned
+    /// `simulateTransaction`, and nothing is signed or submitted. The field is
+    /// kept for 2.x API compatibility. An empty string is fine, and you don't
+    /// need to give this client a real key.
     pub secret_key: String,
 }
 
@@ -156,68 +161,218 @@ struct EventsResult {
 struct EventEntry {
     ledger: Option<u64>,
     value: Option<serde_json::Value>,
-    paging_token: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct HealthResult {
-    status: Option<String>,
     #[serde(rename = "latestLedger")]
     latest_ledger: Option<u64>,
 }
 
 // ── XDR ScVal encoding helpers ───────────────────────────────────────────────
 // These encode minimal ScVal structures for Soroban contract invocations.
-// Using raw XDR bytes avoids pulling in the full stellar-xdr crate.
+// Using raw XDR bytes avoids pulling in the full stellar-xdr crate, so every
+// layout here is pinned by golden vectors from the official encoder
+// (`@stellar/stellar-sdk`) and from Mainnet in the tests below.
 
-/// Encode a u64 as ScVal (scvU64). XDR: discriminant 5 (0x00000005) + 8-byte BE value.
+/// `SCValType` discriminants (Stellar-contract.x). Releases up to 2.0.0 used
+/// 9/10/13/14 for bytes/symbol/vec/map. Those values are wrong, and the RPC
+/// rejected every request built with them.
+mod scv {
+    pub const BOOL: u32 = 0;
+    pub const VOID: u32 = 1;
+    pub const U32: u32 = 3;
+    pub const U64: u32 = 5;
+    pub const BYTES: u32 = 13;
+    pub const SYMBOL: u32 = 15;
+    pub const VEC: u32 = 16;
+    pub const MAP: u32 = 17;
+    pub const ADDRESS: u32 = 18;
+}
+
+fn put_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_be_bytes());
+}
+
+/// XDR variable-length opaque/string: 4-byte length, data, zero padding to 4.
+fn put_var_opaque(buf: &mut Vec<u8>, data: &[u8]) {
+    put_u32(buf, data.len() as u32);
+    buf.extend_from_slice(data);
+    buf.resize(buf.len() + (4 - data.len() % 4) % 4, 0);
+}
+
+/// Encode a u64 as ScVal (scvU64): discriminant 5 + 8-byte BE value.
 fn encode_scval_u64(val: u64) -> Vec<u8> {
     let mut buf = Vec::with_capacity(12);
-    buf.extend_from_slice(&5u32.to_be_bytes()); // scvU64 discriminant
+    put_u32(&mut buf, scv::U64);
     buf.extend_from_slice(&val.to_be_bytes());
     buf
 }
 
-/// Encode a byte slice as ScVal (scvBytes).
-/// XDR: discriminant 9 (0x00000009) + 4-byte length + bytes + 4-byte padding.
+/// Encode a byte slice as ScVal (scvBytes): discriminant 13 + var opaque.
 fn encode_scval_bytes(data: &[u8]) -> Vec<u8> {
-    let padded_len = (data.len() + 3) & !3; // 4-byte aligned
-    let mut buf = Vec::with_capacity(8 + padded_len);
-    buf.extend_from_slice(&9u32.to_be_bytes()); // scvBytes discriminant
-    buf.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    buf.extend_from_slice(data);
-    for _ in 0..(padded_len - data.len()) {
-        buf.push(0);
-    }
+    let mut buf = Vec::with_capacity(8 + data.len() + 3);
+    put_u32(&mut buf, scv::BYTES);
+    put_var_opaque(&mut buf, data);
     buf
 }
 
-/// Encode a symbol string as ScVal (scvSymbol).
-/// XDR: discriminant 10 (0x0000000a) + 4-byte length + UTF-8 bytes + padding.
+/// Encode a symbol as ScVal (scvSymbol): discriminant 15 + var string.
 fn encode_scval_symbol(sym: &str) -> Vec<u8> {
-    let sym_bytes = sym.as_bytes();
-    let padded_len = (sym_bytes.len() + 3) & !3; // 4-byte aligned
-    let mut buf = Vec::with_capacity(8 + padded_len);
-    buf.extend_from_slice(&10u32.to_be_bytes()); // scvSymbol discriminant
-    buf.extend_from_slice(&(sym_bytes.len() as u32).to_be_bytes());
-    buf.extend_from_slice(sym_bytes);
-    // XDR padding
-    for _ in 0..(padded_len - sym_bytes.len()) {
-        buf.push(0);
-    }
+    let mut buf = Vec::with_capacity(8 + sym.len() + 3);
+    put_u32(&mut buf, scv::SYMBOL);
+    put_var_opaque(&mut buf, sym.as_bytes());
     buf
 }
 
-/// Encode an ScVal vec (scvVec) containing the given pre-encoded ScVals.
-fn encode_scval_vec(items: &[Vec<u8>]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&13u32.to_be_bytes()); // scvVec discriminant
-    buf.extend_from_slice(&1u32.to_be_bytes());  // optional present flag
-    buf.extend_from_slice(&(items.len() as u32).to_be_bytes());
-    for item in items {
-        buf.extend_from_slice(item);
+// ── XDR ScVal decoding ───────────────────────────────────────────────────────
+
+/// The subset of `ScVal` this SDK reads (contract return values and events).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScVal {
+    Bool(bool),
+    Void,
+    U32(u32),
+    U64(u64),
+    Bytes(Vec<u8>),
+    Symbol(String),
+    Vec(Vec<ScVal>),
+    Map(Vec<(ScVal, ScVal)>),
+    /// StrKey form: `G...` (account) or `C...` (contract).
+    Address(String),
+}
+
+fn xdr_err(msg: impl std::fmt::Display) -> VrfError {
+    VrfError::Rpc(format!("XDR decode error: {msg}"))
+}
+
+/// Decode one base64 ScVal, rejecting trailing bytes.
+fn decode_scval_b64(b64: &str) -> Result<ScVal, VrfError> {
+    let bytes = base64_decode(b64)?;
+    let mut r = XdrReader::new(&bytes);
+    let val = r.scval(0)?;
+    if r.pos != bytes.len() {
+        return Err(xdr_err(format!("{} trailing bytes", bytes.len() - r.pos)));
     }
-    buf
+    Ok(val)
+}
+
+/// Bounds-checked XDR reader. Every read fails cleanly on truncated input;
+/// nothing is silently defaulted.
+struct XdrReader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> XdrReader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], VrfError> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .filter(|&e| e <= self.data.len())
+            .ok_or_else(|| xdr_err("unexpected end of input"))?;
+        let out = &self.data[self.pos..end];
+        self.pos = end;
+        Ok(out)
+    }
+
+    fn u32(&mut self) -> Result<u32, VrfError> {
+        Ok(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    fn u64(&mut self) -> Result<u64, VrfError> {
+        Ok(u64::from_be_bytes(self.take(8)?.try_into().unwrap()))
+    }
+
+    fn hash32(&mut self) -> Result<[u8; 32], VrfError> {
+        Ok(self.take(32)?.try_into().unwrap())
+    }
+
+    fn var_opaque(&mut self, max_len: usize) -> Result<&'a [u8], VrfError> {
+        let len = self.u32()? as usize;
+        if len > max_len {
+            return Err(xdr_err(format!("length {len} exceeds {max_len}")));
+        }
+        let data = self.take(len)?;
+        if self.take((4 - len % 4) % 4)?.iter().any(|&b| b != 0) {
+            return Err(xdr_err("non-zero padding"));
+        }
+        Ok(data)
+    }
+
+    /// Element count of an XDR array. Bounded by the bytes left (every element
+    /// takes at least 4 bytes), so a corrupt count can't force a huge allocation.
+    fn count(&mut self) -> Result<usize, VrfError> {
+        let n = self.u32()? as usize;
+        if n > (self.data.len() - self.pos) / 4 {
+            return Err(xdr_err(format!("element count {n} exceeds input")));
+        }
+        Ok(n)
+    }
+
+    fn scval(&mut self, depth: u32) -> Result<ScVal, VrfError> {
+        if depth > 8 {
+            return Err(xdr_err("ScVal nesting too deep"));
+        }
+        match self.u32()? {
+            scv::BOOL => match self.u32()? {
+                0 => Ok(ScVal::Bool(false)),
+                1 => Ok(ScVal::Bool(true)),
+                b => Err(xdr_err(format!("invalid bool {b}"))),
+            },
+            scv::VOID => Ok(ScVal::Void),
+            scv::U32 => Ok(ScVal::U32(self.u32()?)),
+            scv::U64 => Ok(ScVal::U64(self.u64()?)),
+            scv::BYTES => Ok(ScVal::Bytes(self.var_opaque(usize::MAX)?.to_vec())),
+            scv::SYMBOL => {
+                let s = self.var_opaque(32)?;
+                String::from_utf8(s.to_vec())
+                    .map(ScVal::Symbol)
+                    .map_err(|_| xdr_err("symbol is not UTF-8"))
+            }
+            // `SCVec *vec` / `SCMap *map` are XDR optionals: 0 = absent.
+            scv::VEC => {
+                if self.u32()? == 0 {
+                    return Ok(ScVal::Vec(Vec::new()));
+                }
+                let n = self.count()?;
+                let mut items = Vec::with_capacity(n);
+                for _ in 0..n {
+                    items.push(self.scval(depth + 1)?);
+                }
+                Ok(ScVal::Vec(items))
+            }
+            scv::MAP => {
+                if self.u32()? == 0 {
+                    return Ok(ScVal::Map(Vec::new()));
+                }
+                let n = self.count()?;
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let k = self.scval(depth + 1)?;
+                    let v = self.scval(depth + 1)?;
+                    entries.push((k, v));
+                }
+                Ok(ScVal::Map(entries))
+            }
+            scv::ADDRESS => match self.u32()? {
+                // SC_ADDRESS_TYPE_ACCOUNT: AccountID is a PublicKey union whose
+                // own tag (0 = ed25519) precedes the 32-byte key.
+                0 => match self.u32()? {
+                    0 => Ok(ScVal::Address(strkey_encode_ed25519(&self.hash32()?))),
+                    t => Err(xdr_err(format!("unsupported public key type {t}"))),
+                },
+                // SC_ADDRESS_TYPE_CONTRACT: 32-byte contract hash.
+                1 => Ok(ScVal::Address(strkey_encode_contract(&self.hash32()?))),
+                t => Err(xdr_err(format!("unsupported address type {t}"))),
+            },
+            t => Err(xdr_err(format!("unsupported ScVal type {t}"))),
+        }
+    }
 }
 
 /// Base64-encode bytes.
@@ -272,8 +427,7 @@ impl VrfClient {
         let result = self
             .simulate_call("is_fulfilled", &[encode_scval_u64(request_id)])
             .await?;
-        // ScVal bool true: discriminant 0 (scvBool) + 1, false: discriminant 0 + 0
-        Ok(result.as_ref().map_or(false, |xdr_b64| xdr_b64.contains("AAAAAQ")))
+        decode_bool_result(result)
     }
 
     /// Check if a request has been refunded.
@@ -281,7 +435,7 @@ impl VrfClient {
         let result = self
             .simulate_call("is_refunded", &[encode_scval_u64(request_id)])
             .await?;
-        Ok(result.as_ref().map_or(false, |xdr_b64| xdr_b64.contains("AAAAAQ")))
+        decode_bool_result(result)
     }
 
     /// Derive a random number in the inclusive range `[min, max]` from a
@@ -361,34 +515,37 @@ impl VrfClient {
         let result = self
             .simulate_call("get_beta", &[encode_scval_u64(request_id)])
             .await?;
-        match result {
-            Some(xdr_b64) => {
-                let bytes = base64_decode(&xdr_b64)?;
-                // ScVal bytes: 4-byte discriminant (13) + 4-byte length (32) + data
-                if bytes.len() >= 40 && bytes[0..4] == [0, 0, 0, 13] && bytes[4..8] == [0, 0, 0, 32] {
-                    Ok(bytes[8..40].try_into().unwrap())
-                } else {
-                    Err(VrfError::Rpc("Invalid BytesN<32> ScVal response".into()))
-                }
-            }
-            None => Err(VrfError::NotFulfilled(request_id)),
-        }
+        decode_beta_result(result, request_id)
+    }
+}
+
+/// Decode a simulated `bool` return value. A missing value is an error rather
+/// than `false`, so an RPC problem can't pass for "not fulfilled".
+fn decode_bool_result(result: Option<String>) -> Result<bool, VrfError> {
+    let xdr_b64 = result.ok_or_else(|| VrfError::Rpc("simulation returned no value".into()))?;
+    match decode_scval_b64(&xdr_b64)? {
+        ScVal::Bool(b) => Ok(b),
+        other => Err(VrfError::Rpc(format!("expected bool ScVal, got {other:?}"))),
+    }
+}
+
+/// Decode a simulated `BytesN<32>` return value.
+fn decode_beta_result(result: Option<String>, request_id: u64) -> Result<[u8; 32], VrfError> {
+    let xdr_b64 = result.ok_or(VrfError::NotFulfilled(request_id))?;
+    match decode_scval_b64(&xdr_b64)? {
+        ScVal::Bytes(b) => b
+            .try_into()
+            .map_err(|b: Vec<u8>| VrfError::Rpc(format!("expected 32-byte beta, got {}", b.len()))),
+        other => Err(VrfError::Rpc(format!("expected BytesN<32> ScVal, got {other:?}"))),
     }
 }
 
 /// Decode a simulated `u64` ScVal return value.
 fn decode_u64_result(result: Option<String>, request_id: u64) -> Result<u64, VrfError> {
-    match result {
-        Some(xdr_b64) => {
-            let bytes = base64_decode(&xdr_b64)?;
-            // ScVal u64: 4-byte discriminant (5) + 8-byte BE value
-            if bytes.len() >= 12 && bytes[0..4] == [0, 0, 0, 5] {
-                Ok(u64::from_be_bytes(bytes[4..12].try_into().unwrap()))
-            } else {
-                Err(VrfError::Rpc("Invalid u64 ScVal response".into()))
-            }
-        }
-        None => Err(VrfError::NotFulfilled(request_id)),
+    let xdr_b64 = result.ok_or(VrfError::NotFulfilled(request_id))?;
+    match decode_scval_b64(&xdr_b64)? {
+        ScVal::U64(v) => Ok(v),
+        other => Err(VrfError::Rpc(format!("expected u64 ScVal, got {other:?}"))),
     }
 }
 
@@ -444,19 +601,21 @@ impl VrfClient {
             .await?;
 
         let events_result: EventsResult = serde_json::from_value(resp)?;
-        let mut out = Vec::new();
-        if let Some(events) = events_result.events {
-            for evt in events {
-                let (request_id, requester, required_round) = parse_request_event_value(&evt);
-                out.push(VrfRequestEvent {
+        events_result
+            .events
+            .unwrap_or_default()
+            .iter()
+            .map(|evt| {
+                let (request_id, requester, required_round) =
+                    parse_request_event_value(event_value_b64(evt)?)?;
+                Ok(VrfRequestEvent {
                     request_id,
                     requester,
                     required_round,
                     ledger: evt.ledger.unwrap_or(0),
-                });
-            }
-        }
-        Ok(out)
+                })
+            })
+            .collect()
     }
 
     /// Get recent fulfill events from the contract.
@@ -483,14 +642,15 @@ impl VrfClient {
             .await?;
 
         let events_result: EventsResult = serde_json::from_value(resp)?;
-        let mut out = Vec::new();
-        if let Some(events) = events_result.events {
-            for evt in events {
-                let request_id = parse_fulfill_event_value(&evt);
-                out.push((request_id, evt.ledger.unwrap_or(0)));
-            }
-        }
-        Ok(out)
+        events_result
+            .events
+            .unwrap_or_default()
+            .iter()
+            .map(|evt| {
+                let (request_id, _beta) = parse_fulfill_event_value(event_value_b64(evt)?)?;
+                Ok((request_id, evt.ledger.unwrap_or(0)))
+            })
+            .collect()
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -534,18 +694,12 @@ impl VrfClient {
         fn_name: &str,
         args: &[Vec<u8>],
     ) -> Result<Option<String>, VrfError> {
-        // The ScVal encoding happens inside build_simulation_envelope below;
-        // encoding it here as well left two unused locals.
-        //
-        // For simulation we send the function name + args as the
-        // invokeContractFunction params. The Soroban RPC accepts a simplified
-        // simulation format.
+        let contract = strkey_decode_contract(&self.config.contract_id)?;
+        let envelope = build_simulation_envelope(&contract, fn_name, args);
         let resp = self
             .rpc_call(
                 "simulateTransaction",
-                serde_json::json!({
-                    "transaction": self.build_simulation_envelope(fn_name, args)?,
-                }),
+                serde_json::json!({ "transaction": to_base64(&envelope) }),
             )
             .await?;
 
@@ -562,63 +716,6 @@ impl VrfClient {
         }
 
         Ok(None)
-    }
-
-    /// Build a minimal transaction envelope XDR for simulation.
-    ///
-    /// This constructs just enough XDR to invoke a contract function via
-    /// simulateTransaction. The transaction doesn't need to be valid for
-    /// submission — simulation only needs the contract call structure.
-    fn build_simulation_envelope(
-        &self,
-        fn_name: &str,
-        args: &[Vec<u8>],
-    ) -> Result<String, VrfError> {
-        // This is a simplified envelope builder. In production, you'd use the
-        // stellar-xdr crate for proper XDR serialization. For simulation
-        // purposes, we encode just enough structure.
-        //
-        // The approach: build a Stellar Transaction with a single
-        // InvokeHostFunctionOp, serialize to XDR, and base64-encode.
-        //
-        // Since full XDR building without stellar-xdr is complex, we use the
-        // Soroban RPC's ability to accept pre-built envelopes from the JS SDK
-        // or CLI. For this Rust SDK, read-only queries work via the simplified
-        // simulation path.
-
-        // Encode contract address (StrKey C... -> 32-byte hash)
-        let contract_bytes = strkey_decode_contract(&self.config.contract_id)?;
-
-        // Build InvokeContractArgs XDR:
-        // - contractAddress (ScAddress::Contract(Hash))
-        // - functionName (ScSymbol)
-        // - args (Vec<ScVal>)
-        let mut invoke_xdr = Vec::new();
-
-        // ScAddress type 1 (contract) + 32-byte hash
-        invoke_xdr.extend_from_slice(&1u32.to_be_bytes());
-        invoke_xdr.extend_from_slice(&contract_bytes);
-
-        // Function name as ScSymbol (4-byte len + UTF-8 + padding)
-        let fn_bytes = fn_name.as_bytes();
-        let fn_padded = (fn_bytes.len() + 3) & !3;
-        invoke_xdr.extend_from_slice(&(fn_bytes.len() as u32).to_be_bytes());
-        invoke_xdr.extend_from_slice(fn_bytes);
-        for _ in 0..(fn_padded - fn_bytes.len()) {
-            invoke_xdr.push(0);
-        }
-
-        // Args count + each arg
-        invoke_xdr.extend_from_slice(&(args.len() as u32).to_be_bytes());
-        for arg in args {
-            invoke_xdr.extend_from_slice(arg);
-        }
-
-        // Wrap in a minimal TransactionEnvelope structure
-        // For simulation, the RPC is lenient about the outer envelope
-        let envelope = build_minimal_envelope(&invoke_xdr, &self.config.secret_key)?;
-
-        Ok(to_base64(&envelope))
     }
 }
 
@@ -770,23 +867,46 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
     Ok(out)
 }
 
-/// Build a minimal transaction envelope for simulation.
-/// This is a simplified builder — the simulation RPC doesn't validate
-/// signatures or sequence numbers, so we only need the structure.
-fn build_minimal_envelope(
-    invoke_contract_args: &[u8],
-    _secret_key: &str,
-) -> Result<Vec<u8>, VrfError> {
-    // For simulation purposes, we build the minimum viable XDR.
-    // The Soroban RPC simulateTransaction is lenient about the envelope
-    // structure — it mainly needs the InvokeHostFunction operation.
-    //
-    // In a full production implementation, this would use the stellar-xdr
-    // crate to properly serialize TransactionEnvelope. The current
-    // implementation works for all read-only simulation calls.
-    //
-    // For write operations (request, etc.), use the CLI or JS SDK.
-    Ok(invoke_contract_args.to_vec())
+/// Build an unsigned `TransactionEnvelope` (v1) that invokes
+/// `contract.fn_name(args)`, for `simulateTransaction` only.
+///
+/// `simulateTransaction` needs a well-formed envelope, but it doesn't check
+/// signatures or sequence numbers, and it doesn't require the source account
+/// to exist. So this uses the all-zero ed25519 source
+/// (`GAAAA…WHF`), sequence 1 and no signatures. It is the same envelope
+/// `@stellar/stellar-sdk` builds for read-only calls (see the golden test).
+/// This envelope can't be submitted. Writes are out of scope for this SDK.
+///
+/// Releases up to 2.0.0 sent only the bare `InvokeContractArgs` bytes here, and
+/// the RPC rejected them with "Could not unmarshal transaction".
+fn build_simulation_envelope(contract: &[u8; 32], fn_name: &str, args: &[Vec<u8>]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(160 + args.iter().map(Vec::len).sum::<usize>());
+    put_u32(&mut b, 2); // EnvelopeType::ENVELOPE_TYPE_TX
+    // Transaction.sourceAccount: MuxedAccount KEY_TYPE_ED25519 + 32-byte key.
+    put_u32(&mut b, 0);
+    b.extend_from_slice(&[0u8; 32]);
+    put_u32(&mut b, 100); // fee (stroops); simulation ignores it
+    b.extend_from_slice(&1u64.to_be_bytes()); // seqNum
+    // cond: PRECOND_TIME with TimeBounds { min: 0, max: 0 } (no bounds).
+    put_u32(&mut b, 1);
+    b.extend_from_slice(&[0u8; 16]);
+    put_u32(&mut b, 0); // memo: MEMO_NONE
+    put_u32(&mut b, 1); // operations.len()
+    put_u32(&mut b, 0); // Operation.sourceAccount: absent
+    put_u32(&mut b, 24); // OperationType::INVOKE_HOST_FUNCTION
+    put_u32(&mut b, 0); // HostFunctionType::INVOKE_CONTRACT
+    // InvokeContractArgs { contractAddress, functionName, args }
+    put_u32(&mut b, 1); // ScAddressType::CONTRACT
+    b.extend_from_slice(contract);
+    put_var_opaque(&mut b, fn_name.as_bytes());
+    put_u32(&mut b, args.len() as u32);
+    for a in args {
+        b.extend_from_slice(a);
+    }
+    put_u32(&mut b, 0); // InvokeHostFunctionOp.auth.len()
+    put_u32(&mut b, 0); // Transaction.ext: v0
+    put_u32(&mut b, 0); // signatures.len()
+    b
 }
 
 // ── Client-side utilities ────────────────────────────────────────────────────
@@ -955,183 +1075,52 @@ pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-// ── Event value XDR parsing ──────────────────────────────────────────────────
+// ── Event value parsing ──────────────────────────────────────────────────────
 
-/// Parse request event value from Soroban getEvents response.
-///
-/// The event value is a base64-encoded ScVal. For VRF request events, the
-/// contract emits a ScMap (discriminant 14) containing:
-///   - "request_id" → scvU64
-///   - "requester"  → scvAddress
-///   - "required_round" → scvU64
-///
-/// If parsing fails (e.g. unknown format), returns safe defaults.
-fn parse_request_event_value(evt: &EventEntry) -> (u64, String, u64) {
-    let value_str = match &evt.value {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        _ => return (0, String::new(), 0),
-    };
-
-    let bytes = match base64_decode(&value_str) {
-        Ok(b) => b,
-        Err(_) => return (0, String::new(), 0),
-    };
-
-    // Try to parse as ScVal. The XDR starts with a 4-byte discriminant.
-    // ScvU64 = 5: the event value is just a u64 request_id
-    // ScvMap = 14: the event value is a map with request_id, requester, etc.
-    if bytes.len() < 4 {
-        return (0, String::new(), 0);
-    }
-
-    let discriminant = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-
-    match discriminant {
-        // scvU64: event value is just the request_id
-        5 if bytes.len() >= 12 => {
-            let request_id = u64::from_be_bytes(bytes[4..12].try_into().unwrap_or_default());
-            (request_id, String::new(), 0)
-        }
-        // scvMap: event value is a map — parse key-value pairs
-        14 => parse_scval_map_for_request(&bytes[4..]),
-        // Unknown format — return what we can
-        _ => (0, String::new(), 0),
+/// The base64 `value` of a getEvents entry.
+fn event_value_b64(evt: &EventEntry) -> Result<&str, VrfError> {
+    match &evt.value {
+        Some(serde_json::Value::String(s)) => Ok(s),
+        other => Err(VrfError::Rpc(format!("event has no base64 value: {other:?}"))),
     }
 }
 
-/// Parse fulfill event value to extract the request_id.
+/// Parse the value of a `request` event.
 ///
-/// Fulfill events typically emit the request_id as a u64 ScVal.
-fn parse_fulfill_event_value(evt: &EventEntry) -> u64 {
-    let value_str = match &evt.value {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        _ => return 0,
-    };
-
-    let bytes = match base64_decode(&value_str) {
-        Ok(b) => b,
-        Err(_) => return 0,
-    };
-
-    if bytes.len() < 4 {
-        return 0;
-    }
-
-    let discriminant = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-
-    match discriminant {
-        // scvU64: the value is the request_id
-        5 if bytes.len() >= 12 => {
-            u64::from_be_bytes(bytes[4..12].try_into().unwrap_or_default())
-        }
-        // scvMap: parse map for request_id field
-        14 => {
-            let (request_id, _, _) = parse_scval_map_for_request(&bytes[4..]);
-            request_id
-        }
-        _ => 0,
+/// The contract publishes a tuple, i.e. an `ScVec`:
+/// `(request_id: u64, requester: Address, required_round: u64)`.
+/// Early deployments emitted `(request_id, requester)` without the round. That
+/// form is accepted with `required_round = 0`. Anything else is an error:
+/// earlier releases silently returned `(0, "", 0)`, which callers couldn't tell
+/// apart from a real request #0.
+fn parse_request_event_value(value_b64: &str) -> Result<(u64, String, u64), VrfError> {
+    let bad = |v: &ScVal| VrfError::Rpc(format!("unexpected request event value: {v:?}"));
+    let val = decode_scval_b64(value_b64)?;
+    match &val {
+        ScVal::Vec(items) => match items.as_slice() {
+            [ScVal::U64(id), ScVal::Address(who), ScVal::U64(round)] => Ok((*id, who.clone(), *round)),
+            [ScVal::U64(id), ScVal::Address(who)] => Ok((*id, who.clone(), 0)),
+            _ => Err(bad(&val)),
+        },
+        _ => Err(bad(&val)),
     }
 }
 
-/// Parse an ScVal Map payload to extract request_id, requester, required_round.
-///
-/// XDR map format: count (4 bytes) + entries. Each entry is key ScVal + value ScVal.
-/// Keys are typically ScvSymbol (discriminant 10).
-fn parse_scval_map_for_request(data: &[u8]) -> (u64, String, u64) {
-    let mut request_id: u64 = 0;
-    let mut requester = String::new();
-    let mut required_round: u64 = 0;
-
-    if data.len() < 4 {
-        return (request_id, requester, required_round);
+/// Parse the value of a `fulfill` event: an `ScVec`
+/// `(request_id: u64, beta: BytesN<32>)`.
+fn parse_fulfill_event_value(value_b64: &str) -> Result<(u64, [u8; 32]), VrfError> {
+    let bad = |v: &ScVal| VrfError::Rpc(format!("unexpected fulfill event value: {v:?}"));
+    let val = decode_scval_b64(value_b64)?;
+    match &val {
+        ScVal::Vec(items) => match items.as_slice() {
+            [ScVal::U64(id), ScVal::Bytes(beta)] => {
+                let beta: [u8; 32] = beta.as_slice().try_into().map_err(|_| bad(&val))?;
+                Ok((*id, beta))
+            }
+            _ => Err(bad(&val)),
+        },
+        _ => Err(bad(&val)),
     }
-
-    let count = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    let mut offset = 4;
-
-    for _ in 0..count {
-        if offset + 4 > data.len() {
-            break;
-        }
-
-        // Parse key (expect ScvSymbol = discriminant 10)
-        let key_disc = u32::from_be_bytes(
-            data[offset..offset + 4].try_into().unwrap_or_default(),
-        );
-        offset += 4;
-
-        if key_disc != 10 || offset + 4 > data.len() {
-            break; // Not a symbol key — can't reliably parse further
-        }
-
-        let key_len = u32::from_be_bytes(
-            data[offset..offset + 4].try_into().unwrap_or_default(),
-        ) as usize;
-        offset += 4;
-
-        if offset + key_len > data.len() {
-            break;
-        }
-
-        let key_name = String::from_utf8_lossy(&data[offset..offset + key_len]).to_string();
-        let key_padded = (key_len + 3) & !3; // 4-byte alignment
-        offset += key_padded;
-
-        if offset + 4 > data.len() {
-            break;
-        }
-
-        // Parse value
-        let val_disc = u32::from_be_bytes(
-            data[offset..offset + 4].try_into().unwrap_or_default(),
-        );
-        offset += 4;
-
-        match val_disc {
-            // scvU64
-            5 => {
-                if offset + 8 <= data.len() {
-                    let val = u64::from_be_bytes(
-                        data[offset..offset + 8].try_into().unwrap_or_default(),
-                    );
-                    offset += 8;
-                    match key_name.as_str() {
-                        "request_id" => request_id = val,
-                        "required_round" => required_round = val,
-                        _ => {}
-                    }
-                } else {
-                    break;
-                }
-            }
-            // scvAddress (discriminant 0 = Account type, then 32 bytes)
-            18 => {
-                if offset + 36 <= data.len() {
-                    let addr_type = u32::from_be_bytes(
-                        data[offset..offset + 4].try_into().unwrap_or_default(),
-                    );
-                    offset += 4;
-                    let addr_bytes = &data[offset..offset + 32];
-                    offset += 32;
-                    if key_name == "requester" {
-                        // addr_type 0 = account (ed25519), 1 = contract.
-                        requester = match addr_type {
-                            0 => strkey_encode_ed25519(addr_bytes),
-                            _ => strkey_encode_contract(addr_bytes),
-                        };
-                    }
-                } else {
-                    break;
-                }
-            }
-            // Skip unknown value types
-            _ => {
-                break; // Can't determine value length — stop parsing
-            }
-        }
-    }
-
-    (request_id, requester, required_round)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -1223,7 +1212,7 @@ mod tests {
             0u8, 0u8, 0u8, 0u8, 0u8,
         ];
         let result = derive_random_from_beta(&beta, 1, 100).unwrap();
-        assert!(result >= 1 && result <= 100);
+        assert!((1..=100).contains(&result));
 
         // Same input always produces same output (deterministic)
         let result2 = derive_random_from_beta(&beta, 1, 100).unwrap();
@@ -1252,13 +1241,202 @@ mod tests {
         assert_eq!(&encoded[4..12], &42u64.to_be_bytes());
     }
 
+    // ── Wire-format golden vectors (audit round 7) ──────────────────────────
+    // Every expected byte string below came from the official encoder
+    // (`@stellar/stellar-sdk` `xdr.ScVal` / `TransactionBuilder`) or from live
+    // Mainnet `getEvents` output for CBTCC5QL…SUHU, not from this crate.
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Topic filters. With the old discriminant (10 = scvI128) the RPC answered
+    /// "decoding Int128Parts: unexpected EOF" and no events were ever returned.
     #[test]
-    fn test_encode_scval_symbol() {
-        let encoded = encode_scval_symbol("test");
-        // Discriminant 10 + length 4 + "test" (4 bytes, already aligned)
-        assert_eq!(&encoded[0..4], &10u32.to_be_bytes());
-        assert_eq!(&encoded[4..8], &4u32.to_be_bytes());
-        assert_eq!(&encoded[8..12], b"test");
+    fn test_encode_scval_symbol_matches_stellar_sdk() {
+        assert_eq!(to_base64(&encode_scval_symbol("request")), "AAAADwAAAAdyZXF1ZXN0AA==");
+        assert_eq!(to_base64(&encode_scval_symbol("fulfill")), "AAAADwAAAAdmdWxmaWxsAA==");
+        assert_eq!(encode_scval_symbol("test"), unhex("0000000f0000000474657374"));
+    }
+
+    #[test]
+    fn test_encode_scval_bytes_matches_stellar_sdk() {
+        assert_eq!(encode_scval_bytes(&[0xab]), unhex("0000000d00000001ab000000"));
+        assert_eq!(encode_scval_bytes(b""), unhex("0000000d00000000"));
+    }
+
+    /// The simulation envelope must be byte-identical to what
+    /// `TransactionBuilder` (source GAAAA…WHF, seq 1, fee 100, timeout 0)
+    /// produces. Mainnet RPC accepted that envelope (`is_fulfilled(1)` →
+    /// `AAAAAAAAAAE=`). The old bare `InvokeContractArgs` bytes got
+    /// "Could not unmarshal transaction".
+    #[test]
+    fn test_simulation_envelope_matches_stellar_sdk() {
+        let contract =
+            strkey_decode_contract("CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU").unwrap();
+        let env = build_simulation_envelope(&contract, "is_fulfilled", &[encode_scval_u64(1)]);
+        assert_eq!(
+            to_base64(&env),
+            "AAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABZiF2C+z2mSyZdx5/LknBIF8YhRiA733XRwc2dbdivTkAAAAMaXNfZnVsZmlsbGVkAAAAAQAAAAUAAAAAAAAAAQAAAAAAAAAAAAAAAA=="
+        );
+        let env = build_simulation_envelope(
+            &contract,
+            "derive_range_for_domain",
+            &[encode_scval_u64(7), encode_scval_bytes(b"card-1"), encode_scval_u64(1000)],
+        );
+        assert_eq!(
+            to_base64(&env),
+            "AAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABZiF2C+z2mSyZdx5/LknBIF8YhRiA733XRwc2dbdivTkAAAAXZGVyaXZlX3JhbmdlX2Zvcl9kb21haW4AAAAAAwAAAAUAAAAAAAAABwAAAA0AAAAGY2FyZC0xAAAAAAAFAAAAAAAAA+gAAAAAAAAAAAAAAAA="
+        );
+    }
+
+    /// Byte-for-byte what the contract emits: the same hex strings are asserted
+    /// against the contract's real event XDR in `soroban-contract/src/test.rs`
+    /// (`test_request_event_wire_format_matches_sdk_vector` /
+    /// `test_fulfill_event_wire_format_matches_sdk_vector`).
+    #[test]
+    fn test_parse_contract_event_vectors() {
+        let req = unhex(
+            "00000010000000010000000300000005000000000000000100000012000000000000000011111111\
+             11111111111111111111111111111111111111111111111111111111000000050000000001eecec8",
+        );
+        assert_eq!(
+            parse_request_event_value(&to_base64(&req)).unwrap(),
+            (
+                1,
+                "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M".to_string(),
+                32_427_720
+            )
+        );
+        let ful = unhex(
+            "0000001000000001000000020000000500000000000000010000000d0000002098c612abed131631\
+             47239f4323d4973cb68df7302564fc791e17c1aae95a6c9d",
+        );
+        let (id, beta) = parse_fulfill_event_value(&to_base64(&ful)).unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(to_hex(&beta), "98c612abed13163147239f4323d4973cb68df7302564fc791e17c1aae95a6c9d");
+    }
+
+    /// Real `getEvents` values from Mainnet (CBTCC5QL…SUHU, ledgers 64559682 /
+    /// 64559684), cross-checked with `scValToNative`.
+    #[test]
+    fn test_parse_mainnet_event_values() {
+        let (id, who, round) = parse_request_event_value(
+            "AAAAEAAAAAEAAAADAAAABQAAAAAAAAADAAAAEgAAAAAAAAAAmZz3cVG/1r8BH4AiQrWoVKqmI5dAl2N2ybrtTq7t8VgAAAAFAAAAAAHuy74=",
+        )
+        .unwrap();
+        assert_eq!(id, 3);
+        assert_eq!(who, "GCMZZ53RKG75NPYBD6ACEQVVVBKKVJRDS5AJOY3WZG5O2TVO5XYVR4DY");
+        assert_eq!(round, 32_426_942);
+
+        let (id, beta) = parse_fulfill_event_value(
+            "AAAAEAAAAAEAAAACAAAABQAAAAAAAAADAAAADQAAACBDasoG50C2Z6upEOd08wHZIggLpOtuNTci6ogl5o1nkA==",
+        )
+        .unwrap();
+        assert_eq!(id, 3);
+        assert_eq!(to_hex(&beta), "436aca06e740b667aba910e774f301d922080ba4eb6e353722ea8825e68d6790");
+    }
+
+    #[test]
+    fn test_parse_request_event_contract_requester_and_legacy_shape() {
+        // Contract requester (callback consumers), from stellar-sdk.
+        let (id, who, round) = parse_request_event_value(
+            "AAAAEAAAAAEAAAADAAAABQAAAAAAAAAHAAAAEgAAAAEHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwAAAAUAAAAAAe7Oyg==",
+        )
+        .unwrap();
+        assert_eq!((id, round), (7, 32_427_722));
+        assert_eq!(who, "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR");
+        // Early deployments: (id, requester) without the round.
+        let (id, who, round) = parse_request_event_value(
+            "AAAAEAAAAAEAAAACAAAABQAAAAAAAAAFAAAAEgAAAAAAAAAAERERERERERERERERERERERERERERERERERERERERERE=",
+        )
+        .unwrap();
+        assert_eq!((id, round), (5, 0));
+        assert_eq!(who, "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M");
+    }
+
+    /// Wrong shapes are errors. Earlier releases returned `(0, "", 0)`, which
+    /// looked like a real request #0.
+    #[test]
+    fn test_parse_event_rejects_unexpected_shapes() {
+        // Map form, from stellar-sdk: { request_id: 1 }.
+        let map = "AAAAEQAAAAEAAAABAAAADwAAAApyZXF1ZXN0X2lkAAAAAAAFAAAAAAAAAAE=";
+        assert!(decode_scval_b64(map).is_ok());
+        assert!(parse_request_event_value(map).is_err());
+        assert!(parse_fulfill_event_value(map).is_err());
+        let bare_u64 = to_base64(&encode_scval_u64(9));
+        assert!(parse_request_event_value(&bare_u64).is_err());
+        assert!(parse_fulfill_event_value(&bare_u64).is_err());
+        // A request value is not a fulfill value.
+        let legacy_req =
+            "AAAAEAAAAAEAAAACAAAABQAAAAAAAAAFAAAAEgAAAAAAAAAAERERERERERERERERERERERERERERERERERERERERERE=";
+        assert!(parse_fulfill_event_value(legacy_req).is_err());
+        // Beta must be exactly 32 bytes.
+        let short_beta = unhex("0000001000000001000000020000000500000000000000010000000d00000001ab000000");
+        assert!(parse_fulfill_event_value(&to_base64(&short_beta)).is_err());
+    }
+
+    #[test]
+    fn test_decoder_rejects_malformed_xdr() {
+        let full = unhex(
+            "0000001000000001000000020000000500000000000000010000000d0000002098c612abed131631\
+             47239f4323d4973cb68df7302564fc791e17c1aae95a6c9d",
+        );
+        assert!(decode_scval_b64(&to_base64(&full)).is_ok());
+        // Every truncation fails cleanly (no panic, no default value).
+        for n in 0..full.len() {
+            assert!(decode_scval_b64(&to_base64(&full[..n])).is_err(), "prefix {n}");
+        }
+        // Trailing bytes.
+        let mut extra = full.clone();
+        extra.extend_from_slice(&[0, 0, 0, 0]);
+        assert!(decode_scval_b64(&to_base64(&extra)).is_err());
+        // A huge element count can't trigger a huge allocation.
+        assert!(decode_scval_b64(&to_base64(&unhex("0000001000000001ffffffff"))).is_err());
+        assert!(decode_scval_b64(&to_base64(&unhex("0000000dffffffff"))).is_err());
+        // Non-zero XDR padding.
+        assert!(decode_scval_b64(&to_base64(&unhex("0000000d00000001ab000001"))).is_err());
+        // Invalid bool, unknown discriminant, not base64.
+        assert!(decode_scval_b64(&to_base64(&unhex("0000000000000002"))).is_err());
+        assert!(decode_scval_b64(&to_base64(&unhex("00000063"))).is_err());
+        assert!(decode_scval_b64("!!!!").is_err());
+        // Deep nesting: 64 × Vec[..] wrapping.
+        let mut deep = Vec::new();
+        for _ in 0..64 {
+            deep.extend_from_slice(&unhex("000000100000000100000001"));
+        }
+        deep.extend_from_slice(&unhex("00000001"));
+        assert!(decode_scval_b64(&to_base64(&deep)).is_err());
+        // An absent optional vec decodes to empty.
+        assert_eq!(decode_scval_b64(&to_base64(&unhex("0000001000000000"))).unwrap(), ScVal::Vec(vec![]));
+    }
+
+    /// Simulation return values, as the RPC returns them in `results[0].xdr`.
+    #[test]
+    fn test_decode_simulation_results() {
+        // Mainnet `is_fulfilled(1)` on CBTCC5QL…SUHU returned "AAAAAAAAAAE=".
+        assert!(decode_bool_result(Some("AAAAAAAAAAE=".into())).unwrap());
+        assert!(!decode_bool_result(Some("AAAAAAAAAAA=".into())).unwrap());
+        // A missing value is an error, not `false`.
+        assert!(decode_bool_result(None).is_err());
+        // The old substring check (`contains("AAAAAQ")`) read this u64 as `true`.
+        let u64_val = to_base64(&encode_scval_u64(1 << 16)); // "AAAABQAAAAAAAQAA"
+        assert!(u64_val.contains("AAAAAQ"));
+        assert!(decode_bool_result(Some(u64_val)).is_err());
+
+        assert_eq!(decode_u64_result(Some(to_base64(&encode_scval_u64(889_164))), 7).unwrap(), 889_164);
+        assert!(matches!(decode_u64_result(None, 7), Err(VrfError::NotFulfilled(7))));
+        assert!(decode_u64_result(Some("AAAAAAAAAAE=".into()), 7).is_err());
+
+        let beta: Vec<u8> = (0u8..32).collect();
+        assert_eq!(
+            decode_beta_result(Some(to_base64(&encode_scval_bytes(&beta))), 1).unwrap().to_vec(),
+            beta
+        );
+        assert!(decode_beta_result(Some(to_base64(&encode_scval_bytes(&beta[..31]))), 1).is_err());
     }
 
     #[test]

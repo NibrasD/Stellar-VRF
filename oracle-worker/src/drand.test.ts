@@ -128,6 +128,18 @@ describe("drand round vectors (quicknet, shared with the contract)", () => {
     expect(timeOfRound(32_427_720, G, P)).toBe(G + 32_427_719 * 3);
   });
 
+  it("timeOfRound(0) is genesis, like drand; invalid inputs throw", () => {
+    // drand common/time.go: `if round == 0 { return genesis }`.
+    expect(timeOfRound(0, G, P)).toBe(G);
+    expect(timeOfRound(0, G, P)).toBe(timeOfRound(1, G, P));
+    // Previously these were all silently clamped to genesis.
+    expect(() => timeOfRound(-1, G, P)).toThrow(RangeError);
+    expect(() => timeOfRound(1.5, G, P)).toThrow(RangeError);
+    expect(() => timeOfRound(Number.NaN, G, P)).toThrow(RangeError);
+    expect(() => timeOfRound(2, G, 0)).toThrow(/period/);
+    expect(() => timeOfRound(2, G, -3)).toThrow(/period/);
+  });
+
   it("matches drand's TestChainNextRound (genesis G, period 2)", () => {
     expect(roundAt(1_002, 1_000, 2)).toBe(2);
     expect(roundAt(1_003, 1_000, 2)).toBe(2);
@@ -136,7 +148,7 @@ describe("drand round vectors (quicknet, shared with the contract)", () => {
     expect(timeOfRound(3, 1_000, 2)).toBe(1_004);
   });
 
-  it("the contract's bound round (current + 2) is unpublished for 3–6 s", () => {
+  it("the contract's bound round (current + 2) is 3–6 s ahead of the ledger clock", () => {
     for (let t = G + 32_427_700 * 3; t < G + 32_427_703 * 3; t++) {
       const required = roundAt(t, G, P) + 2;
       const lead = timeOfRound(required, G, P) - t;
@@ -335,6 +347,15 @@ describe("waitAndFetchBeacon", () => {
     mockFetch.mockRejectedValue(new Error("network down"));
 
     await expect(waitAndFetchBeacon(5)).rejects.toThrow(/network down/);
+  });
+
+  // drand serves `/public/0` as "latest", so a zero round (e.g. from an event
+  // the SDK couldn't parse) must never reach the network.
+  it.each([0, -1, 1.5, Number.NaN])("refuses round %s without fetching", async (round) => {
+    const mod = await import("./drand.js");
+    await expect(waitAndFetchBeacon(round)).rejects.toThrow(/rounds start at 1/);
+    await expect(mod.fetchDrandBeacon(round, 0)).rejects.toThrow(/rounds start at 1/);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 

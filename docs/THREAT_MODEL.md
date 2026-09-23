@@ -98,8 +98,9 @@ but it does **not** distribute *trust* — all instances share the same oracle k
 (`env.ledger().timestamp()`). The current round is already published, so the bound round is at
 least 2 rounds in the future. With `round_offset = 2` on quicknet (period 3 s) its beacon is
 emitted **between 3 s (exclusive) and 6 s (inclusive)** after the request ledger's timestamp.
-Nobody, the oracle included, can know the beacon value when the request is created, which
-closes the frontrunning path.
+That is exact on the ledger clock. **Under normal ledger-clock alignment** nobody, the oracle
+included, can know the beacon value when the request is created, which closes the frontrunning
+path. It isn't an unconditional guarantee: see the next paragraph.
 
 This is a timing margin, not a cryptographic one. It depends on the ledger close time being
 close to real time. Stellar close times normally track wall-clock time within a few seconds,

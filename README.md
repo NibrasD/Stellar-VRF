@@ -17,7 +17,7 @@ Your dApp  ◀─derive_random_in_range()──┘
 ```
 
 1. Your dApp calls `request()` on the VRF smart contract
-2. The oracle fetches a **future** drand quicknet beacon (`round_offset ≥ 2` rounds after the current one, i.e. published 3–6 s after the request — prevents prediction)
+2. The oracle fetches a **future** drand quicknet beacon (`round_offset ≥ 2` rounds after the current one, i.e. under normal ledger-clock alignment it is published 3–6 s after the request ledger closes. That delay is what prevents prediction, and it is not a hard guarantee: it depends on the ledger timestamp tracking real time)
 3. Oracle generates a BLS12-381 VRF proof bound to your context + drand randomness
 4. The contract verifies the proof with **on-chain BLS12-381 pairing checks** (~58M CPU instructions)
 5. The verified random output (`beta`) is written to contract storage and emitted in the `fulfill` event. `cleanup_proof()` (requester or oracle) removes only the bulky proof: the `Fulfilled` flag and the 32-byte `beta` are kept, so `get_beta()` and the `derive_*()` functions keep working. All entries are still subject to Soroban storage TTL. Read or cache your result after fulfillment (see [Storage TTL Management](docs/OPERATIONS.md#storage-ttl-management)).
@@ -186,7 +186,7 @@ Please read these before integrating on Mainnet. Details are in [`docs/THREAT_MO
   - still uses the earlier `derive_random_in_range` rejection loop, which has a biased fallback (reachable only for `max` approaching 2^63; everyday ranges are unaffected);
   - still accepts a caller-chosen `context` at derivation time, which can be ground (see [Deriving values](#deriving-values-from-a-result));
   - was configured by a separate `init()` call;
-  - numbers drand rounds one behind drand's own numbering (round 1 is at genesis), so the round a request is bound to is only **one** round ahead of the published beacon (0–3 s lead, sometimes already public at request time) instead of two (3–6 s). The requester still can't predict the output, but "even the oracle can't know the beacon at request time" does not hold on this instance ([details](docs/THREAT_MODEL.md#trust-assumptions)).
+  - numbers drand rounds one behind drand's own numbering (round 1 is at genesis), so the round a request is bound to is only **one** round ahead of the published beacon (0–3 s lead, sometimes already public at request time) instead of two (3–6 s under normal ledger-clock alignment). The requester still can't predict the output, but "even the oracle can't know the beacon at request time" does not hold on this instance ([details](docs/THREAT_MODEL.md#trust-assumptions)).
 
   The source replaces all four. Round numbering follows drand (`floor((now − genesis) / period) + 1`). Range derivation is **exactly** uniform (two-candidate rejection sampling, explicit failure with probability < 2^-128, no biased fallback). There is no derivation-time context. Configuration is atomic via `__constructor`, with key validation (no identity/generator/off-curve keys, oracle ≠ drand key). These changes ship with the next deployment ([details](docs/AUDIT_REPORT.md)).
 - **"Can't bias" is conditional.** With the registered keys unchanged, the oracle can neither predict nor bias an output. The oracle account *can* rotate keys (see "Single oracle identity" above), and anything a caller chooses **after** seeing `beta` (for example a domain passed to `derive_range_for_domain`) can be ground by that caller. The contract only binds inputs committed before the drand round is public.

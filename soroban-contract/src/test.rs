@@ -2257,6 +2257,75 @@ fn test_honest_callback_receives_output_without_failure_event() {
     assert_eq!(token.balance(&oracle_addr), fee);
 }
 
+// ── Event wire format shared with the SDKs (audit round 7) ───────────────────
+// The Rust SDK decodes these exact bytes in `sdk/rust/src/lib.rs`
+// (`test_parse_contract_event_vectors`). If an event's shape changes, both
+// tests must change together.
+
+/// XDR of the `request` event value for request #1 by account
+/// `GAIRCEIR…CF6M` (ed25519 key 0x11 × 32), bound to round 32,427,720:
+/// `ScVec[U64(1), Address(account), U64(32427720)]`.
+const EVT_REQUEST_XDR_HEX: &str = "000000100000000100000003000000050000000000000001\
+00000012000000000000000011111111111111111111111111111111111111111111111111111111\
+11111111000000050000000001eecec8";
+
+/// XDR of the `fulfill` event value for the quicknet fixture:
+/// `ScVec[U64(1), Bytes(PROOF_BETA)]`.
+const EVT_FULFILL_XDR_HEX: &str = "0000001000000001000000020000000500000000000000010000000d\
+0000002098c612abed13163147239f4323d4973cb68df7302564fc791e17c1aae95a6c9d";
+
+fn hex_bytes(s: &str) -> alloc::vec::Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+/// XDR of the data of the last event from `contract` whose first topic is `topic`.
+fn event_data_xdr(env: &Env, contract: &Address, topic: &str) -> alloc::vec::Vec<u8> {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::xdr::{ContractEventBody, Limits, ScVal, WriteXdr};
+    let events = env.events().all().filter_by_contract(contract);
+    let data = events
+        .events()
+        .iter()
+        .rev()
+        .find_map(|e| match &e.body {
+            ContractEventBody::V0(v0) => match v0.topics.first() {
+                Some(ScVal::Symbol(s)) if s.0.as_slice() == topic.as_bytes() => Some(v0.data.clone()),
+                _ => None,
+            },
+        })
+        .unwrap_or_else(|| panic!("no `{}` event", topic));
+    data.to_xdr(Limits::none()).unwrap()
+}
+
+#[test]
+fn test_request_event_wire_format_matches_sdk_vector() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_with_chain(&env, QN_GENESIS, QN_PERIOD);
+    let requester = Address::from_str(&env, "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M");
+    env.ledger().set_timestamp(qn_time_of_round(32_427_718));
+    let id = client.request(&Bytes::from_slice(&env, b"wire"), &requester);
+    // Read the event before any other invocation: the test env keeps only the
+    // events of the most recent top-level call.
+    let data = event_data_xdr(&env, &client.address, "request");
+    assert_eq!((id, client.request_round(&id)), (1, 32_427_720));
+    assert_eq!(data, hex_bytes(EVT_REQUEST_XDR_HEX));
+}
+
+#[test]
+fn test_fulfill_event_wire_format_matches_sdk_vector() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let consumer = env.register(honest_consumer::HonestConsumer, ());
+    let (client, vrf_id, _token, _oracle, proof, signature, _fee) =
+        setup_fixture_callback_request(&env, &consumer);
+    client.fulfill(&1u64, &proof, &signature);
+    assert_eq!(event_data_xdr(&env, &vrf_id, "fulfill"), hex_bytes(EVT_FULFILL_XDR_HEX));
+}
+
 // -- Shared quicknet fixture (valid proof for request #1, round 32427720) --
 const FIX_GENESIS: u64 = 1_692_803_367;
 const FIX_PERIOD: u32 = 3;

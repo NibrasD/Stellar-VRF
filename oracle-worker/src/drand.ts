@@ -148,11 +148,35 @@ export function roundAt(timestampSec: number, genesis: number, period: number): 
 /**
  * Time (unix seconds) at which `round` is emitted, for an explicit chain.
  *
- * drand `TimeOfRound`: `genesis + (round - 1) * period`; round 0 maps to
+ * drand `TimeOfRound` (`common/time.go`): `genesis + (round - 1) * period`.
+ * Round 0 maps to `genesis`, as upstream does. Round 0 is not a beacon anyone
+ * can fetch, though: see `assertFetchableRound`.
+ *
+ * Throws on a negative or non-integer round or a non-positive period.
+ * Previously `Math.max(round - 1, 0)` quietly mapped every such value to
  * genesis.
  */
 export function timeOfRound(round: number, genesis: number, period: number): number {
-  return genesis + Math.max(round - 1, 0) * period;
+  if (!Number.isSafeInteger(round) || round < 0) {
+    throw new RangeError(`invalid drand round: ${round}`);
+  }
+  if (!(period > 0)) {
+    throw new RangeError(`invalid drand period: ${period}`);
+  }
+  return round === 0 ? genesis : genesis + (round - 1) * period;
+}
+
+/**
+ * Rounds the worker may fetch: integers >= 1. drand's HTTP API treats
+ * `/public/0` as "latest", so a round of 0 (from a malformed or legacy event)
+ * would otherwise fetch whatever beacon is current. Only the `expectedRound`
+ * check in `verifyDrandBeacon` would catch that, and it's skipped when
+ * `DRAND_VERIFY_BEACONS=false`.
+ */
+function assertFetchableRound(round: number): void {
+  if (!Number.isSafeInteger(round) || round < 1) {
+    throw new RangeError(`refusing to fetch drand round ${round}: rounds start at 1`);
+  }
 }
 
 /**
@@ -177,6 +201,7 @@ export async function fetchDrandBeacon(
   round: number,
   maxRetries = 5
 ): Promise<DrandBeacon> {
+  assertFetchableRound(round);
   const url = `${DRAND_API_URL}/${DRAND_CHAIN_HASH}/public/${round}`;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -245,6 +270,7 @@ export async function fetchDrandBeacon(
  * then fetch it. Adds a small buffer to account for propagation delay.
  */
 export async function waitAndFetchBeacon(round: number): Promise<DrandBeacon> {
+  assertFetchableRound(round);
   const expectedTime = roundTimestamp(round);
   const now = Math.floor(Date.now() / 1000);
 

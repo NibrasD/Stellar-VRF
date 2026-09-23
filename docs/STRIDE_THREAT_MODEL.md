@@ -76,9 +76,11 @@ to predict and potentially censor unfavorable results.
 (`round_offset >= 2`, enforced in `__constructor`): `required_round = current_round + round_offset`,
 with `current_round = floor((now − genesis) / period) + 1`, which is drand's own numbering
 (round 1 at genesis, `common/time.go`). With offset 2 on quicknet, the bound beacon is emitted
-3–6 s after the request ledger's timestamp. It hasn't been published when the request is
-created, so the oracle cannot know the VRF input in advance. The margin assumes the ledger close
-time tracks real time (not measured for this deployment). A larger `round_offset` widens it.
+3–6 s after the request ledger's timestamp. That is exact arithmetic on the *ledger* clock, not a
+wall-clock guarantee. Under normal ledger-clock alignment the beacon has not been published when the
+request is created, so the oracle cannot know the VRF input in advance. If the ledger close time
+lags real time by more than the margin (not measured for this deployment; validators bound but do
+not eliminate drift), the bound beacon may already be public. A larger `round_offset` widens the margin.
 
 **Residual (Tampering.2.RES.1): live Mainnet instance.** The contract deployed before audit
 round 6 (`CBTCC5QL…SUHU`) computed `current_round` without the `+ 1`. Its bound round was only
@@ -166,7 +168,7 @@ an unfair advantage in games or lotteries.
 **Remediation (Information_Disclosure.2.R.1):** The VRF output depends on the oracle's
 BLS secret key (known only to the oracle) and the drand beacon (unpublished at request time
 due to `round_offset >= 2`, see Tampering.2.R.1 for the exact round numbering and the 3–6 s
-window). Even the oracle cannot predict the output until the drand
+window, which holds under normal ledger-clock alignment). Even the oracle cannot predict the output until the drand
 round is published, **provided it does not rotate the drand key to one it controls**
 (Tampering.3) **and the contract is a post-audit-round-6 deployment** (Tampering.2.RES.1). `derive_random_in_range(request_id, max)` maps the output into `[0, max)`
 **exactly uniformly**. It hashes `"VREP_DERIVE_V2" ‖ tag ‖ request_id ‖ max ‖ beta` and

@@ -41,10 +41,27 @@ not pull in `stellar-xdr`, and instead talks to Soroban JSON-RPC
 | Offline derivation identical to the contract (`derive_range_from_beta`, `derive_range_for_domain_from_beta`, `derive_u64_from_beta`) | ✅ |
 | **Submitting transactions** (`request`, `fulfill`) | ❌ **not supported** |
 
-**Why:** signed transaction submission needs a fully-formed, correctly serialized
-`TransactionEnvelope`. The internal envelope builder here is sufficient only for
-simulation, which does not validate signatures or sequence numbers. Rather than
-imply otherwise, this SDK does not expose write operations.
+**Why:** a signed submission needs a real source account and sequence number, a
+Soroban resource footprint and fee from simulation, auth entries, and a signature.
+The internal builder produces only the **unsigned simulation envelope**: a v1
+`TransactionEnvelope` with an all-zero source account, sequence 1, fee 100, no
+auth and no signatures. That is what RPC `simulateTransaction` accepts for
+read-only calls, and it is byte-identical to what `@stellar/stellar-sdk`'s
+`TransactionBuilder` produces for the same call (checked by
+`test_simulation_envelope_matches_stellar_sdk`). It would be rejected if
+submitted, so this SDK doesn't expose write operations, and `secret_key` in
+`VrfClientConfig` is currently unused (an empty string is fine).
+
+**Wire format.** The encoders and the XDR decoder are tested against vectors from
+the official `@stellar/stellar-sdk` encoder, against the contract's real event XDR,
+and against live Mainnet `getEvents` output. Event values are decoded strictly:
+an unexpected shape is an error, never a silent default.
+
+> **Upgrade note:** releases before this fix used wrong `ScVal` discriminants
+> (e.g. `Symbol = 10`, which is `I128`). As a result, `get_request_events` /
+> `get_fulfill_events` never returned events, and the simulation envelope was
+> rejected by the RPC ("Could not unmarshal transaction"). Upgrade if you
+> depend on either.
 
 **To submit transactions**, use the
 [JavaScript SDK](https://www.npmjs.com/package/stellar-vrf-sdk) or the
@@ -61,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = VrfClient::new(VrfClientConfig {
         contract_id: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU".into(),
         network: Network::Mainnet,
-        secret_key: std::env::var("STELLAR_SECRET")?,   // never hard-code secrets
+        secret_key: String::new(), // unused: this client is read-only
     });
 
     // Check whether a request has been fulfilled
@@ -134,9 +151,11 @@ https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c8
 
 ## Security notes
 
-- Secret keys are used **locally** for signing and are never transmitted.
-- Binding to a future drand round prevents the oracle from choosing a favourable
-  output.
+- This client never signs anything. `secret_key` is not used or transmitted,
+  so don't give it a real key.
+- Binding to a future drand round (published 3–6 s after the request ledger under
+  normal ledger-clock alignment) prevents the oracle from choosing a favourable
+  output while the registered keys are unchanged.
 - Fulfillment is idempotent: a request can only be fulfilled once.
 - If the oracle never answers, the requester can call `timeout_refund()` after the
   timeout window (currently 20 drand rounds).

@@ -21,8 +21,15 @@
  *
  * Defaults: the VRF core (drand check + VRF verify + Ed25519) is covered by
  * a 75M-instruction test in the contract suite; a normal fulfill without
- * callback measures ~58M on Mainnet. 90M leaves room for a modest callback
- * while staying below the 100M network transaction limit.
+ * callback measures ~58M on Mainnet. 90M leaves room for a modest callback.
+ *
+ * The 90M default is this project's own safety ceiling. It is NOT a network
+ * limit. The network's per-transaction limit (`txMaxInstructions` in the
+ * `CONTRACT_COMPUTE_V0` config setting) is set by validator vote. It was 400M
+ * on Mainnet (protocol 28) when this was written, and it can change. Nothing
+ * here hard-codes it: a transaction over the network limit fails simulation
+ * anyway, before this guard runs. Operators with expensive callbacks can raise
+ * MAX_FULFILL_INSTRUCTIONS, and the fee caps below still bound the spend.
  */
 
 export interface ResourceGuardOptions {

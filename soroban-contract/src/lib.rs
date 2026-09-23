@@ -971,7 +971,8 @@ impl VRFOracleContract {
 /// at `genesis + (c + offset - 1) * period`. For `offset = 2` the beacon
 /// therefore appears between `period` (exclusive) and `2 * period`
 /// (inclusive) seconds after the request ledger's close time: 3–6 s on
-/// quicknet.
+/// quicknet. That is measured on the ledger clock. It matches wall-clock lead
+/// time only under normal ledger-clock alignment.
 fn compute_required_round(now_ts: u64, genesis: u64, period: u32, offset: u32) -> u64 {
     compute_current_round(now_ts, genesis, period).saturating_add(offset as u64)
 }
