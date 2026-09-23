@@ -17,6 +17,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   computeCurrentRound,
   roundTimestamp,
+  roundAt,
+  timeOfRound,
   verifyDrandBeacon,
   DrandVerificationError,
 } from "./drand.js";
@@ -60,28 +62,87 @@ vi.mock("./utils.js", () => ({
 
 // ── Pure function tests ─────────────────────────────────────────────────────
 
+// drand numbering (`common/time.go`): round 1 is emitted AT genesis, round r at
+// genesis + (r - 1) * period, CurrentRound = floor((t - genesis) / period) + 1.
+
 describe("computeCurrentRound", () => {
-  it("returns 0 for timestamps at or before genesis", () => {
-    expect(computeCurrentRound(1_000_000)).toBe(0);
+  it("returns 0 only before genesis", () => {
     expect(computeCurrentRound(999_999)).toBe(0);
     expect(computeCurrentRound(0)).toBe(0);
   });
 
+  it("returns round 1 at genesis", () => {
+    expect(computeCurrentRound(1_000_000)).toBe(1);
+    expect(computeCurrentRound(1_000_002)).toBe(1);
+  });
+
   it("computes correct round for timestamps after genesis", () => {
     // genesis=1_000_000, period=3
-    expect(computeCurrentRound(1_000_003)).toBe(1);
-    expect(computeCurrentRound(1_000_006)).toBe(2);
-    expect(computeCurrentRound(1_000_009)).toBe(3);
-    expect(computeCurrentRound(1_000_010)).toBe(3); // floor
+    expect(computeCurrentRound(1_000_003)).toBe(2);
+    expect(computeCurrentRound(1_000_006)).toBe(3);
+    expect(computeCurrentRound(1_000_009)).toBe(4);
+    expect(computeCurrentRound(1_000_010)).toBe(4); // floor
   });
 });
 
 describe("roundTimestamp", () => {
   it("computes correct timestamp for a given round", () => {
     // genesis=1_000_000, period=3
-    expect(roundTimestamp(0)).toBe(1_000_000);
-    expect(roundTimestamp(1)).toBe(1_000_003);
-    expect(roundTimestamp(100)).toBe(1_000_300);
+    expect(roundTimestamp(1)).toBe(1_000_000);
+    expect(roundTimestamp(2)).toBe(1_000_003);
+    expect(roundTimestamp(100)).toBe(1_000_297);
+  });
+
+  it("is the inverse of computeCurrentRound", () => {
+    for (const r of [1, 2, 3, 100, 12_345]) {
+      expect(computeCurrentRound(roundTimestamp(r))).toBe(r);
+      expect(computeCurrentRound(roundTimestamp(r) - 1)).toBe(r - 1);
+    }
+  });
+});
+
+// Same vectors as the contract's `test_drand_round_vectors_quicknet`
+// (soroban-contract/src/test.rs), on real quicknet parameters.
+describe("drand round vectors (quicknet, shared with the contract)", () => {
+  const G = 1_692_803_367;
+  const P = 3;
+
+  it.each([
+    [0, 0],
+    [G - 1, 0],
+    [G, 1],
+    [G + 1, 1],
+    [G + 2, 1],
+    [G + 3, 2],
+    [G + 5, 2],
+    [G + 6, 3],
+    [G + 32_427_719 * 3, 32_427_720],
+    [G + 32_427_719 * 3 - 1, 32_427_719],
+  ])("roundAt(%i) = %i", (ts, expected) => {
+    expect(roundAt(ts, G, P)).toBe(expected);
+  });
+
+  it("timeOfRound matches drand TimeOfRound", () => {
+    expect(timeOfRound(1, G, P)).toBe(G);
+    expect(timeOfRound(2, G, P)).toBe(G + 3);
+    expect(timeOfRound(32_427_720, G, P)).toBe(G + 32_427_719 * 3);
+  });
+
+  it("matches drand's TestChainNextRound (genesis G, period 2)", () => {
+    expect(roundAt(1_002, 1_000, 2)).toBe(2);
+    expect(roundAt(1_003, 1_000, 2)).toBe(2);
+    expect(roundAt(1_004, 1_000, 2)).toBe(3);
+    expect(timeOfRound(2, 1_000, 2)).toBe(1_002);
+    expect(timeOfRound(3, 1_000, 2)).toBe(1_004);
+  });
+
+  it("the contract's bound round (current + 2) is unpublished for 3–6 s", () => {
+    for (let t = G + 32_427_700 * 3; t < G + 32_427_703 * 3; t++) {
+      const required = roundAt(t, G, P) + 2;
+      const lead = timeOfRound(required, G, P) - t;
+      expect(lead).toBeGreaterThan(P);
+      expect(lead).toBeLessThanOrEqual(2 * P);
+    }
   });
 });
 
@@ -226,16 +287,16 @@ describe("waitAndFetchBeacon", () => {
 
   it("sleeps until round is available when round is in the future", async () => {
     // Config: genesis=1_000_000, period=3
-    // Round 100 → timestamp = 1_000_000 + 100*3 = 1_000_300
-    // Mock Date.now() to return a time BEFORE round 100
-    const beforeRoundTime = 1_000_290; // 10 seconds before round 100
+    // Round 101 → timestamp = 1_000_000 + (101-1)*3 = 1_000_300
+    // Mock Date.now() to return a time BEFORE round 101
+    const beforeRoundTime = 1_000_290; // 10 seconds before round 101
     vi.spyOn(Date, "now").mockReturnValue(beforeRoundTime * 1000);
     vi.spyOn(Math, "floor").mockReturnValueOnce(beforeRoundTime);
 
-    const beacon = { round: 100, randomness: "ff", signature: "aabbccdd11223344eeff" };
+    const beacon = { round: 101, randomness: "ff", signature: "aabbccdd11223344eeff" };
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => beacon });
 
-    const result = await waitAndFetchBeacon(100);
+    const result = await waitAndFetchBeacon(101);
 
     expect(result).toEqual(beacon);
     // sleep should have been called with (waitSec * 1000) where
@@ -247,9 +308,9 @@ describe("waitAndFetchBeacon", () => {
   });
 
   it("does NOT sleep when round is already in the past", async () => {
-    // Round 10 → timestamp = 1_000_000 + 10*3 = 1_000_030
+    // Round 10 → timestamp = 1_000_000 + (10-1)*3 = 1_000_027
     // Mock Date.now() to return time AFTER round 10
-    const afterRoundTime = 1_000_050; // 20 seconds after round 10
+    const afterRoundTime = 1_000_050; // 23 seconds after round 10
     vi.spyOn(Date, "now").mockReturnValue(afterRoundTime * 1000);
     vi.spyOn(Math, "floor").mockReturnValueOnce(afterRoundTime);
 

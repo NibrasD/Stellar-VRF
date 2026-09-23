@@ -103,7 +103,8 @@ fn test_request_locks_expected_round() {
     let id = client.request(&context, &requester);
     let round = client.request_round(&id);
 
-    // With default test env timestamp (0), the contract returns round_offset (2).
+    // The default test env timestamp (0) is before genesis, where no drand
+    // round exists yet (current round 0), so the contract binds round_offset (2).
     assert_eq!(round, 2);
 }
 
@@ -1325,8 +1326,15 @@ fn test_property_timeout_refund_exact_window_boundary_rejected() {
     let required_round = client.request_round(&id);
     let timeout_rounds = client.timeout_rounds(); // 20
 
-    // Set time to EXACTLY required_round + TIMEOUT_ROUNDS (not strictly greater)
-    let exact_boundary_time = genesis + (required_round + timeout_rounds) * (period as u64);
+    // Set time to the LAST second at which the current round is EXACTLY
+    // required_round + TIMEOUT_ROUNDS (not strictly greater). Round r starts at
+    // genesis + (r - 1) * period, so round r + 1 starts one period later.
+    let boundary_round = required_round + timeout_rounds;
+    let exact_boundary_time = genesis + boundary_round * (period as u64) - 1;
+    assert_eq!(
+        crate::compute_current_round(exact_boundary_time, genesis, period),
+        boundary_round
+    );
     env.ledger().set_timestamp(exact_boundary_time);
 
     // Must panic because current_round <= required_round + TIMEOUT_ROUNDS
@@ -1519,8 +1527,10 @@ fn test_rotate_keys_new_oracle_successfully_fulfills_pending_request() {
     let client = VRFOracleContractClient::new(&env, &contract_id);
 
     // Set ledger timestamp so compute_required_round matches the target round 32427720:
+    // the current round must be target - offset, which starts at
+    // genesis + (target - offset - 1) * period (drand round 1 is at genesis).
     let target_round = 32427720u64;
-    let target_ts = genesis + (target_round - round_offset as u64) * period as u64;
+    let target_ts = genesis + (target_round - round_offset as u64 - 1) * period as u64;
     env.ledger().set_timestamp(target_ts);
 
     let requester = Address::generate(&env);
@@ -1912,6 +1922,159 @@ fn test_future_round_boundary_enforcement() {
     }
 }
 
+// ── drand round numbering (audit round 6) ────────────────────────────────────
+//
+// drand's definition (`common/time.go`): round 1 is emitted AT genesis, round r
+// at `genesis + (r - 1) * period`, `CurrentRound = floor((t - genesis)/period) + 1`.
+// The same vectors are checked on the worker side in
+// `oracle-worker/src/drand.test.ts` ("drand round vectors").
+
+/// Real quicknet parameters.
+const QN_GENESIS: u64 = 1_692_803_367;
+const QN_PERIOD: u32 = 3;
+
+/// Emission time of round `r`, as drand's `TimeOfRound` (test-only helper).
+fn qn_time_of_round(r: u64) -> u64 {
+    QN_GENESIS + (r - 1) * QN_PERIOD as u64
+}
+
+#[test]
+fn test_drand_round_vectors_quicknet() {
+    let cases: [(u64, u64); 9] = [
+        (0, 0),
+        (QN_GENESIS - 1, 0),
+        (QN_GENESIS, 1),
+        (QN_GENESIS + 1, 1),
+        (QN_GENESIS + 2, 1),
+        (QN_GENESIS + 3, 2),
+        (QN_GENESIS + 5, 2),
+        (QN_GENESIS + 6, 3),
+        // Round 32,427,720 (fixture round) is emitted at genesis + 32,427,719 * 3.
+        (QN_GENESIS + 32_427_719 * 3, 32_427_720),
+    ];
+    for (ts, expected) in cases {
+        assert_eq!(
+            crate::compute_current_round(ts, QN_GENESIS, QN_PERIOD),
+            expected,
+            "current round at ts {}",
+            ts
+        );
+    }
+    // One second before round 32,427,720 is emitted, round 32,427,719 is current.
+    assert_eq!(
+        crate::compute_current_round(QN_GENESIS + 32_427_719 * 3 - 1, QN_GENESIS, QN_PERIOD),
+        32_427_719
+    );
+    // drand's TestChainNextRound vector: genesis G, period 2 → round 2 at G + 2,
+    // round 3 at G + 4.
+    assert_eq!(crate::compute_current_round(1_000 + 2, 1_000, 2), 2);
+    assert_eq!(crate::compute_current_round(1_000 + 3, 1_000, 2), 2);
+    assert_eq!(crate::compute_current_round(1_000 + 4, 1_000, 2), 3);
+    // Degenerate period never divides by zero.
+    assert_eq!(crate::compute_current_round(QN_GENESIS + 10, QN_GENESIS, 0), 0);
+}
+
+/// The round a request is bound to must be emitted strictly after the request
+/// ledger's timestamp, and with offset 2 the lead time is (period, 2*period].
+/// Under the old (off-by-one) numbering this lead time was [0, period) and the
+/// first assertion failed at every round boundary.
+#[test]
+fn test_required_round_is_unpublished_with_full_lead_time() {
+    let p = QN_PERIOD as u64;
+    // Sweep three full periods, starting at genesis and deep into the chain.
+    for base in [QN_GENESIS, qn_time_of_round(32_427_700)] {
+        for dt in 0..(3 * p) {
+            let now = base + dt;
+            let required = crate::compute_required_round(now, QN_GENESIS, QN_PERIOD, 2);
+            let emitted_at = qn_time_of_round(required);
+            assert!(
+                emitted_at > now,
+                "round {} is already emitted at request time {}",
+                required,
+                now
+            );
+            let lead = emitted_at - now;
+            assert!(
+                lead > p && lead <= 2 * p,
+                "lead time {}s at ts {} outside ({}, {}]",
+                lead,
+                now,
+                p,
+                2 * p
+            );
+        }
+    }
+}
+
+/// Registers a fee-free contract with test keys at the given drand parameters.
+fn register_with_chain(env: &Env, genesis: u64, period: u32) -> VRFOracleContractClient<'static> {
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &BytesN::from_array(env, &TEST_G2_TIMES_2),
+            &Address::generate(env),
+            &BytesN::from_array(env, &[0x11; 32]),
+            &BytesN::from_array(env, &TEST_G2_TIMES_3),
+            &genesis,
+            &period,
+            &2u32,
+            &Address::generate(env),
+            &0i128,
+        ),
+    );
+    VRFOracleContractClient::new(env, &contract_id)
+}
+
+/// On-chain binding on real quicknet timing: a request made while round
+/// 32,427,718 is current is bound to round 32,427,720 (the fixture round).
+#[test]
+fn test_request_binds_offset_rounds_after_current_quicknet() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_with_chain(&env, QN_GENESIS, QN_PERIOD);
+    let requester = Address::generate(&env);
+    let ctx = Bytes::from_slice(&env, b"round_vec");
+
+    env.ledger().set_timestamp(qn_time_of_round(32_427_718));
+    let id = client.request(&ctx, &requester);
+    assert_eq!(client.request_round(&id), 32_427_720);
+
+    // Last second of round 32,427,718 still binds 32,427,720 ...
+    env.ledger().set_timestamp(qn_time_of_round(32_427_719) - 1);
+    let id2 = client.request(&ctx, &requester);
+    assert_eq!(client.request_round(&id2), 32_427_720);
+
+    // ... and the moment 32,427,719 is emitted the binding moves on.
+    env.ledger().set_timestamp(qn_time_of_round(32_427_719));
+    let id3 = client.request(&ctx, &requester);
+    assert_eq!(client.request_round(&id3), 32_427_721);
+}
+
+/// First second at which the refund window opens: the current round becomes
+/// required_round + TIMEOUT_ROUNDS + 1, emitted at
+/// genesis + (required_round + TIMEOUT_ROUNDS) * period.
+#[test]
+fn test_timeout_refund_allowed_first_second_after_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let genesis: u64 = 1_000_000;
+    let period: u32 = 3;
+    env.ledger().set_timestamp(genesis + 100 * (period as u64));
+    let client = register_with_chain(&env, genesis, period);
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"refund_edge"), &requester);
+
+    let boundary_round = client.request_round(&id) + client.timeout_rounds();
+    let first_open = genesis + boundary_round * (period as u64);
+
+    env.ledger().set_timestamp(first_open - 1);
+    assert!(client.try_timeout_refund(&id).is_err());
+
+    env.ledger().set_timestamp(first_open);
+    client.timeout_refund(&id);
+    assert!(client.is_refunded(&id));
+}
+
 
 // ── Callback-griefing isolation (audit round 4, finding #1) ──────────────────
 
@@ -2013,8 +2176,10 @@ fn setup_fixture_callback_request(
     );
     let client = VRFOracleContractClient::new(env, &vrf_id);
 
+    // Current round must be target - offset; drand round r starts at
+    // genesis + (r - 1) * period.
     let target_ts =
-        FIX_GENESIS + (FIX_TARGET_ROUND - FIX_ROUND_OFFSET as u64) * FIX_PERIOD as u64;
+        FIX_GENESIS + (FIX_TARGET_ROUND - FIX_ROUND_OFFSET as u64 - 1) * FIX_PERIOD as u64;
     env.ledger().set_timestamp(target_ts);
 
     let id = client.request_with_callback(

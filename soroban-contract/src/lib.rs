@@ -964,15 +964,35 @@ impl VRFOracleContract {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+/// Round a new request is bound to: `current_round + offset`.
+///
+/// With drand's numbering (see [`compute_current_round`]) the current round
+/// `c` is already published at `now_ts`, and round `c + offset` is published
+/// at `genesis + (c + offset - 1) * period`. For `offset = 2` the beacon
+/// therefore appears between `period` (exclusive) and `2 * period`
+/// (inclusive) seconds after the request ledger's close time: 3–6 s on
+/// quicknet.
 fn compute_required_round(now_ts: u64, genesis: u64, period: u32, offset: u32) -> u64 {
     compute_current_round(now_ts, genesis, period).saturating_add(offset as u64)
 }
 
+/// The drand round that is current (the latest one due) at `now_ts`.
+///
+/// Matches drand's own definition (`common/time.go`, `CurrentRound`):
+/// round **1** is emitted at `genesis`, round `r` at
+/// `genesis + (r - 1) * period`, so
+/// `current = floor((now - genesis) / period) + 1`. Before genesis no round
+/// exists and this returns 0.
+///
+/// Earlier versions omitted the `+ 1` and so were one round behind drand.
+/// The "future" round a request was bound to was then only
+/// `offset - 1` rounds ahead of the published one: 0–3 s of lead time
+/// instead of 3–6 s.
 fn compute_current_round(now_ts: u64, genesis: u64, period: u32) -> u64 {
-    if now_ts <= genesis || period == 0 {
+    if now_ts < genesis || period == 0 {
         return 0;
     }
-    now_ts.saturating_sub(genesis) / (period as u64)
+    (now_ts - genesis) / (period as u64) + 1
 }
 
 fn u64_be_bytes(env: &Env, value: u64) -> Bytes {

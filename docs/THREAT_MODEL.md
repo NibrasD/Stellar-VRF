@@ -91,9 +91,31 @@ but it does **not** distribute *trust* — all instances share the same oracle k
   lets the requester recover the escrowed fee, but not obtain the randomness. A decentralized
   oracle committee would reduce this risk.
 
-**`round_offset >= 2`.** Every request is bound to a drand round that hasn't happened yet
-(at least 2 rounds in the future). This prevents the oracle from knowing the beacon value
-at request time, which would allow frontrunning.
+**`round_offset >= 2`.** Every request is bound to `current_round + round_offset`, where
+`current_round` uses drand's own numbering (`common/time.go`): round **1** is emitted at
+`genesis`, round `r` at `genesis + (r − 1) · period`, so
+`current_round = floor((now − genesis) / period) + 1`. `now` is the request ledger's close time
+(`env.ledger().timestamp()`). The current round is already published, so the bound round is at
+least 2 rounds in the future. With `round_offset = 2` on quicknet (period 3 s) its beacon is
+emitted **between 3 s (exclusive) and 6 s (inclusive)** after the request ledger's timestamp.
+Nobody, the oracle included, can know the beacon value when the request is created, which
+closes the frontrunning path.
+
+This is a timing margin, not a cryptographic one. It depends on the ledger close time being
+close to real time. Stellar close times normally track wall-clock time within a few seconds,
+but the lag has not been measured for this deployment. Deployments that need a wider margin
+can pass a larger `round_offset` at construction.
+
+> **Deployed Mainnet contract (`CBTCC5QL…SUHU`) is affected by an off-by-one fixed in audit
+> round 6.** Earlier code computed `current_round` without the `+ 1`, one round behind drand.
+> The "future" round was then only `round_offset − 1 = 1` round ahead of the published one: its
+> beacon appeared **0–3 s** after the request timestamp, and at round boundaries it could
+> already be public at request time. Requester unpredictability is unaffected, since the output
+> still needs the oracle's BLS key. But the guarantee that *even the oracle* can't know the
+> beacon at request time does not hold on that instance: an oracle colluding with a requester
+> can get close to a known beacon. The fix only takes effect in a **new deployment**, because
+> the contract has no upgrade entrypoint. Until consumers migrate, treat that instance as
+> offering requester-side unpredictability only.
 
 ## Attack surface
 
@@ -181,8 +203,10 @@ the expected value and compares. If they don't match, the transaction reverts.
 ### Timeout griefing
 
 A requester cannot call `timeout_refund()` early — the contract checks that the current drand round
-exceeds `required_round + TIMEOUT_ROUNDS`. The ledger timestamp is consensus-determined, so a single
-user can't manipulate it.
+(drand numbering, see above) exceeds `required_round + TIMEOUT_ROUNDS`, i.e. the refund opens at
+`genesis + (required_round + TIMEOUT_ROUNDS) · period`, 20 periods (60 s on quicknet) after the
+bound beacon is emitted. The ledger timestamp is consensus-determined, so a single user can't
+manipulate it.
 
 ### Key compromise
 

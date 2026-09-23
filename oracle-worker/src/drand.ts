@@ -134,18 +134,39 @@ function bytesToHexLower(bytes: Uint8Array): string {
 }
 
 /**
- * Compute the current drand round number from a timestamp.
+ * drand round that is current at `timestampSec`, for an explicit chain.
+ *
+ * Same definition as drand (`common/time.go`, `CurrentRound`) and as the
+ * contract's `compute_current_round`: round 1 is emitted at `genesis`, so
+ * `floor((t - genesis) / period) + 1`. Before genesis there is no round (0).
  */
-export function computeCurrentRound(timestampSec: number): number {
-  if (timestampSec <= DRAND_GENESIS_TIME) return 0;
-  return Math.floor((timestampSec - DRAND_GENESIS_TIME) / DRAND_PERIOD);
+export function roundAt(timestampSec: number, genesis: number, period: number): number {
+  if (timestampSec < genesis || period <= 0) return 0;
+  return Math.floor((timestampSec - genesis) / period) + 1;
 }
 
 /**
- * Compute the estimated timestamp when a drand round will be published.
+ * Time (unix seconds) at which `round` is emitted, for an explicit chain.
+ *
+ * drand `TimeOfRound`: `genesis + (round - 1) * period`; round 0 maps to
+ * genesis.
+ */
+export function timeOfRound(round: number, genesis: number, period: number): number {
+  return genesis + Math.max(round - 1, 0) * period;
+}
+
+/**
+ * Compute the current drand round number from a timestamp (configured chain).
+ */
+export function computeCurrentRound(timestampSec: number): number {
+  return roundAt(timestampSec, DRAND_GENESIS_TIME, DRAND_PERIOD);
+}
+
+/**
+ * Compute the timestamp at which a drand round is emitted (configured chain).
  */
 export function roundTimestamp(round: number): number {
-  return DRAND_GENESIS_TIME + round * DRAND_PERIOD;
+  return timeOfRound(round, DRAND_GENESIS_TIME, DRAND_PERIOD);
 }
 
 /**
