@@ -22,10 +22,17 @@ instance holds the leader lease at a time and submits transactions; the others s
 
 **drand quicknet.** We rely on the drand distributed randomness beacon for unpredictability.
 The quicknet chain uses a BLS threshold scheme across a geographically distributed committee.
-Historical uptime is >99.9%. If the chain rotates its group key, the oracle account must call
-`rotate_drand_pk()` to update the on-chain verification key. This covers key rotation within the
-same chain only. Switching to a drand chain with a different genesis, period or signature scheme
-needs a new contract deployment (see *Known limitations*).
+Historical uptime is >99.9%. **drand resharing does not change the key.** The chain hash is derived
+from the group public key (among other chain parameters), and drand documents it as stable "regardless
+of the network composition" (`common/chain/info.go`). A normal reshare, where committee members join
+or leave, keeps the group public key, so it does **not** affect pending requests or the stored
+`DrandPK`. Only a *new* chain has a new key, and that also means a new chain hash. So a pinned
+`DrandPK` can only be invalidated by drand launching a new chain. That's low likelihood, and the
+consequence is liveness only: pending requests can't be fulfilled and fall back to `timeout_refund()`.
+The worker already pins `DRAND_CHAIN_HASH` and `DRAND_PUBLIC_KEY` and verifies each beacon against them.
+`rotate_drand_pk()` exists for that case, but it only works within the *same* chain parameters. Switching
+to a drand chain with a different genesis, period or signature scheme needs a new contract deployment
+(see *Known limitations*).
 
 We do **not** trust the drand *HTTP relay* that serves beacons. Verification happens twice:
 
@@ -72,15 +79,17 @@ but it does **not** distribute *trust* — all instances share the same oracle k
   rotations behind a timelock longer than `TIMEOUT_ROUNDS` and/or under an admin authority
   separate from the fulfilling key.
 
-- *Liveness is NOT guaranteed.* If the oracle goes down, requests won't get fulfilled. We handle
-  this with a timeout mechanism: after `TIMEOUT_ROUNDS` (20 drand rounds, ~60s), the requester
-  can call `timeout_refund()` to reclaim their escrowed fee. The fee is held in the VRF contract
-  itself (not sent to the oracle) until fulfillment, so the requester is always protected
-  financially. A multi-oracle threshold scheme is a future improvement under consideration.
+- *Liveness is NOT guaranteed.* If the oracle goes down, requests won't get fulfilled. The
+  fallback is a timeout: after `TIMEOUT_ROUNDS` (20 drand rounds, ~60s), the requester can call
+  `timeout_refund()` to reclaim their escrowed fee. The fee is held in the VRF contract itself
+  (not sent to the oracle) until fulfillment. This bounds the requester's **loss to the network
+  fees** they paid for `request()` and `timeout_refund()`. It does not compensate for the
+  randomness not being delivered, and the refund has to be claimed by the requester (it isn't
+  automatic). A multi-oracle threshold scheme is a future improvement under consideration.
 
-- *Censorship is possible.* The oracle could refuse to fulfill specific requests. Again, the
-  timeout protects the requester from being stuck forever. A decentralized oracle committee
-  would eliminate this risk.
+- *Censorship is possible.* The oracle could refuse to fulfill specific requests. The timeout
+  lets the requester recover the escrowed fee, but not obtain the randomness. A decentralized
+  oracle committee would reduce this risk.
 
 **`round_offset >= 2`.** Every request is bound to a drand round that hasn't happened yet
 (at least 2 rounds in the future). This prevents the oracle from knowing the beacon value
@@ -108,6 +117,41 @@ This is blocked by **three independent layers of defense**:
    would fail the "already fulfilled" check.
 3. **Fulfilling transient key (belt-and-suspenders).** A transient `Fulfilling(request_id)` key
    which is cleared after the callback returns.
+
+Because the callback is now isolated (next section), a blocked re-entry no longer reverts
+`fulfill()`. It shows up as a `cb_failed` event and has no effect on VRF state
+(`test_reentancy_guard_blocks_during_callback`).
+
+### Callback griefing (economic DoS on the oracle)
+
+**Before (audit round 4, finding #1):** the callback was dispatched with `env.invoke_contract`,
+so a consumer whose `on_vrf()` panicked reverted the **whole** `fulfill()` transaction. That
+rolled back proof verification, the `Fulfilled` flag and the oracle fee transfer, while the oracle
+still paid the network fee. The worker retried, and reconciliation re-queued the request every
+`RECONCILE_INTERVAL_MS`. Any consumer could make the oracle pay fees on its request indefinitely,
+and never pay it.
+
+**Now (contract source; takes effect with the next deployment):**
+`invoke_callback_if_configured()` uses `env.try_invoke_contract`. If the callback panics, traps,
+returns an error or doesn't exist, the host rolls back **only the callback's own writes** and the
+contract emits `cb_failed` with `(request_id, callback_contract)`. `Fulfilled`, the stored proof,
+the oracle fee transfer and the `fulfill` event all stay committed. The result is always readable
+with `get_proof(request_id)`, so a consumer whose callback failed can still pull it.
+Tests: `test_panicking_callback_does_not_revert_fulfill`,
+`test_honest_callback_receives_output_without_failure_event`.
+
+**Residual risk.** Soroban cannot recover from host **budget exhaustion** (CPU/memory) in a
+sub-call, so a callback that burns the whole budget still aborts the transaction. Usually this
+fails at simulation, before any fee is spent. A callback that behaves differently at apply time
+than at simulation can still cost fees. The worker bounds this with a per-request send cap
+(`MAX_SENDS_PER_REQUEST`, default 6, `oracle-worker/src/sendAttempts.ts`). The cap counts every
+`sendTransaction()` across inner retries, outer retries and reconciliation passes. After that the
+request is **parked** and the requester can `timeout_refund()`. The cap is per process: a restart
+or failover gives a fresh allowance. The unpaid-spend budget in the fee guard stays the
+deployment-wide ceiling.
+
+**Deployed Mainnet contract:** still uses `invoke_contract` until redeployment. On that
+instance only the worker-side send cap applies.
 
 ### Signature forgery
 

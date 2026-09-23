@@ -33,6 +33,7 @@ import {
 } from "./listener.js";
 import { FeeGuard, feeGuardOptionsFromEnv, formatXlm, type Funding } from "./feeGuard.js";
 import { createSpendLedger } from "./spendLedger.js";
+import { SendAttemptTracker, sendAttemptOptionsFromEnv } from "./sendAttempts.js";
 import { Asset } from "@stellar/stellar-sdk";
 import { waitAndFetchBeacon } from "./drand.js";
 import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
@@ -93,6 +94,11 @@ const feeGuard = new FeeGuard(
 );
 recordUnpaidBudget(feeGuardOptions.unpaidBudgetStroops);
 
+// Per-request cap on sendTransaction() calls across ALL retries and
+// reconciliation passes, so a request that keeps failing after simulation
+// cannot drain network fees without limit (see sendAttempts.ts).
+const sendAttempts = new SendAttemptTracker(sendAttemptOptionsFromEnv());
+
 /**
  * How often the leader re-reconciles against contract state while running.
  * Startup reconciliation alone is not enough: a request whose event is missed
@@ -130,7 +136,20 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
       () => isRequestFulfilled(server, event.requestId)
     );
     if (fulfilled) {
+      sendAttempts.clear(event.requestId);
       log.info(`Request ${event.requestId} already fulfilled, skipping.`);
+      return;
+    }
+
+    // 1a. Parked requests: send allowance already used up. Skip BEFORE waiting
+    // for drand or generating a proof, so reconciliation passes cost nothing.
+    if (sendAttempts.isExhausted(event.requestId)) {
+      recordFeeDeferred();
+      log.warn(
+        `Request ${event.requestId} is parked: ${sendAttempts.count(event.requestId)}/` +
+          `${sendAttempts.limit} fulfill sends already spent. Not retrying ` +
+          `(the requester can timeout_refund()).`
+      );
       return;
     }
 
@@ -214,10 +233,18 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
       () =>
-        submitFulfillment(server, event.requestId, proof, isLeader, (maxFee) =>
-          feeGuard.authorizeSend(sendFunding, maxFee)
-        )
+        submitFulfillment(server, event.requestId, proof, isLeader, async (maxFee) => {
+          // Per-request send cap first: it is free to check and never reserves
+          // shared budget for a send that will be refused anyway.
+          if (sendAttempts.isExhausted(event.requestId)) {
+            return sendAttempts.tryReserve(event.requestId); // yields the refusal reason
+          }
+          const gate = await feeGuard.authorizeSend(sendFunding, maxFee);
+          if (!gate.ok) return gate;
+          return sendAttempts.tryReserve(event.requestId);
+        })
     );
+    sendAttempts.clear(event.requestId);
 
     const durationMs = Date.now() - startMs;
     recordFulfillment(durationMs);

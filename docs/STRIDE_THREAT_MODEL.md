@@ -123,8 +123,9 @@ for missed fulfillments.
 
 **Remediation (Repudiation.1.R.1):** All requests emit on-chain events via
 `env.events().publish()` with the `request` topic. These events are immutable in the
-ledger and can be independently verified by any Stellar node or indexer. The `timeout_refund()`
-mechanism ensures requesters are not stuck regardless of oracle behavior.
+ledger and can be independently verified by any Stellar node or indexer. Whatever the oracle
+does, `timeout_refund()` lets the requester recover the escrowed fee after the timeout. It
+doesn't deliver the randomness.
 
 ---
 
@@ -181,8 +182,32 @@ accumulate but are never fulfilled.
 **Remediation (Denial_of_Service.1.R.1):** `timeout_refund()` allows the requester to
 reclaim their escrowed fee and mark the request as refunded after `TIMEOUT_ROUNDS`
 (20 drand rounds, ~60 seconds). The fee is held in the VRF contract itself (not sent
-to the oracle) until fulfillment, ensuring the requester is always financially protected.
-Long-term, a multi-oracle threshold scheme is planned for mainnet.
+to the oracle) until fulfillment, so the requester's loss is limited to network fees.
+This is a **refund path, not a liveness guarantee**: the randomness is still not
+delivered, and the requester must claim the refund. HA (primary + hot standby)
+reduces downtime but doesn't remove it. Long-term, a multi-oracle threshold scheme is planned.
+
+### Denial_of_Service.1b — Malicious consumer callback makes every `fulfill()` revert
+
+**Affected component:** VRF Contract `fulfill()` → consumer `on_vrf()`; Oracle Worker fees
+**Severity:** High (economic DoS on the oracle), audit round 4 finding #1
+
+**Description:** The callback was invoked with `env.invoke_contract`, so a consumer whose
+`on_vrf()` panics reverted the whole `fulfill()`: proof, `Fulfilled` flag and oracle fee
+transfer. The oracle still paid the network fee on each attempt, and the worker retried
+without limit.
+
+**Remediation (Denial_of_Service.1b.R.1), contract source, needs redeployment:**
+the callback is invoked with `env.try_invoke_contract`. A failing callback only rolls back
+its own writes and emits `cb_failed(request_id, callback_contract)`. The fulfillment and
+fee payout stay committed, and the output is readable with `get_proof()`. Host budget
+exhaustion can't be isolated by Soroban and still aborts the transaction; it normally shows
+up at simulation, before any fee is spent.
+**Remediation (Denial_of_Service.1b.R.2), worker, effective now:** a per-request cap on
+`sendTransaction()` calls (`MAX_SENDS_PER_REQUEST`, default 6) across all retries and
+reconciliation passes. After that the request is parked instead of retried forever. The cap
+is per process, so restarts and failovers reset it; the fee guard's unpaid budget remains
+the deployment-wide ceiling.
 
 ### Denial_of_Service.2 — Spam requests exhaust oracle gas budget
 
@@ -226,7 +251,9 @@ fulfillment for the same or different request, potentially causing inconsistent 
 **Remediation (Elevation.1.R.1):** The contract follows CEI (Checks-Effects-Interactions):
 `Fulfilled(request_id)` is set to `true` before the callback is invoked. Additionally,
 a transient `Fulfilling(request_id)` guard is set before and cleared after the callback.
-Any re-entrant call hits the "already fulfilled" check and reverts.
+Any re-entrant call is rejected (by the Soroban host re-entry guard first, then by
+"already fulfilled"). Since callbacks are isolated with `try_invoke_contract`, that rejection
+fails only the callback (a `cb_failed` event), never the outer fulfillment.
 
 ### Elevation.2 — Replay of a valid fulfill transaction
 

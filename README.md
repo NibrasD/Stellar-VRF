@@ -95,7 +95,9 @@ let request_id: u64 = env.invoke_contract(
 pub fn on_vrf(env: Env, request_id: u64, beta_output: BytesN<32>, _alpha_seed: BytesN<32>) {
     let vrf_contract: Address = /* stored at init */;
     vrf_contract.require_auth(); // CRITICAL: verify caller is the VRF contract
-    // Use beta_output as your random value
+    // Use beta_output as your random value.
+    // If this panics, fulfill() still succeeds and you are NOT called again:
+    // read the result later with get_proof(request_id).
 }
 ```
 
@@ -136,7 +138,9 @@ Please read these before integrating on Mainnet. Details are in [`docs/THREAT_MO
   - For anyone else, it caps the **total transaction fees** at `UNPAID_BUDGET_XLM_PER_HOUR` (default 1.5 XLM) per rolling hour. The fee is reserved before *every* send, including retries. With Redis HA, the budget is shared across primary and standby and survives restarts.
   - Only a fee paid in native XLM counts as "paid".
 
-  Deferred requests stay pending, and requesters are always protected by `timeout_refund()`. **What this means for integrators:** anyone can use up the shared unpaid budget with spam. The current instance therefore **does not guarantee liveness** to non-allowlisted requesters, whose requests may time out and be refunded. The structural fix is a redeployment with `fee_amount` ≥ the fulfill cost. `mainnet_deploy.mjs` now refuses to deploy without one.
+  Deferred requests stay pending. After the timeout, requesters can recover their escrowed fee with `timeout_refund()`, but that doesn't deliver the randomness. **What this means for integrators:** anyone can use up the shared unpaid budget with spam. The current instance therefore **does not guarantee liveness** to non-allowlisted requesters, whose requests may time out and be refunded. The structural fix is a redeployment with `fee_amount` ≥ the fulfill cost. `mainnet_deploy.mjs` now refuses to deploy without one.
+- **Fulfillment is best-effort, not guaranteed.** HA, the fee guard and reconciliation make fulfillment likely, but no component guarantees it. The contract guarantees only that a result, *if* delivered, is correct and final, and that an unfulfilled request can be refunded after `TIMEOUT_ROUNDS`.
+- **Consumer callbacks are isolated (source; next deployment).** If your `on_vrf()` panics, `fulfill()` still succeeds, your callback's writes are rolled back, and a `cb_failed` event is emitted. Read the result with `get_proof()`. The deployed Mainnet instance still reverts `fulfill()` on a callback panic. On that instance the worker caps sends per request (`MAX_SENDS_PER_REQUEST`) so a griefing consumer can't drain the oracle ([details](docs/THREAT_MODEL.md#callback-griefing-economic-dos-on-the-oracle)).
 - **drand chain is fixed.** `rotate_drand_pk()` rotates the key of the *configured* drand chain. It can't migrate the contract to a different drand chain (genesis/period/scheme are fixed). See [OPERATIONS.md](docs/OPERATIONS.md#rotate-drand-public-key).
 - **Results are not stored forever.** See step 5 above.
 - **The Mainnet WASM predates the latest range-derivation fix.** The deployed contract still uses the earlier `derive_random_in_range` rejection loop, which has a biased fallback. That fallback is reachable only for very large `max` values, approaching 2^63. Everyday ranges are unaffected. The 128-bit fix is in the source and ships with the next deployment ([details](docs/AUDIT_REPORT.md)).

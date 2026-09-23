@@ -43,6 +43,28 @@ those are the caller in this context, so it will always fail. Another mistake is
 entirely — that means anyone could call `on_vrf()` with fake randomness and your contract
 would accept it.
 
+## If your callback fails
+
+The VRF contract calls `on_vrf()` with `try_invoke_contract`. If your callback panics or
+returns an error:
+
+- **your callback's state changes are rolled back**, but the request is still marked
+  fulfilled, the oracle is still paid, and the VRF contract emits
+  `cb_failed(request_id, your_contract)`;
+- **you will not be called again** for that request. Read the output yourself with
+  `get_proof(request_id)` (or `is_fulfilled` + `get_proof`) and process it in a normal
+  function you control.
+
+So a callback that reverts can't block the oracle, and it can't get the randomness
+re-delivered to you either. In particular, never revert in `on_vrf()` because you don't
+like the result: the result is already final on-chain. Keep callbacks cheap. A callback
+that exhausts the transaction's CPU/memory budget can't be isolated by Soroban, so it
+makes the whole `fulfill()` fail. The oracle worker stops retrying such a request after
+a few sends (`MAX_SENDS_PER_REQUEST`), and you'd have to use `timeout_refund()`.
+
+> This behaviour ships with the next contract deployment. The currently deployed Mainnet
+> instance still reverts `fulfill()` when a callback panics.
+
 ## Making callbacks idempotent
 
 Your callback should be safe to call more than once for the same `request_id`. The simplest

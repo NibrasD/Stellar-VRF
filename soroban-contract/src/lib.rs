@@ -1086,6 +1086,23 @@ fn request_internal(
 /// - `request_id: u64` — the VRF request identifier
 /// - `beta_output: BytesN<32>` — the verifiable random output
 /// - `alpha_seed: BytesN<32>` — the deterministic input seed (for auditability)
+///
+/// # Failure isolation
+/// The callback is invoked with `try_invoke_contract`. If the consumer's
+/// `on_vrf()` panics, traps, returns an error, or is missing, the host rolls back
+/// only the *callback's* own state changes and this function emits a
+/// `cb_failed` event of `(request_id, callback_contract)`. `fulfill()` then carries
+/// on: `Fulfilled`, the stored proof and the oracle fee transfer stay committed.
+/// Without this, a consumer could force every `fulfill()` to revert, making
+/// the oracle pay network fees indefinitely (callback-griefing DoS).
+///
+/// Consumers therefore MUST NOT rely on the callback always succeeding;
+/// the canonical output is always readable via `get_proof(request_id)`.
+///
+/// Limitation: host budget exhaustion (CPU/memory) is not recoverable in
+/// Soroban and still aborts the whole transaction. That case is detected at
+/// simulation time and is bounded off-chain by the worker's per-request
+/// attempt cap.
 pub(crate) fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &BlsVrfProof) {
     if !env
         .storage()
@@ -1111,5 +1128,15 @@ pub(crate) fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &
     args.push_back(proof.beta_output.clone().into_val(env));
     args.push_back(proof.alpha_seed.clone().into_val(env));
 
-    let _ = env.invoke_contract::<Val>(&callback_contract, &callback_fn, args);
+    let result = env.try_invoke_contract::<Val, soroban_sdk::Error>(
+        &callback_contract,
+        &callback_fn,
+        args,
+    );
+    if result.is_err() {
+        env.events().publish(
+            (symbol_short!("cb_failed"),),
+            (request_id, callback_contract),
+        );
+    }
 }

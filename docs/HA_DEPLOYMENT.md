@@ -47,7 +47,8 @@ Two backends are selected automatically at runtime:
    - **Commands are serialised** (single-flight queue), so concurrent callers never interleave on one socket.
    - **Local lease deadline.** `isLeader()` doesn't rely on the *last renewal result*. After each successful acquire/renew the node records `leaseValidUntil = sentAt + TTL − LEADER_LEASE_SAFETY_MS`. `sentAt` is when the command was **sent**, not when it returned. When that deadline passes, `isLeader()` returns `false` immediately, even if the renewal call is still hanging. Redis can only expire the key *after* this local deadline, so a node never thinks it is leader while a standby could already hold the lease.
 6. **Pre-submit leadership re-check**: leadership is re-verified **immediately before spending money**, not just when a request is picked up. Processing a request involves a long wait (a future drand round is tens of seconds away), during which a paused, partitioned or GC-stalled leader can legitimately lose its lease to the standby. `handleRequest()` therefore checks `isLeader()` (a) on entry, (b) after proof generation and immediately before `submitFulfillment()`, and (c) inside the retry callback, since each retry adds more delay. A node that lost the lease mid-flight discards the work instead of submitting.
-7. **Defense-in-depth**: Even in a rare split, the on-chain contract rejects duplicate `fulfill()` (idempotency + re-entrancy guard), so double-submission is impossible.
+7. **Defense-in-depth**: Even in a rare split, the on-chain contract rejects duplicate `fulfill()` (idempotency + re-entrancy guard), so double *fulfillment* is impossible. A duplicate *submission attempt* is still possible,
+   and it costs a wasted fee (see below).
 
 ### What this guarantees — and what it does not
 
@@ -66,6 +67,10 @@ To be precise about the strength of the claim (see also
   "fencing" in the strict distributed-systems sense. The residual risk if a process
   freezes between the final `isLeader()` check and the RPC call is a *duplicate
   submission attempt* (rejected on-chain, wasted fee) — never a corrupted result.
+- ⚠️ **Not a liveness guarantee.** HA removes the single-host point of failure. It does
+  not guarantee that every request gets fulfilled: both hosts, Redis, the RPC or drand
+  can be unavailable, and the fee guard and per-request send cap deliberately stop
+  serving some requests. The fallback for requesters is `timeout_refund()`.
 
 ## Listener Supervision & Reconciliation
 

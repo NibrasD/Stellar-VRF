@@ -108,7 +108,12 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
        - Layer 1: Soroban host VM re-entrancy rejection.
        - Layer 2: `Fulfilling` guard panic (`"fulfill already in progress"`).
        - Layer 3: `Fulfilled` guard panic (`"already fulfilled"`).
-  4. Verified by test: `test_reentancy_guard_blocks_during_callback` (passes with `should_panic`).
+  4. Verified by test: `test_reentancy_guard_blocks_during_callback`. Since callback isolation
+     (`try_invoke_contract`), the blocked re-entry no longer panics the outer call: the test
+     asserts a `cb_failed` event and that no proof was written by the re-entrant call.
+  5. **Callback failure isolation (audit round 4, #1):** a panicking `on_vrf()` can no longer
+     revert `fulfill()`. See `test_panicking_callback_does_not_revert_fulfill` and
+     `docs/THREAT_MODEL.md` → *Callback griefing*.
 
 ### [CD-01] Confused-Deputy Mitigation on Callbacks [VERIFIED-SECURE]
 - **Analysis**: A malicious actor could specify an arbitrary external contract and function to execute with the VRF contract's authority.

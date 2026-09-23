@@ -22,6 +22,29 @@ on mainnet.
 | First request() | `0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3` | [View](https://stellar.expert/explorer/public/tx/0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3) |
 | First fulfill() | `f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf` | [View](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) |
 
+### Reproducible contract build (pinned toolchain)
+
+The Rust toolchain is pinned to **1.95.0** in [`rust-toolchain.toml`](../rust-toolchain.toml)
+(with `clippy`, `rustfmt` and the `wasm32v1-none` target). rustup picks it up automatically
+for every crate in the repo. CI installs the same version explicitly, and a CI step fails if
+`ci.yml` and `rust-toolchain.toml` ever disagree. Changing the compiler changes the WASM bytes
+and the measured CPU instruction counts, so bump it deliberately and re-record the hash below.
+
+```bash
+cd soroban-contract
+cargo build --release --target wasm32v1-none
+sha256sum target/wasm32v1-none/release/soroban_vrf_oracle.wasm
+```
+
+| Source | Toolchain | `soroban_vrf_oracle.wasm` SHA256 | Size |
+|---|---|---|---|
+| current `main` (callback isolation) | 1.95.0 | `feb19ddd87aa483af842853be5a870fc3543f424b84b4b62049c4b6e9362703a` | 53,045 B |
+
+Two clean release builds on Windows produced this same hash. The **deployed** Mainnet WASM
+comes from older source and has a different hash. A redeploy is needed for the callback
+isolation fix to take effect on-chain. This hash is for the unoptimized `cargo build` output.
+If you upload an `stellar contract optimize` output, record that hash too.
+
 ## Starting the Oracle Worker
 
 ### Prerequisites
@@ -80,6 +103,7 @@ The replica will:
 | `DRAND_API_URL` | No | `https://api.drand.sh` | drand HTTP API |
 | `POLL_INTERVAL_MS` | No | `3000` | Event polling interval |
 | `MAX_RETRIES` | No | `3` | Max fulfill retry attempts |
+| `MAX_SENDS_PER_REQUEST` | No | `6` | Hard cap on `sendTransaction()` calls per request id, across inner/outer retries **and** reconciliation passes. Once reached, the request is parked (log `Request N is parked`) and the requester can `timeout_refund()`. Per process: restarts/failover reset it. Must be ≥ 1 |
 | `TX_FEE` | No | `1000000` | Transaction fee (stroops) |
 | `LISTENER_MAX_POLL_FAILURES` | No | `20` | Consecutive failed polls before the listener restarts |
 | `LISTENER_MAX_RESTARTS` / `LISTENER_RESTART_WINDOW_MS` | No | `5` / `600000` | Crash budget before relinquishing leadership |
@@ -168,8 +192,18 @@ even when a request is retried or its result is ambiguous.
 **Residual risk — liveness, not money.** Anyone can use up the shared budget with cheap
 `request()` calls. After that, legitimate non-allowlisted requesters are deferred and may
 only get `timeout_refund()`. The fee guard turns *economic drain* into *selective denial of
-service*. It doesn't guarantee liveness for permissionless users. Only a redeployment with
-an XLM `fee_amount` ≥ the fulfill cost does that.
+service*. It doesn't guarantee liveness for permissionless users. A redeployment with an XLM
+`fee_amount` ≥ the fulfill cost removes this *economic* reason for deferral. Even then,
+fulfillment is best-effort (oracle, RPC and drand availability), with `timeout_refund()`
+as the fallback.
+
+**Per-request send cap.** Separately from the budget, no request gets more than
+`MAX_SENDS_PER_REQUEST` (default 6) `sendTransaction()` calls per worker process. This
+bounds the fee a single request can cost when it keeps failing after simulation, e.g. a
+consumer callback that aborts the transaction (see THREAT_MODEL.md → *Callback griefing*).
+Log `Request N is parked: 6/6 fulfill sends already spent` means the cap was hit. The
+request stays pending on-chain, and the requester can `timeout_refund()`. To retry a
+parked request deliberately, restart the worker.
 
 - Log `Deferring request N: …` shows the reason. A deferred request is **not dropped**. It stays
   pending on-chain, periodic reconciliation retries it once budget frees up, and the requester can
@@ -250,7 +284,12 @@ console.log('Public (192 bytes):', Buffer.from(pk.toRawBytes(false)).toString('h
 
 ### Rotate drand Public Key
 
-Only needed if drand quicknet rotates their key (extremely rare).
+Normally **never needed**. drand resharing (committee members joining or leaving) keeps the
+group public key, and so the chain hash (drand `common/chain/info.go`: the hash is stable
+"regardless of the network composition"). A different public key means a different chain,
+with a new chain hash. Before rotating, confirm that the chain hash in `/info` is still
+`DRAND_CHAIN_HASH`. If it changed, this is a new chain; check that its genesis, period and
+scheme match (see the scope note below).
 
 > **Scope: key rotation for the *same* chain only. This is not a chain migration.**
 > `rotate_drand_pk()` replaces only the stored `DrandPK`. `DrandGenesis`, `DrandPeriod`, and the drand signature DST are fixed at `init()` or compiled into the contract. `DRAND_DST` is the quicknet `bls-unchained-g1-rfc9380` scheme (G1 signatures, unchained). The contract has no upgrade entrypoint. So you **can't** move an existing deployment to a drand chain with a different genesis time, period, or signature scheme by rotating the key. The pairing check would reject every beacon, or the round↔time mapping would be wrong. Switching chains means deploying and initializing a new contract instance and migrating consumers to it.
