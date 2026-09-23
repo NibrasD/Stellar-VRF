@@ -18,7 +18,13 @@ on mainnet.
 |---|---|---|
 | WASM Upload | `0b555662fcdf5083237b7ab337583cb9d8c8124deb4c1220a385745299702222` | [View](https://stellar.expert/explorer/public/tx/0b555662fcdf5083237b7ab337583cb9d8c8124deb4c1220a385745299702222) |
 | Contract Deploy | `348f0fde4ac4954f4ebed808b1bba9dbdbf2137cbb29156f69188fc69fad3af1` | [View](https://stellar.expert/explorer/public/tx/348f0fde4ac4954f4ebed808b1bba9dbdbf2137cbb29156f69188fc69fad3af1) |
-| Contract Init | `6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc` | [View](https://stellar.expert/explorer/public/tx/6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc) |
+| Contract Init (legacy WASM only) | `6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc` | [View](https://stellar.expert/explorer/public/tx/6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc) |
+
+> The current instance was configured by a separate `init()` call. The current
+> source has **no `init()`**. It is configured atomically by `__constructor` in
+> the deploy transaction (`mainnet_deploy.mjs` passes `constructorArgs` to
+> `createCustomContract`), so the next deployment has no init step. See
+> [RUNBOOK §1.3](RUNBOOK.md#13-deploy--configure-contract-testnet-one-step).
 | First request() | `0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3` | [View](https://stellar.expert/explorer/public/tx/0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3) |
 | First fulfill() | `f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf` | [View](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) |
 
@@ -121,6 +127,22 @@ The replica will:
 | `UNPAID_REQUESTER_ALLOWLIST` | No | — | Comma-separated requester addresses always served |
 | `FEE_GUARD_REDIS_KEY` | No | `vrf-oracle:unpaid-spend` | Spend-ledger key (used when `REDIS_URL` is set) |
 | `FEE_GUARD_STATE_FILE` | No | `$TMPDIR/vrf-oracle-unpaid-spend.json` | Spend-ledger file (used when `REDIS_URL` is empty; single host only) |
+| `MAX_FULFILL_INSTRUCTIONS` | No | `90000000` | **Resource guard.** A `fulfill()` whose simulation exceeds this CPU count is not signed or sent. A callback request includes the consumer's `on_vrf()`. The refusal is terminal: the request is parked |
+| `MAX_FULFILL_RESOURCE_FEE_STROOPS` | No | `5000000` | Resource guard: max simulated `minResourceFee` |
+| `MAX_FULFILL_TX_FEE_STROOPS` | No | `6000000` | Resource guard: max assembled envelope fee (inclusion + resource) |
+| `DRAND_GENESIS_TIME` / `DRAND_PERIOD` / `DRAND_PUBLIC_KEY` | No | quicknet | Must equal the contract's `DrandGenesis` / `DrandPeriod` / `DrandPK`. Checked at startup |
+| `SKIP_CHAIN_CONFIG_CHECK` | No | `false` | Skip the startup check that drand config, oracle BLS key and oracle address match the contract. **Refused** on Mainnet or with `NODE_ENV=production` |
+
+**Terminal vs. retryable failures.** A failure that no retry can change is
+**terminal**: the request is parked immediately, with no inner, outer or
+reconciliation retries. This covers contract panics such as `already fulfilled`,
+an invalid proof or a round mismatch, a callback that traps or exceeds resource
+limits, a resource-guard refusal, and `txInsufficientBalance` / `txBadAuth`.
+`already fulfilled` / `request refunded` count as *settled*: nothing is left to
+do. Transient failures (`txBadSeq`, insufficient fee, RPC/network errors,
+confirmation timeouts) keep the normal backoff, bounded by
+`MAX_SENDS_PER_REQUEST`. Terminal failures are counted per reason in the fee
+guard metrics (`terminalFailures`).
 
 Leader-election variables (`REDIS_URL`, `LEADER_LOCK_TTL_MS`, …) are listed in [HA_DEPLOYMENT.md](HA_DEPLOYMENT.md#environment-variables).
 
@@ -292,7 +314,7 @@ with a new chain hash. Before rotating, confirm that the chain hash in `/info` i
 scheme match (see the scope note below).
 
 > **Scope: key rotation for the *same* chain only. This is not a chain migration.**
-> `rotate_drand_pk()` replaces only the stored `DrandPK`. `DrandGenesis`, `DrandPeriod`, and the drand signature DST are fixed at `init()` or compiled into the contract. `DRAND_DST` is the quicknet `bls-unchained-g1-rfc9380` scheme (G1 signatures, unchained). The contract has no upgrade entrypoint. So you **can't** move an existing deployment to a drand chain with a different genesis time, period, or signature scheme by rotating the key. The pairing check would reject every beacon, or the round↔time mapping would be wrong. Switching chains means deploying and initializing a new contract instance and migrating consumers to it.
+> `rotate_drand_pk()` replaces only the stored `DrandPK`. `DrandGenesis`, `DrandPeriod`, and the drand signature DST are fixed at construction or compiled into the contract. `DRAND_DST` is the quicknet `bls-unchained-g1-rfc9380` scheme (G1 signatures, unchained). The contract has no upgrade entrypoint. So you **can't** move an existing deployment to a drand chain with a different genesis time, period, or signature scheme by rotating the key. The pairing check would reject every beacon, or the round↔time mapping would be wrong. Switching chains means deploying and initializing a new contract instance and migrating consumers to it.
 
 ```bash
 # Fetch new key from drand API
@@ -320,9 +342,12 @@ Soroban storage entries expire. The oracle worker extends TTLs during `fulfill()
 - **Instance storage** (contract state): extended on every `fulfill()`
 - **Request data**: extended to at least 100,000 ledgers (~5.7 days)
 - **Proof cleanup**: `cleanup_proof()` (callable by the requester **or the oracle**)
-  removes the proof, request context and callback metadata while retaining the
-  `Fulfilled` flag. After cleanup, `get_proof()` / `derive_random()` for that
-  request panic, so consumers must read or cache their result first.
+  removes the proof (~450 B), request context and callback metadata. It
+  **keeps** the `Fulfilled` flag and the 32-byte `Beta(id)` entry, so after
+  cleanup `get_beta()`, `derive_random()`, `derive_random_in_range()` and
+  `derive_range_for_domain()` still return the same values. Only `get_proof()`
+  panics. (Legacy Mainnet WASM: there is no separate `Beta` entry, so
+  `derive_*()` also panics after cleanup.)
 - **Nothing is permanent**: every persistent entry, including `Fulfilled`, is
   subject to Soroban TTL and is archived if not extended. Results are durably
   verifiable through the `fulfill` transaction and its events, which are
@@ -340,3 +365,6 @@ regularly.
 | "drand beacon not found" | drand round not yet available | Oracle retries automatically |
 | "Leader lock stale" | Primary crashed | Standby takes over automatically |
 | Worker starts but no events | No pending requests | Normal idle state |
+| "configuration does not match the deployed contract" at startup | Worker env (drand genesis/period/key, BLS key, oracle account) differs from contract storage, e.g. after `rotate_drand_pk()` | Fix the env to match the contract, which is authoritative |
+| "refusing fulfill(N): simulated CPU … exceeds MAX_FULFILL_INSTRUCTIONS" | The consumer's `on_vrf()` is too expensive | Request parked; the requester can `timeout_refund()`. Raise the bound only deliberately |
+| "parked after terminal failure (…)" | A deterministic failure; retrying cannot help | Check the reason; the request is not retried |

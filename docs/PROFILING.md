@@ -97,8 +97,15 @@ Breakdown by component:
 > The measured on-chain delta between nonzero-fee and zero-fee fulfillment is **268,603 instructions**,
 > tightly corroborating the 221,988 instructions measured in the isolated SAC transfer test.
 >
-> All execution paths remain comfortably below the **75M SCF requirement** (22.21% headroom) and far below
-> the **400M Soroban mainnet protocol limit** (85.41% headroom).
+> All **VRF-core** execution paths (no consumer callback) remain comfortably below the **75M SCF
+> requirement** (22.21% headroom) and far below the **400M Soroban mainnet protocol limit** (85.41% headroom).
+>
+> **Scope.** The 75M figure covers the VRF core: drand signature check, BLS-VRF verification,
+> Ed25519 check, storage writes and the fee transfer. A unit test holds it
+> (`test_budget_*`, asserting ≤ 75M). A `request_with_callback` fulfillment also runs the consumer's
+> `on_vrf()` in the same transaction. The contract can't bound that cost, so no 75M claim is made for
+> callback requests. Operationally the worker's resource guard (`MAX_FULFILL_INSTRUCTIONS`, default 90M,
+> plus resource-fee and max-fee bounds) refuses to sign any fulfillment whose simulation exceeds it.
 
 > **Testnet cross-check:** testnet TX [`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb)
 > measured 58,587,982 instructions — within 0.1% of mainnet, confirming consistency across networks.

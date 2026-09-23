@@ -5,6 +5,7 @@ use alloc::format;
 
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol};
 
+use crate::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3, TEST_G2_TIMES_5};
 use crate::{VRFOracleContract, VRFOracleContractClient};
 
 fn setup() -> (
@@ -14,33 +15,32 @@ fn setup() -> (
     BytesN<192>,
     BytesN<32>,
     BytesN<192>,
-    BytesN<192>,
 ) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     // fee_token = a dummy address; fee_amount = 0 (fee-free for unit tests)
     let fee_token = Address::generate(&env);
 
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &g2_generator,
-        &1_692_803_367u64,
-        &3u32,
-        &2u32,
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &1_692_803_367u64,
+            &3u32,
+            &2u32,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     (
         env,
@@ -49,7 +49,6 @@ fn setup() -> (
         oracle_pk,
         oracle_ed25519,
         drand_pk,
-        g2_generator,
     )
 }
 
@@ -57,21 +56,21 @@ fn setup() -> (
 
 #[test]
 fn test_init_stores_oracle_pk() {
-    let (_env, client, _addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (_env, client, _addr, oracle_pk, _ed, _drand_pk) = setup();
     let stored_pk = client.oracle_pk();
     assert_eq!(stored_pk, oracle_pk);
 }
 
 #[test]
 fn test_init_stores_oracle_address() {
-    let (_env, client, oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (_env, client, oracle_addr, _pk, _ed, _drand_pk) = setup();
     let stored_addr = client.oracle_address();
     assert_eq!(stored_addr, oracle_addr);
 }
 
 #[test]
 fn test_request_returns_incremented_ids() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let ctx1 = Bytes::from_slice(&env, b"ctx_one");
     let ctx2 = Bytes::from_slice(&env, b"ctx_two");
@@ -85,7 +84,7 @@ fn test_request_returns_incremented_ids() {
 
 #[test]
 fn test_request_is_initially_unfulfilled() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"test_context");
 
@@ -97,7 +96,7 @@ fn test_request_is_initially_unfulfilled() {
 
 #[test]
 fn test_request_locks_expected_round() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"round_lock_context");
 
@@ -110,14 +109,14 @@ fn test_request_locks_expected_round() {
 
 #[test]
 fn test_is_fulfilled_nonexistent_returns_false() {
-    let (_env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (_env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let result = client.is_fulfilled(&999u64);
     assert!(!result);
 }
 
 #[test]
 fn test_request_counter_sequential() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
 
     for expected_id in 1u64..=5 {
@@ -129,7 +128,7 @@ fn test_request_counter_sequential() {
 
 #[test]
 fn test_request_stores_requester() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"requester_context");
 
@@ -140,7 +139,7 @@ fn test_request_stores_requester() {
 
 #[test]
 fn test_request_with_callback_stores_callback() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let callback_contract = Address::generate(&env);
     let callback_fn = Symbol::new(&env, "on_vrf");
     let context = Bytes::from_slice(&env, b"callback_context");
@@ -157,7 +156,7 @@ fn test_request_with_callback_stores_callback() {
 #[test]
 #[should_panic(expected = "callback_contract must match requester")]
 fn test_request_with_callback_mismatched_requester_rejected() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let callback_contract = Address::generate(&env);
     let callback_fn = Symbol::new(&env, "on_vrf");
@@ -168,7 +167,7 @@ fn test_request_with_callback_mismatched_requester_rejected() {
 #[test]
 #[should_panic(expected = "context exceeds maximum length")]
 fn test_request_oversized_context_rejected() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let buf = [0u8; 1025];
     let context = Bytes::from_slice(&env, &buf);
@@ -177,7 +176,7 @@ fn test_request_oversized_context_rejected() {
 
 #[test]
 fn test_is_refunded_initially_false() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"refund_context");
 
@@ -187,7 +186,7 @@ fn test_is_refunded_initially_false() {
 
 #[test]
 fn test_timeout_rounds_constant() {
-    let (_env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (_env, client, _addr, _pk, _ed, _drand_pk) = setup();
     assert_eq!(client.timeout_rounds(), 20);
 }
 
@@ -196,28 +195,28 @@ fn test_timeout_rounds_constant() {
 fn test_init_rejects_zero_round_offset() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
 
     let fee_token = Address::generate(&env);
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &g2_generator,
-        &1_692_803_367u64,
-        &3u32,
-        &0u32,
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &1_692_803_367u64,
+            &3u32,
+            &0u32,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let _ = contract_id; // registration itself must panic
 }
 
 #[test]
@@ -225,28 +224,29 @@ fn test_init_rejects_zero_round_offset() {
 fn test_init_rejects_round_offset_one() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
 
     let fee_token = Address::generate(&env);
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &g2_generator,
-        &1_692_803_367u64,
-        &3u32,
-        &1u32, // Should fail: round_offset must be >= 2
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &1_692_803_367u64,
+            &3u32,
+            &1u32,
+            // Should fail: round_offset must be >= 2
+            &fee_token,
+            &0i128,
+        ),
     );
+    let _ = contract_id; // registration itself must panic
 }
 
 // ── Tranche 2: Failure scenario tests ────────────────────────────────────────
@@ -257,7 +257,7 @@ fn test_init_rejects_round_offset_one() {
 #[test]
 #[should_panic(expected = "already fulfilled")]
 fn test_fulfill_duplicate_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"dup_test");
     let id = client.request(&context, &requester);
@@ -285,7 +285,7 @@ fn test_fulfill_duplicate_rejected() {
 #[test]
 #[should_panic(expected = "drand round mismatch")]
 fn test_fulfill_wrong_round_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"round_mismatch");
     let id = client.request(&context, &requester);
@@ -307,7 +307,7 @@ fn test_fulfill_wrong_round_rejected() {
 #[test]
 #[should_panic(expected = "oracle key mismatch")]
 fn test_fulfill_wrong_pk_rejected() {
-    let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"pk_mismatch");
     let id = client.request(&context, &requester);
@@ -330,7 +330,7 @@ fn test_fulfill_wrong_pk_rejected() {
 #[test]
 #[should_panic(expected = "request not found")]
 fn test_fulfill_nonexistent_request_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
 
     let dummy_proof = crate::BlsVrfProof {
         alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
@@ -348,7 +348,7 @@ fn test_fulfill_nonexistent_request_rejected() {
 #[test]
 #[should_panic(expected = "timeout window not reached")]
 fn test_timeout_refund_before_window_rejected() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"too_early_refund");
     let id = client.request(&context, &requester);
@@ -361,7 +361,7 @@ fn test_timeout_refund_before_window_rejected() {
 #[test]
 #[should_panic(expected = "already fulfilled")]
 fn test_timeout_refund_after_fulfilled_rejected() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"fulfilled_refund");
     let id = client.request(&context, &requester);
@@ -379,7 +379,7 @@ fn test_timeout_refund_after_fulfilled_rejected() {
 #[test]
 #[should_panic(expected = "already refunded")]
 fn test_timeout_refund_double_rejected() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"double_refund");
     let id = client.request(&context, &requester);
@@ -397,7 +397,7 @@ fn test_timeout_refund_double_rejected() {
 #[test]
 #[should_panic(expected = "request not yet fulfilled")]
 fn test_cleanup_proof_unfulfilled_rejected() {
-    let (env, client, oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"cleanup_unfulfilled");
     let id = client.request(&context, &requester);
@@ -409,7 +409,7 @@ fn test_cleanup_proof_unfulfilled_rejected() {
 #[test]
 #[should_panic(expected = "only requester or oracle can cleanup")]
 fn test_cleanup_proof_unauthorized_rejected() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let attacker = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"cleanup_unauth");
@@ -428,7 +428,7 @@ fn test_cleanup_proof_unauthorized_rejected() {
 /// This validates the TTL edge case: Fulfilled flag is preserved after cleanup.
 #[test]
 fn test_cleanup_proof_retains_fulfilled_flag() {
-    let (env, client, oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"cleanup_ttl_test");
     let id = client.request(&context, &requester);
@@ -451,9 +451,9 @@ fn test_cleanup_proof_retains_fulfilled_flag() {
 /// rotate_oracle_keys() must update all three oracle key fields.
 #[test]
 fn test_rotate_oracle_keys() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
 
-    let new_pk = BytesN::from_array(&env, &[0xAA; 192]);
+    let new_pk = BytesN::from_array(&env, &TEST_G2_TIMES_5);
     let new_addr = Address::generate(&env);
     let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
 
@@ -466,9 +466,9 @@ fn test_rotate_oracle_keys() {
 /// rotate_drand_pk() must update the drand public key.
 #[test]
 fn test_rotate_drand_pk() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
 
-    let new_drand_pk = BytesN::from_array(&env, &[0xCC; 192]);
+    let new_drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_5);
     client.rotate_drand_pk(&new_drand_pk);
 
     // Verify by checking the oracle_pk() still reports correctly (drand PK is internal,
@@ -481,7 +481,7 @@ fn test_rotate_drand_pk() {
 /// Tests multiple max values to validate rejection sampling is bounded.
 #[test]
 fn test_derive_random_in_range_bounds() {
-    let (env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
 
     for i in 0u64..3 {
@@ -491,23 +491,13 @@ fn test_derive_random_in_range_bounds() {
         use crate::DataKey;
         env.as_contract(&client.address, || {
             env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-            // Store minimal proof for derive_random_in_range.
-            env.storage().persistent().set(
-                &DataKey::Proof(id),
-                &crate::BlsVrfProof {
-                    alpha_seed: BytesN::from_array(&env, &[i as u8 * 17; 32]),
-                    gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-                    beta_output: BytesN::from_array(&env, &[i as u8 * 31; 32]),
-                    public_key: BytesN::from_array(&env, &[0u8; 192]),
-                    drand_round: 2,
-                    drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-                },
-            );
+            // Seed the retained 32-byte beta used by derive_random_in_range.
+            env.storage()
+                .persistent()
+                .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[i as u8 * 31; 32]));
         });
-
-        let derive_ctx = Bytes::from_slice(&env, b"range_derive");
         let max: u64 = 100;
-        let result = client.derive_random_in_range(&id, &derive_ctx, &max);
+        let result = client.derive_random_in_range(&id, &max);
         assert!(result < max, "result {} must be < max {}", result, max);
     }
 }
@@ -521,14 +511,11 @@ fn test_derive_random_in_range_bounds() {
 fn test_oracle_downtime_timeout_refund_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
     // Use a genesis time in the past so time math works.
@@ -540,18 +527,21 @@ fn test_oracle_downtime_timeout_refund_succeeds() {
     let request_time: u64 = genesis + 100 * (period as u64); // round ~100
     env.ledger().set_timestamp(request_time);
 
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &g2_generator,
-        &genesis,
-        &period,
-        &round_offset,
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &genesis,
+            &period,
+            &round_offset,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"oracle_downtime_test");
@@ -648,8 +638,6 @@ fn test_reentancy_guard_blocks_during_callback() {
     env.mock_all_auths();
 
     // Deploy VRF contract
-    let vrf_id = env.register(VRFOracleContract, ());
-    let vrf_client = VRFOracleContractClient::new(&env, &vrf_id);
 
     // Deploy MaliciousConsumer contract
     let malicious_id = env.register(malicious_consumer::MaliciousConsumer, ());
@@ -658,19 +646,28 @@ fn test_reentancy_guard_blocks_during_callback() {
 
     // Configure
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_gen = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
     env.ledger().set_timestamp(1_000_000 + 300);
 
-    vrf_client.init(
-        &oracle_pk, &oracle_addr, &oracle_ed25519,
-        &drand_pk, &g2_gen, &1_000_000u64,
-        &3u32, &2u32, &fee_token, &0i128,
+    let vrf_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &1_000_000u64,
+            &3u32,
+            &2u32,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let vrf_client = VRFOracleContractClient::new(&env, &vrf_id);
 
     // MaliciousConsumer stores VRF address for re-entry attack
     malicious_client.init(&vrf_id);
@@ -739,7 +736,7 @@ fn test_reentancy_guard_blocks_during_callback() {
 /// adversarial modulus, which the old code could only satisfy by luck.
 #[test]
 fn test_derive_random_in_range_worst_case_modulus_no_bias_fallback() {
-    let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _pk0, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
 
     // Worst case for 64-bit rejection sampling: just above half the u64 space.
@@ -752,22 +749,11 @@ fn test_derive_random_in_range_worst_case_modulus_no_bias_fallback() {
         use crate::DataKey;
         env.as_contract(&client.address, || {
             env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-            env.storage().persistent().set(
-                &DataKey::Proof(id),
-                &crate::BlsVrfProof {
-                    alpha_seed: BytesN::from_array(&env, &[i.wrapping_mul(31); 32]),
-                    gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-                    // Vary beta so each iteration samples a different point.
-                    beta_output: BytesN::from_array(&env, &[i.wrapping_mul(97).wrapping_add(7); 32]),
-                    public_key: BytesN::from_array(&env, &[0u8; 192]),
-                    drand_round: 2,
-                    drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-                },
-            );
+            env.storage()
+                .persistent()
+                .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[i.wrapping_mul(97).wrapping_add(7); 32]));
         });
-
-        let derive_ctx = Bytes::from_slice(&env, b"bias_ctx");
-        let result = client.derive_random_in_range(&id, &derive_ctx, &max);
+        let result = client.derive_random_in_range(&id, &max);
         assert!(result < max, "result {} out of range for max {}", result, max);
     }
 }
@@ -777,7 +763,7 @@ fn test_derive_random_in_range_worst_case_modulus_no_bias_fallback() {
 /// guards against accidentally reintroducing nondeterminism.
 #[test]
 fn test_derive_random_in_range_is_deterministic() {
-    let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _pk0, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"determinism");
     let id = client.request(&context, &requester);
@@ -785,23 +771,13 @@ fn test_derive_random_in_range_is_deterministic() {
     use crate::DataKey;
     env.as_contract(&client.address, || {
         env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(
-            &DataKey::Proof(id),
-            &crate::BlsVrfProof {
-                alpha_seed: BytesN::from_array(&env, &[3u8; 32]),
-                gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-                beta_output: BytesN::from_array(&env, &[42u8; 32]),
-                public_key: BytesN::from_array(&env, &[0u8; 192]),
-                drand_round: 2,
-                drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-            },
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[42u8; 32]));
     });
-
-    let ctx = Bytes::from_slice(&env, b"same-ctx");
-    let a = client.derive_random_in_range(&id, &ctx, &100u64);
-    let b = client.derive_random_in_range(&id, &ctx, &100u64);
-    let c = client.derive_random_in_range(&id, &ctx, &100u64);
+    let a = client.derive_random_in_range(&id, &100u64);
+    let b = client.derive_random_in_range(&id, &100u64);
+    let c = client.derive_random_in_range(&id, &100u64);
     assert_eq!(a, b);
     assert_eq!(b, c);
 }
@@ -810,7 +786,7 @@ fn test_derive_random_in_range_is_deterministic() {
 /// powers of two (where modulo is exactly unbiased) and small primes.
 #[test]
 fn test_derive_random_in_range_worst_case_sampling() {
-    let (env, client, _pk0, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _pk0, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
 
     // Test with max values that stress rejection sampling:
@@ -826,21 +802,11 @@ fn test_derive_random_in_range_worst_case_sampling() {
         use crate::DataKey;
         env.as_contract(&client.address, || {
             env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-            env.storage().persistent().set(
-                &DataKey::Proof(id),
-                &crate::BlsVrfProof {
-                    alpha_seed: BytesN::from_array(&env, &[(i as u8).wrapping_mul(37); 32]),
-                    gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-                    beta_output: BytesN::from_array(&env, &[(i as u8).wrapping_mul(53); 32]),
-                    public_key: BytesN::from_array(&env, &[0u8; 192]),
-                    drand_round: 2,
-                    drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-                },
-            );
+            env.storage()
+                .persistent()
+                .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[(i as u8).wrapping_mul(53); 32]));
         });
-
-        let derive_ctx = Bytes::from_slice(&env, format!("worst_derive_{}", i).as_bytes());
-        let result = client.derive_random_in_range(&id, &derive_ctx, max);
+        let result = client.derive_random_in_range(&id, max);
         assert!(result < *max, "derive_random_in_range({}) returned {} >= {}", i, result, max);
     }
 }
@@ -853,7 +819,7 @@ fn test_derive_random_in_range_worst_case_sampling() {
 #[test]
 #[should_panic] // ed25519_verify panics on invalid signature
 fn test_fulfill_invalid_ed25519_signature() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"bad_ed25519_sig");
     let id = client.request(&context, &requester);
@@ -893,11 +859,9 @@ fn test_fulfill_invalid_drand_bls_signature() {
     let verifying_key = signing_key.verifying_key();
     let ed25519_pk_bytes: [u8; 32] = verifying_key.to_bytes();
 
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &ed25519_pk_bytes);
     // Use the REAL G1 generator and a valid-format G2 key for drand so that
     // Bls12381G1Affine::from_bytes doesn't panic on point decoding.
@@ -912,46 +876,29 @@ fn test_fulfill_invalid_drand_bls_signature() {
         0x00, 0xdb, 0x18, 0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44,
         0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa, 0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
     ];
-    // Use the G2 generator as drand_pk too — it IS a valid G2 point
-    // (so from_bytes won't panic during deserialization), but since the
-    // drand_signature is not a real BLS sig for this round under this key,
-    // verify_drand_signature's pairing check will return false.
-    // (drand_pk == g2_generator here is fine; verify_drand_signature checks
-    //  e(sig, g2_gen) == e(H(round), drand_pk), which won't hold for a
-    //  random G1 point as signature.)
-    let g2_generator: [u8; 192] = [
-        0x13, 0xe0, 0x2b, 0x60, 0x52, 0x71, 0x9f, 0x60, 0x7d, 0xac, 0xd3, 0xa0,
-        0x88, 0x27, 0x4f, 0x65, 0x59, 0x6b, 0xd0, 0xd0, 0x99, 0x20, 0xb6, 0x1a,
-        0xb5, 0xda, 0x61, 0xbb, 0xdc, 0x7f, 0x50, 0x49, 0x33, 0x4c, 0xf1, 0x12,
-        0x13, 0x94, 0x5d, 0x57, 0xe5, 0xac, 0x7d, 0x05, 0x5d, 0x04, 0x2b, 0x7e,
-        0x02, 0x4a, 0xa2, 0xb2, 0xf0, 0x8f, 0x0a, 0x91, 0x26, 0x08, 0x05, 0x27,
-        0x2d, 0xc5, 0x10, 0x51, 0xc6, 0xe4, 0x7a, 0xd4, 0xfa, 0x40, 0x3b, 0x02,
-        0xb4, 0x51, 0x0b, 0x64, 0x7a, 0xe3, 0xd1, 0x77, 0x0b, 0xac, 0x03, 0x26,
-        0xa8, 0x05, 0xbb, 0xef, 0xd4, 0x80, 0x56, 0xc8, 0xc1, 0x21, 0xbd, 0xb8,
-        0x06, 0x06, 0xc4, 0xa0, 0x2e, 0xa7, 0x34, 0xcc, 0x32, 0xac, 0xd2, 0xb0,
-        0x2b, 0xc2, 0x8b, 0x99, 0xcb, 0x3e, 0x28, 0x7e, 0x85, 0xa7, 0x63, 0xaf,
-        0x26, 0x74, 0x92, 0xab, 0x57, 0x2e, 0x99, 0xab, 0x3f, 0x37, 0x0d, 0x27,
-        0x5c, 0xec, 0x1d, 0xa1, 0xaa, 0xa9, 0x07, 0x5f, 0xf0, 0x5f, 0x79, 0xbe,
-        0x0c, 0xe5, 0xd5, 0x27, 0x72, 0x7d, 0x6e, 0x11, 0x8c, 0xc9, 0xcd, 0xc6,
-        0xda, 0x2e, 0x35, 0x1a, 0xad, 0xfd, 0x9b, 0xaa, 0x8c, 0xbd, 0xd3, 0xa7,
-        0x6d, 0x42, 0x9a, 0x69, 0x51, 0x60, 0xd1, 0x2c, 0x92, 0x3a, 0xc9, 0xcc,
-        0x3b, 0xac, 0xa2, 0x89, 0xe1, 0x93, 0x54, 0x86, 0x08, 0xb8, 0x28, 0x01,
-    ];
-    let drand_pk = BytesN::from_array(&env, &g2_generator);
+    // drand_pk must be a VALID G2 subgroup point (the constructor rejects
+    // anything else, including the generator itself). 3·G2 is valid, but the
+    // G1 generator below is not a BLS signature of this round under it, so
+    // verify_drand_signature's pairing check returns false:
+    //   e(sig, G2) != e(H(round), drand_pk).
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &BytesN::from_array(&env, &g2_generator),
-        &1_692_803_367u64,
-        &3u32,
-        &2u32,
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &1_692_803_367u64,
+            &3u32,
+            &2u32,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"bls_sig_test");
@@ -999,14 +946,11 @@ fn test_fulfill_invalid_drand_bls_signature() {
 fn test_fulfill_delayed_drand_round_rejected() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
     let genesis: u64 = 1_000_000;
@@ -1016,11 +960,21 @@ fn test_fulfill_delayed_drand_round_rejected() {
     // Request at round ~100
     env.ledger().set_timestamp(genesis + 100 * (period as u64));
 
-    client.init(
-        &oracle_pk, &oracle_addr, &oracle_ed25519,
-        &drand_pk, &g2_generator, &genesis,
-        &period, &round_offset, &fee_token, &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &genesis,
+            &period,
+            &round_offset,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"delayed_drand");
@@ -1064,14 +1018,11 @@ fn test_timeout_refund_with_nonzero_fee() {
     let token = TokenClient::new(&env, &fee_token_addr);
 
     // Deploy VRF contract.
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
 
     let genesis: u64 = 1_000_000;
     let period: u32 = 3;
@@ -1080,11 +1031,21 @@ fn test_timeout_refund_with_nonzero_fee() {
 
     env.ledger().set_timestamp(genesis + 100 * (period as u64));
 
-    client.init(
-        &oracle_pk, &oracle_addr, &oracle_ed25519,
-        &drand_pk, &g2_generator, &genesis,
-        &period, &round_offset, &fee_token_addr, &fee_amount,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &genesis,
+            &period,
+            &round_offset,
+            &fee_token_addr,
+            &fee_amount,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     // Mint tokens to the requester.
     let requester = Address::generate(&env);
@@ -1141,7 +1102,7 @@ fn test_timeout_refund_with_nonzero_fee() {
 
 #[test]
 fn test_property_empty_context_allowed() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let empty_context = Bytes::new(&env);
     let id = client.request(&empty_context, &requester);
@@ -1151,7 +1112,7 @@ fn test_property_empty_context_allowed() {
 
 #[test]
 fn test_property_exact_max_context_boundary_allowed() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let buf = [0x5Au8; 1024]; // Exactly MAX_CONTEXT_LEN
     let max_context = Bytes::from_slice(&env, &buf);
@@ -1162,7 +1123,7 @@ fn test_property_exact_max_context_boundary_allowed() {
 #[test]
 #[should_panic(expected = "context exceeds maximum length")]
 fn test_property_fuzz_oversized_context_rejected() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let buf = [0xFFu8; 1025]; // 1024 + 1
     let oversized = Bytes::from_slice(&env, &buf);
@@ -1171,7 +1132,7 @@ fn test_property_fuzz_oversized_context_rejected() {
 
 #[test]
 fn test_property_arbitrary_binary_contexts_fuzz() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
 
     // Fuzz test various pseudo-random byte patterns (null bytes, high bytes, all 0xFF)
@@ -1197,7 +1158,7 @@ fn test_property_arbitrary_binary_contexts_fuzz() {
 #[test]
 #[should_panic]
 fn test_property_tampered_alpha_seed_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _oracle_ed25519, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _oracle_ed25519, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"alpha_tamper_test");
     let id = client.request(&context, &requester);
@@ -1223,7 +1184,7 @@ fn test_property_tampered_alpha_seed_rejected() {
 #[test]
 #[should_panic(expected = "fulfill already in progress")]
 fn test_property_fulfilling_guard_blocks_concurrent_fulfill() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"in_progress_guard_test");
     let id = client.request(&context, &requester);
@@ -1251,7 +1212,7 @@ fn test_property_fulfilling_guard_blocks_concurrent_fulfill() {
 #[test]
 #[should_panic(expected = "request refunded")]
 fn test_property_fulfill_after_timeout_refund_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"refund_replay_test");
     let id = client.request(&context, &requester);
@@ -1279,7 +1240,7 @@ fn test_property_fulfill_after_timeout_refund_rejected() {
 #[test]
 #[should_panic(expected = "request not found")]
 fn test_property_fulfill_request_id_zero_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let dummy_proof = crate::BlsVrfProof {
         alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
         gamma_point: BytesN::from_array(&env, &[0u8; 96]),
@@ -1295,7 +1256,7 @@ fn test_property_fulfill_request_id_zero_rejected() {
 #[test]
 #[should_panic(expected = "request not found")]
 fn test_property_fulfill_request_id_max_rejected() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let dummy_proof = crate::BlsVrfProof {
         alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
         gamma_point: BytesN::from_array(&env, &[0u8; 96]),
@@ -1311,14 +1272,14 @@ fn test_property_fulfill_request_id_max_rejected() {
 #[test]
 #[should_panic(expected = "request not found")]
 fn test_property_timeout_refund_request_id_zero_rejected() {
-    let (_env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (_env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     client.timeout_refund(&0u64);
 }
 
 #[test]
 #[should_panic(expected = "request not found")]
 fn test_property_timeout_refund_request_id_max_rejected() {
-    let (_env, client, _oracle_addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (_env, client, _oracle_addr, _pk, _ed, _drand_pk) = setup();
     client.timeout_refund(&u64::MAX);
 }
 
@@ -1329,14 +1290,11 @@ fn test_property_timeout_refund_request_id_max_rejected() {
 fn test_property_timeout_refund_exact_window_boundary_rejected() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
     let genesis: u64 = 1_000_000;
@@ -1345,11 +1303,21 @@ fn test_property_timeout_refund_exact_window_boundary_rejected() {
 
     env.ledger().set_timestamp(genesis + 100 * (period as u64));
 
-    client.init(
-        &oracle_pk, &oracle_addr, &oracle_ed25519,
-        &drand_pk, &g2_generator, &genesis,
-        &period, &round_offset, &fee_token, &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &genesis,
+            &period,
+            &round_offset,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"exact_timeout_boundary");
@@ -1369,7 +1337,7 @@ fn test_property_timeout_refund_exact_window_boundary_rejected() {
 
 #[test]
 fn test_property_derive_random_in_range_boundary_max_one() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"max_one_boundary");
     let id = client.request(&context, &requester);
@@ -1377,27 +1345,19 @@ fn test_property_derive_random_in_range_boundary_max_one() {
     use crate::DataKey;
     env.as_contract(&client.address, || {
         env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(
-            &DataKey::Proof(id),
-            &crate::BlsVrfProof {
-                alpha_seed: BytesN::from_array(&env, &[0x12; 32]),
-                gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-                beta_output: BytesN::from_array(&env, &[0x34; 32]),
-                public_key: BytesN::from_array(&env, &[0u8; 192]),
-                drand_round: 2,
-                drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-            },
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[0x34; 32]));
     });
 
     // max = 1: the only valid result in [0, 1) is 0
-    let result = client.derive_random_in_range(&id, &context, &1u64);
+    let result = client.derive_random_in_range(&id, &1u64);
     assert_eq!(result, 0);
 }
 
 #[test]
 fn test_property_derive_random_in_range_fuzz_various_ranges() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"fuzz_ranges");
     let id = client.request(&context, &requester);
@@ -1405,22 +1365,14 @@ fn test_property_derive_random_in_range_fuzz_various_ranges() {
     use crate::DataKey;
     env.as_contract(&client.address, || {
         env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(
-            &DataKey::Proof(id),
-            &crate::BlsVrfProof {
-                alpha_seed: BytesN::from_array(&env, &[0xAA; 32]),
-                gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-                beta_output: BytesN::from_array(&env, &[0x55; 32]),
-                public_key: BytesN::from_array(&env, &[0u8; 192]),
-                drand_round: 2,
-                drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-            },
-        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[0x55; 32]));
     });
 
     let test_ranges: [u64; 8] = [1, 2, 3, 10, 100, 1_000, 1_000_000, u64::MAX];
     for range in test_ranges {
-        let res = client.derive_random_in_range(&id, &context, &range);
+        let res = client.derive_random_in_range(&id, &range);
         assert!(res < range, "derive_random_in_range result {} must be < {}", res, range);
     }
 }
@@ -1434,14 +1386,14 @@ fn test_property_derive_random_in_range_fuzz_various_ranges() {
 #[test]
 #[should_panic(expected = "oracle key mismatch")]
 fn test_rotate_keys_old_oracle_cannot_fulfill_pending_request() {
-    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"pre_rotation_request");
     let id = client.request(&context, &requester);
     let required_round = client.request_round(&id);
 
     // Rotate to new oracle keys
-    let new_pk = BytesN::from_array(&env, &[0xAA; 192]);
+    let new_pk = BytesN::from_array(&env, &TEST_G2_TIMES_5);
     let new_addr = Address::generate(&env);
     let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
     client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
@@ -1483,14 +1435,14 @@ fn test_rotate_keys_old_oracle_cannot_fulfill_pending_request() {
 #[test]
 #[should_panic(expected = "drand round mismatch")]
 fn test_rotate_keys_new_oracle_passes_key_check_for_pending_request() {
-    let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _oracle_addr, _oracle_pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let context = Bytes::from_slice(&env, b"pre_rotation_request_v2");
     let id = client.request(&context, &requester);
     let required_round = client.request_round(&id);
 
     // Rotate to new oracle keys
-    let new_pk = BytesN::from_array(&env, &[0xAA; 192]);
+    let new_pk = BytesN::from_array(&env, &TEST_G2_TIMES_5);
     let new_addr = Address::generate(&env);
     let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
     client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
@@ -1541,31 +1493,30 @@ fn test_rotate_keys_new_oracle_successfully_fulfills_pending_request() {
     let period = 3u32;
     let round_offset = 2u32;
 
-    // Drand quicknet PK and G2 generator
+    // drand quicknet PK
     let drand_pk_bytes: [u8; 192] = FIX_DRAND_PK;
-    let g2_gen_bytes: [u8; 192] = FIX_G2_GEN;
 
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
-
-    // 1. OLD oracle keys (initialized with arbitrary G2 key)
-    let old_oracle_pk = BytesN::from_array(&env, &g2_gen_bytes);
+    // 1. OLD oracle keys (a valid but different G2 key: 2·G2)
+    let old_oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let old_oracle_addr = Address::generate(&env);
     let old_oracle_ed = BytesN::from_array(&env, &[0x55; 32]);
     let fee_token = Address::generate(&env);
 
-    client.init(
-        &old_oracle_pk,
-        &old_oracle_addr,
-        &old_oracle_ed,
-        &BytesN::from_array(&env, &drand_pk_bytes),
-        &BytesN::from_array(&env, &g2_gen_bytes),
-        &genesis,
-        &period,
-        &round_offset,
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &old_oracle_pk,
+            &old_oracle_addr,
+            &old_oracle_ed,
+            &BytesN::from_array(&env, &drand_pk_bytes),
+            &genesis,
+            &period,
+            &round_offset,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     // Set ledger timestamp so compute_required_round matches the target round 32427720:
     let target_round = 32427720u64;
@@ -1609,6 +1560,7 @@ fn test_rotate_keys_new_oracle_successfully_fulfills_pending_request() {
     // 4. Verify post-conditions
     assert!(client.is_fulfilled(&id), "request must be fulfilled");
     assert_eq!(client.get_proof(&id).beta_output, BytesN::from_array(&env, &PROOF_BETA), "randomness output must match");
+    assert_eq!(client.get_beta(&id), BytesN::from_array(&env, &PROOF_BETA), "beta stored separately");
 }
 
 // ── Fix 3: Budget measurement tests ───────────────────────────────────────────
@@ -1836,28 +1788,28 @@ fn test_cross_request_replay_rejected() {
     let verifying_key = signing_key.verifying_key();
     let ed25519_pk_bytes: [u8; 32] = verifying_key.to_bytes();
 
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &ed25519_pk_bytes);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &g2_generator,
-        &1_692_803_367u64,
-        &3u32,
-        &2u32,
-        &fee_token,
-        &0i128,
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &1_692_803_367u64,
+            &3u32,
+            &2u32,
+            &fee_token,
+            &0i128,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let requester = Address::generate(&env);
     let id_a = client.request(&Bytes::from_slice(&env, b"ctx_a"), &requester);
@@ -1894,7 +1846,7 @@ fn test_cross_request_replay_rejected() {
 /// request IDs even when the request context, drand round, and drand signature are 100% identical.
 #[test]
 fn test_alpha_seed_unique_per_request() {
-    let (env, client, _addr, _pk, _ed, _drand_pk, _g2_gen) = setup();
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
     let requester = Address::generate(&env);
     let id_a = client.request(&Bytes::from_slice(&env, b"context_identical"), &requester);
     let id_b = client.request(&Bytes::from_slice(&env, b"context_identical"), &requester);
@@ -2043,22 +1995,23 @@ fn setup_fixture_callback_request(
     let fee_amount: i128 = 5_000_000;
     StellarAssetClient::new(env, &fee_token_addr).mint(consumer, &(fee_amount * 2));
 
-    let vrf_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(env, &vrf_id);
     let oracle_addr = Address::generate(env);
     let oracle_pk = BytesN::from_array(env, &PROOF_ORACLE_PK);
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &BytesN::from_array(env, &ORACLE_ED25519_PK),
-        &BytesN::from_array(env, &FIX_DRAND_PK),
-        &BytesN::from_array(env, &FIX_G2_GEN),
-        &FIX_GENESIS,
-        &FIX_PERIOD,
-        &FIX_ROUND_OFFSET,
-        &fee_token_addr,
-        &fee_amount,
+    let vrf_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &BytesN::from_array(env, &ORACLE_ED25519_PK),
+            &BytesN::from_array(env, &FIX_DRAND_PK),
+            &FIX_GENESIS,
+            &FIX_PERIOD,
+            &FIX_ROUND_OFFSET,
+            &fee_token_addr,
+            &fee_amount,
+        ),
     );
+    let client = VRFOracleContractClient::new(env, &vrf_id);
 
     let target_ts =
         FIX_GENESIS + (FIX_TARGET_ROUND - FIX_ROUND_OFFSET as u64) * FIX_PERIOD as u64;
@@ -2159,20 +2112,6 @@ const FIX_DRAND_PK: [u8; 192] = [
         0x6c, 0x24, 0xf3, 0x01, 0x2b, 0xa0, 0x9f, 0xc4, 0xd3, 0x02, 0x2c, 0x5c, 0x37, 0xdc, 0xe0, 0xf9,
         0x77, 0xd3, 0xad, 0xb5, 0xd1, 0x83, 0xc7, 0x47, 0x7c, 0x44, 0x2b, 0x1f, 0x04, 0x51, 0x52, 0x73,
 ];
-const FIX_G2_GEN: [u8; 192] = [
-        0x13, 0xe0, 0x2b, 0x60, 0x52, 0x71, 0x9f, 0x60, 0x7d, 0xac, 0xd3, 0xa0, 0x88, 0x27, 0x4f, 0x65,
-        0x59, 0x6b, 0xd0, 0xd0, 0x99, 0x20, 0xb6, 0x1a, 0xb5, 0xda, 0x61, 0xbb, 0xdc, 0x7f, 0x50, 0x49,
-        0x33, 0x4c, 0xf1, 0x12, 0x13, 0x94, 0x5d, 0x57, 0xe5, 0xac, 0x7d, 0x05, 0x5d, 0x04, 0x2b, 0x7e,
-        0x02, 0x4a, 0xa2, 0xb2, 0xf0, 0x8f, 0x0a, 0x91, 0x26, 0x08, 0x05, 0x27, 0x2d, 0xc5, 0x10, 0x51,
-        0xc6, 0xe4, 0x7a, 0xd4, 0xfa, 0x40, 0x3b, 0x02, 0xb4, 0x51, 0x0b, 0x64, 0x7a, 0xe3, 0xd1, 0x77,
-        0x0b, 0xac, 0x03, 0x26, 0xa8, 0x05, 0xbb, 0xef, 0xd4, 0x80, 0x56, 0xc8, 0xc1, 0x21, 0xbd, 0xb8,
-        0x06, 0x06, 0xc4, 0xa0, 0x2e, 0xa7, 0x34, 0xcc, 0x32, 0xac, 0xd2, 0xb0, 0x2b, 0xc2, 0x8b, 0x99,
-        0xcb, 0x3e, 0x28, 0x7e, 0x85, 0xa7, 0x63, 0xaf, 0x26, 0x74, 0x92, 0xab, 0x57, 0x2e, 0x99, 0xab,
-        0x3f, 0x37, 0x0d, 0x27, 0x5c, 0xec, 0x1d, 0xa1, 0xaa, 0xa9, 0x07, 0x5f, 0xf0, 0x5f, 0x79, 0xbe,
-        0x0c, 0xe5, 0xd5, 0x27, 0x72, 0x7d, 0x6e, 0x11, 0x8c, 0xc9, 0xcd, 0xc6, 0xda, 0x2e, 0x35, 0x1a,
-        0xad, 0xfd, 0x9b, 0xaa, 0x8c, 0xbd, 0xd3, 0xa7, 0x6d, 0x42, 0x9a, 0x69, 0x51, 0x60, 0xd1, 0x2c,
-        0x92, 0x3a, 0xc9, 0xcc, 0x3b, 0xac, 0xa2, 0x89, 0xe1, 0x93, 0x54, 0x86, 0x08, 0xb8, 0x28, 0x01,
-];
 const PROOF_ALPHA: [u8; 32] = [0x58, 0x34, 0xb6, 0x43, 0xd1, 0x19, 0x9c, 0x0b, 0xe5, 0x61, 0x09, 0x97, 0xe5, 0x29, 0x77, 0x08, 0x22, 0x24, 0xde, 0x28, 0xbb, 0x28, 0x5d, 0x23, 0x84, 0x46, 0x13, 0x61, 0xb4, 0x10, 0xc6, 0x22];
 const PROOF_GAMMA: [u8; 96] = [0x17, 0x9c, 0xb0, 0xc3, 0x90, 0xd0, 0x79, 0x7e, 0x1d, 0x23, 0x54, 0xd2, 0xb8, 0xdc, 0xc5, 0x3d, 0x9d, 0xad, 0xab, 0x50, 0xd1, 0x15, 0xaf, 0x06, 0xa0, 0xf8, 0xdb, 0xa0, 0xc0, 0x0e, 0xe2, 0x4a, 0x0e, 0xc2, 0xa0, 0x93, 0xda, 0x21, 0x52, 0xb2, 0xa1, 0x95, 0x6d, 0x40, 0xfe, 0x42, 0xbe, 0x80, 0x05, 0xab, 0x4c, 0x58, 0x56, 0xe8, 0x8b, 0x20, 0x8a, 0xfd, 0x8a, 0x74, 0x3f, 0x8e, 0xff, 0xc0, 0x19, 0xba, 0x09, 0x7b, 0x3f, 0xdb, 0x46, 0x8c, 0x1f, 0x89, 0xc4, 0x2b, 0x86, 0xec, 0x89, 0x9c, 0x9e, 0xc3, 0x9d, 0x63, 0x8c, 0xec, 0x8b, 0xf8, 0xe2, 0x8b, 0x10, 0x01, 0x42, 0xf9, 0x47, 0x66];
 const PROOF_BETA: [u8; 32] = [0x98, 0xc6, 0x12, 0xab, 0xed, 0x13, 0x16, 0x31, 0x47, 0x23, 0x9f, 0x43, 0x23, 0xd4, 0x97, 0x3c, 0xb6, 0x8d, 0xf7, 0x30, 0x25, 0x64, 0xfc, 0x79, 0x1e, 0x17, 0xc1, 0xaa, 0xe9, 0x5a, 0x6c, 0x9d];
@@ -2180,3 +2119,444 @@ const PROOF_DRAND_SIG: [u8; 96] = [0x04, 0xd8, 0x55, 0xb2, 0xde, 0x9c, 0x5c, 0x2
 const PROOF_ORACLE_PK: [u8; 192] = [0x0e, 0xb7, 0xe2, 0xdd, 0xf2, 0x81, 0xbd, 0x96, 0xd8, 0x19, 0x88, 0xe1, 0xed, 0x03, 0x18, 0xc7, 0xd4, 0x81, 0xf4, 0x79, 0x04, 0x8a, 0xf7, 0xab, 0x03, 0x85, 0x57, 0x50, 0x8c, 0x6a, 0x04, 0x68, 0xec, 0x17, 0x4a, 0x22, 0x7e, 0x93, 0xde, 0xed, 0x4a, 0xa9, 0xd4, 0x8f, 0x22, 0xe0, 0x07, 0x54, 0x16, 0x4a, 0xc0, 0x2f, 0xa3, 0x93, 0x7a, 0x68, 0xd4, 0x16, 0x2d, 0x01, 0x59, 0x58, 0x13, 0x94, 0x18, 0x85, 0x3e, 0x47, 0x05, 0xc8, 0x43, 0x30, 0x56, 0x86, 0xd8, 0x01, 0x7c, 0x7d, 0x5a, 0x8c, 0xc6, 0x15, 0x79, 0x97, 0x3f, 0x9d, 0xdc, 0x5b, 0x5d, 0x1d, 0x58, 0x30, 0x7e, 0xc5, 0x55, 0x66, 0x0f, 0x71, 0xeb, 0x42, 0x29, 0x73, 0x19, 0xaa, 0x7e, 0x2b, 0x8b, 0x45, 0xad, 0x45, 0xfb, 0xa9, 0x33, 0xdd, 0x5e, 0x9b, 0x24, 0x53, 0xf8, 0x07, 0x55, 0xb3, 0x75, 0xf2, 0x6f, 0x9a, 0x87, 0xc5, 0xef, 0x3f, 0x8e, 0x11, 0xc6, 0x71, 0x11, 0x03, 0x78, 0x9d, 0x9c, 0xc4, 0x46, 0x41, 0xe1, 0x11, 0x00, 0x38, 0x27, 0x2b, 0x39, 0xaa, 0xfb, 0x99, 0x7f, 0x3e, 0xb0, 0x7e, 0xf4, 0x94, 0x36, 0x0e, 0xfe, 0xb3, 0x4f, 0x4e, 0x1c, 0x2b, 0xdd, 0x93, 0x76, 0x36, 0xba, 0xcb, 0x5d, 0x01, 0x9a, 0xae, 0xe6, 0xff, 0x75, 0xf4, 0xc1, 0x6b, 0x3b, 0xd2, 0x81, 0x4e, 0x13, 0x11, 0xf6, 0xc3, 0x38, 0x3d];
 const PROOF_ED25519_SIG: [u8; 64] = [0xd7, 0x5e, 0x64, 0x96, 0xd3, 0x24, 0x61, 0xe4, 0xc0, 0x8a, 0x22, 0xce, 0x29, 0xb4, 0x4b, 0xfe, 0x37, 0x45, 0x44, 0x28, 0xf7, 0x28, 0x17, 0xeb, 0xbe, 0x9e, 0xf0, 0xcd, 0xfa, 0x1a, 0x3d, 0x4d, 0x65, 0xcc, 0x4a, 0xa8, 0x0d, 0x90, 0x88, 0x75, 0x5f, 0x52, 0x00, 0x2c, 0x8d, 0x28, 0x0e, 0x24, 0xdd, 0xff, 0x80, 0x65, 0xf3, 0xe8, 0x9b, 0xc7, 0x43, 0x13, 0x76, 0xb2, 0x3f, 0xd3, 0x19, 0x0a];
 const ORACLE_ED25519_PK: [u8; 32] = [0x3c, 0x7c, 0x02, 0xb6, 0x7d, 0x5d, 0x50, 0xf2, 0xe9, 0x39, 0xa9, 0x99, 0x0c, 0xf1, 0xae, 0x1c, 0xa5, 0xbe, 0x9c, 0x48, 0x0f, 0x87, 0xdf, 0x31, 0x92, 0x6c, 0xed, 0x3d, 0x9c, 0x3c, 0x84, 0xd5];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Audit round 5
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Mark `id` fulfilled and seed its retained beta directly in storage.
+fn seed_beta(env: &Env, client: &VRFOracleContractClient<'static>, id: u64, beta: [u8; 32]) {
+    use crate::DataKey;
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Beta(id), &BytesN::from_array(env, &beta));
+    });
+}
+
+/// `2^128 mod max`, computed independently of `reduce_uniform()`.
+fn pow128_mod(max: u64) -> u128 {
+    0u128.wrapping_sub(max as u128) % (max as u128)
+}
+
+fn hash_from_halves(c1: u128, c2: u128) -> [u8; 32] {
+    let mut h = [0u8; 32];
+    h[..16].copy_from_slice(&c1.to_be_bytes());
+    h[16..].copy_from_slice(&c2.to_be_bytes());
+    h
+}
+
+// ── #2: exact-uniform range derivation ────────────────────────────────────────
+
+#[test]
+fn test_reduce_uniform_uses_first_candidate_when_accepted() {
+    let max = 1_000_003u64;
+    let h = hash_from_halves(123_456_789, 42);
+    assert_eq!(crate::reduce_uniform(&h, max), (123_456_789u128 % max as u128) as u64);
+}
+
+#[test]
+fn test_reduce_uniform_falls_back_to_second_candidate() {
+    let max = (1u64 << 63) + 1;
+    assert!(pow128_mod(max) > 0);
+    let h = hash_from_halves(u128::MAX, 7);
+    assert_eq!(crate::reduce_uniform(&h, max), 7);
+}
+
+/// `limit - 1` is accepted; `limit` is rejected.
+#[test]
+fn test_reduce_uniform_limit_boundary() {
+    let max = 3u64; // 2^128 mod 3 == 1  =>  limit = 2^128 - 1 = u128::MAX
+    let rem = pow128_mod(max);
+    assert_eq!(rem, 1);
+    let last_accepted = u128::MAX - rem;
+    let h = hash_from_halves(last_accepted, 0);
+    assert_eq!(crate::reduce_uniform(&h, max), (last_accepted % 3) as u64);
+    let h = hash_from_halves(u128::MAX, 5);
+    assert_eq!(crate::reduce_uniform(&h, max), 2, "limit rejected, second half used");
+}
+
+#[test]
+#[should_panic(expected = "range derivation failed: both candidates rejected")]
+fn test_reduce_uniform_both_rejected_panics() {
+    let h = hash_from_halves(u128::MAX, u128::MAX);
+    crate::reduce_uniform(&h, (1u64 << 63) + 1);
+}
+
+/// Powers of two divide 2^128, so nothing is ever rejected.
+#[test]
+fn test_reduce_uniform_power_of_two_never_rejects() {
+    for shift in [1u32, 7, 32, 63] {
+        let max = 1u64 << shift;
+        assert_eq!(pow128_mod(max), 0);
+        let h = hash_from_halves(u128::MAX, u128::MAX);
+        assert_eq!(crate::reduce_uniform(&h, max), (u128::MAX % max as u128) as u64);
+    }
+}
+
+/// Exhaustive uniformity check on a scaled-down model of the same algorithm
+/// (8-bit candidates instead of 128-bit): every residue has exactly the same
+/// number of accepted preimages, i.e. zero bias.
+#[test]
+fn test_reduce_uniform_model_is_exactly_uniform() {
+    for max in 2u32..=97 {
+        let rem = 256 % max;
+        let limit = 256 - rem;
+        let mut counts = alloc::vec![0u32; max as usize];
+        for c in 0..limit {
+            counts[(c % max) as usize] += 1;
+        }
+        assert!(counts.iter().all(|&n| n == counts[0]), "bias for max={}", max);
+        assert_eq!(limit % max, 0);
+    }
+    // And the full-width limit is a whole number of cycles.
+    for max in [3u64, 6, 7, 10, 1_000_000, (1 << 63) + 1, u64::MAX] {
+        let rem = pow128_mod(max);
+        assert_eq!((u128::MAX - rem).wrapping_add(1) % (max as u128), 0);
+    }
+}
+
+#[test]
+fn test_derive_random_in_range_many_moduli_in_range() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"moduli"), &requester);
+    seed_beta(&env, &client, id, [0x5Au8; 32]);
+    for max in [1u64, 2, 3, 5, 6, 7, 10, 100, 1 << 32, (1 << 63) + 1, u64::MAX - 1, u64::MAX] {
+        let v = client.derive_random_in_range(&id, &max);
+        assert!(v < max, "{} >= {}", v, max);
+    }
+}
+
+/// Cross-implementation vectors (beta = 0x00..0x1f, request_id = 7). The same
+/// numbers are asserted by the Rust SDK, the JS SDK and the consumer example,
+/// and were computed independently with Node's crypto module.
+pub(crate) const VEC_REQUEST_ID: u64 = 7;
+pub(crate) const VEC_U64: u64 = 17_155_214_937_666_214_782;
+pub(crate) const VEC_RANGE: [(u64, u64); 3] =
+    [(6, 4), (1_000_000, 889_164), (u64::MAX, 11_798_261_183_955_500_607)];
+pub(crate) const VEC_DOMAIN_CARD1_1000: u64 = 595;
+
+#[test]
+fn test_derive_vectors_shared_with_sdks() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let mut id = 0;
+    while id < VEC_REQUEST_ID {
+        id = client.request(&Bytes::from_slice(&env, b"vec"), &requester);
+    }
+    let mut beta = [0u8; 32];
+    for (i, b) in beta.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    seed_beta(&env, &client, id, beta);
+    assert_eq!(client.derive_random(&id), VEC_U64);
+    for (max, want) in VEC_RANGE {
+        assert_eq!(client.derive_random_in_range(&id, &max), want, "max={}", max);
+    }
+    let d = client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-1"), &1000u64);
+    assert_eq!(d, VEC_DOMAIN_CARD1_1000);
+}
+
+// ── #3: no caller-chosen post-fulfillment input ──────────────────────────────
+
+#[test]
+fn test_derive_is_deterministic_without_context() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"no-grind"), &requester);
+    seed_beta(&env, &client, id, [0x77u8; 32]);
+    assert_eq!(client.derive_random_in_range(&id, &1000u64), client.derive_random_in_range(&id, &1000u64));
+    assert_eq!(client.derive_random(&id), client.derive_random(&id));
+}
+
+#[test]
+fn test_derive_range_for_domain_separates_draws() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"domains"), &requester);
+    seed_beta(&env, &client, id, [0x10u8; 32]);
+    let max = u64::MAX;
+    let d1 = client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-1"), &max);
+    let d2 = client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-2"), &max);
+    let empty = client.derive_range_for_domain(&id, &Bytes::new(&env), &max);
+    let plain = client.derive_random_in_range(&id, &max);
+    assert_ne!(d1, d2);
+    assert_ne!(d1, plain);
+    assert_ne!(empty, plain, "empty domain still separated by tag");
+    assert_eq!(d1, client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-1"), &max));
+}
+
+#[test]
+fn test_derive_range_for_domain_accepts_max_length() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"max-domain"), &requester);
+    seed_beta(&env, &client, id, [0x10u8; 32]);
+    let domain = Bytes::from_slice(&env, &[0x41u8; crate::MAX_DERIVE_DOMAIN_LEN as usize]);
+    assert!(client.derive_range_for_domain(&id, &domain, &10u64) < 10);
+}
+
+#[test]
+#[should_panic(expected = "domain exceeds maximum length")]
+fn test_derive_range_for_domain_rejects_long_domain() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"long-domain"), &requester);
+    seed_beta(&env, &client, id, [0x10u8; 32]);
+    let domain = Bytes::from_slice(&env, &[0x41u8; crate::MAX_DERIVE_DOMAIN_LEN as usize + 1]);
+    client.derive_range_for_domain(&id, &domain, &10u64);
+}
+
+#[test]
+#[should_panic(expected = "max must be > 0")]
+fn test_derive_range_for_domain_rejects_zero_max() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"zero-max"), &requester);
+    seed_beta(&env, &client, id, [0x10u8; 32]);
+    client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"x"), &0u64);
+}
+
+#[test]
+#[should_panic(expected = "request not yet fulfilled")]
+fn test_derive_random_requires_fulfillment() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"pending"), &requester);
+    client.derive_random(&id);
+}
+
+#[test]
+#[should_panic(expected = "request not yet fulfilled")]
+fn test_get_beta_requires_fulfillment() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    let requester = Address::generate(&env);
+    let id = client.request(&Bytes::from_slice(&env, b"pending-beta"), &requester);
+    client.get_beta(&id);
+}
+
+// ── #14: beta survives cleanup_proof ─────────────────────────────────────────
+
+/// Real fulfillment, then cleanup: the proof is gone, but beta and every
+/// derivation keep returning identical values.
+#[test]
+fn test_cleanup_proof_keeps_beta_and_derivations() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let consumer = env.register(honest_consumer::HonestConsumer, ());
+    let (client, _vrf_id, _token, oracle_addr, proof, signature, _fee) =
+        setup_fixture_callback_request(&env, &consumer);
+    client.fulfill(&1u64, &proof, &signature);
+
+    let beta = client.get_beta(&1u64);
+    assert_eq!(beta, BytesN::from_array(&env, &PROOF_BETA));
+    assert_eq!(client.get_proof(&1u64).beta_output, beta);
+    let r_u64 = client.derive_random(&1u64);
+    let r_range = client.derive_random_in_range(&1u64, &1000u64);
+    let r_dom = client.derive_range_for_domain(&1u64, &Bytes::from_slice(&env, b"d"), &1000u64);
+
+    client.cleanup_proof(&1u64, &oracle_addr);
+
+    assert!(client.try_get_proof(&1u64).is_err(), "bulky proof removed");
+    assert!(client.is_fulfilled(&1u64));
+    assert_eq!(client.get_beta(&1u64), beta, "beta retained");
+    assert_eq!(client.derive_random(&1u64), r_u64);
+    assert_eq!(client.derive_random_in_range(&1u64, &1000u64), r_range);
+    assert_eq!(client.derive_range_for_domain(&1u64, &Bytes::from_slice(&env, b"d"), &1000u64), r_dom);
+}
+
+// ── #8: atomic constructor, no public init ───────────────────────────────────
+
+/// There is no `init` entrypoint left to front-run.
+#[test]
+fn test_no_public_init_entrypoint() {
+    use soroban_sdk::{IntoVal, InvokeError, Val, Vec as SVec};
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk) = setup();
+    let attacker = Address::generate(&env);
+    let mut args = SVec::<Val>::new(&env);
+    args.push_back(attacker.into_val(&env));
+    let res = env.try_invoke_contract::<Val, InvokeError>(
+        &client.address,
+        &Symbol::new(&env, "init"),
+        args,
+    );
+    assert!(res.is_err(), "init() must not exist");
+    assert_eq!(client.oracle_address(), oracle_addr, "configuration unchanged");
+}
+
+/// Registration without constructor args is rejected.
+#[test]
+#[should_panic]
+fn test_constructor_is_mandatory() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.register(VRFOracleContract, ());
+}
+
+/// The constructor requires the oracle address's authorization.
+#[test]
+#[should_panic]
+fn test_constructor_requires_oracle_auth() {
+    let env = Env::default(); // no mock_all_auths
+    try_construct(&env, TEST_G2_TIMES_2, TEST_G2_TIMES_3, [0x11; 32]);
+}
+
+// ── #9 / #10: key validation at construction and rotation ────────────────────
+
+fn try_construct(env: &Env, oracle_pk: [u8; 192], drand_pk: [u8; 192], ed: [u8; 32]) {
+    let oracle_addr = Address::generate(env);
+    let fee_token = Address::generate(env);
+    env.register(
+        VRFOracleContract,
+        (
+            &BytesN::from_array(env, &oracle_pk),
+            &oracle_addr,
+            &BytesN::from_array(env, &ed),
+            &BytesN::from_array(env, &drand_pk),
+            &1_692_803_367u64,
+            &3u32,
+            &2u32,
+            &fee_token,
+            &0i128,
+        ),
+    );
+}
+
+fn g2_infinity() -> [u8; 192] {
+    let mut p = [0u8; 192];
+    p[0] = 0x40;
+    p
+}
+
+#[test]
+#[should_panic(expected = "oracle pk is the point at infinity")]
+fn test_constructor_rejects_infinity_oracle_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, g2_infinity(), TEST_G2_TIMES_3, [0x11; 32]);
+}
+
+#[test]
+#[should_panic(expected = "drand pk is the point at infinity")]
+fn test_constructor_rejects_infinity_drand_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, TEST_G2_TIMES_2, g2_infinity(), [0x11; 32]);
+}
+
+#[test]
+#[should_panic(expected = "oracle pk must not be the G2 generator")]
+fn test_constructor_rejects_generator_as_oracle_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, crate::BLS12_381_G2_GENERATOR, TEST_G2_TIMES_3, [0x11; 32]);
+}
+
+#[test]
+#[should_panic(expected = "drand pk must not be the G2 generator")]
+fn test_constructor_rejects_generator_as_drand_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, TEST_G2_TIMES_2, crate::BLS12_381_G2_GENERATOR, [0x11; 32]);
+}
+
+/// Bytes that are not a valid encoding are rejected by the host.
+#[test]
+#[should_panic]
+fn test_constructor_rejects_non_point_oracle_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, [0x02; 192], TEST_G2_TIMES_3, [0x11; 32]);
+}
+
+/// A field-valid encoding that is off the curve is rejected.
+#[test]
+#[should_panic]
+fn test_constructor_rejects_off_curve_oracle_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let mut p = TEST_G2_TIMES_2;
+    p[191] ^= 0x01;
+    try_construct(&env, p, TEST_G2_TIMES_3, [0x11; 32]);
+}
+
+#[test]
+#[should_panic(expected = "oracle pk must differ from drand pk")]
+fn test_constructor_rejects_identical_oracle_and_drand_pk() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, TEST_G2_TIMES_2, TEST_G2_TIMES_2, [0x11; 32]);
+}
+
+#[test]
+#[should_panic(expected = "oracle ed25519 key must not be all zero")]
+fn test_constructor_rejects_zero_ed25519() {
+    let env = Env::default();
+    env.mock_all_auths();
+    try_construct(&env, TEST_G2_TIMES_2, TEST_G2_TIMES_3, [0u8; 32]);
+}
+
+#[test]
+#[should_panic(expected = "oracle pk is the point at infinity")]
+fn test_rotate_oracle_keys_rejects_infinity() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    client.rotate_oracle_keys(
+        &BytesN::from_array(&env, &g2_infinity()),
+        &Address::generate(&env),
+        &BytesN::from_array(&env, &[0xBB; 32]),
+    );
+}
+
+#[test]
+#[should_panic(expected = "oracle pk must differ from drand pk")]
+fn test_rotate_oracle_keys_rejects_drand_pk_reuse() {
+    let (env, client, _addr, _pk, _ed, drand_pk) = setup();
+    client.rotate_oracle_keys(&drand_pk, &Address::generate(&env), &BytesN::from_array(&env, &[0xBB; 32]));
+}
+
+#[test]
+#[should_panic(expected = "oracle ed25519 key must not be all zero")]
+fn test_rotate_oracle_keys_rejects_zero_ed25519() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    client.rotate_oracle_keys(
+        &BytesN::from_array(&env, &TEST_G2_TIMES_5),
+        &Address::generate(&env),
+        &BytesN::from_array(&env, &[0u8; 32]),
+    );
+}
+
+#[test]
+#[should_panic(expected = "drand pk must not be the G2 generator")]
+fn test_rotate_drand_pk_rejects_generator() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    client.rotate_drand_pk(&BytesN::from_array(&env, &crate::BLS12_381_G2_GENERATOR));
+}
+
+#[test]
+#[should_panic(expected = "oracle pk must differ from drand pk")]
+fn test_rotate_drand_pk_rejects_oracle_pk_reuse() {
+    let (_env, client, _addr, oracle_pk, _ed, _drand_pk) = setup();
+    client.rotate_drand_pk(&oracle_pk);
+}
+
+#[test]
+#[should_panic]
+fn test_rotate_drand_pk_rejects_non_point() {
+    let (env, client, _addr, _pk, _ed, _drand_pk) = setup();
+    client.rotate_drand_pk(&BytesN::from_array(&env, &[0xCC; 192]));
+}
+
+/// The compiled-in generator, the real quicknet key and the test keys are all
+/// prime-order subgroup points.
+#[test]
+fn test_canonical_generator_and_test_keys_are_valid() {
+    use soroban_sdk::crypto::bls12_381::Bls12381G2Affine;
+    let env = Env::default();
+    let bls = env.crypto().bls12_381();
+    for k in [crate::BLS12_381_G2_GENERATOR, FIX_DRAND_PK, TEST_G2_TIMES_2, TEST_G2_TIMES_3, TEST_G2_TIMES_5] {
+        let p = Bls12381G2Affine::from_bytes(BytesN::from_array(&env, &k));
+        assert!(bls.g2_is_in_subgroup(&p));
+    }
+}

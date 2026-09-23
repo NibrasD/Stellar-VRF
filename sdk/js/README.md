@@ -100,7 +100,14 @@ console.log("Random roll:", roll);
 | `isFulfilled(requestId)` | `Promise<boolean>` | Check if request is fulfilled |
 | `getProof(requestId)` | `Promise<VrfProof \| null>` | Get the VRF proof |
 | `waitForFulfillment(requestId, timeoutMs?, intervalMs?)` | `Promise<VrfProof>` | Wait for fulfillment |
-| `deriveRandomInRange(requestId, min, max, context?)` | `Promise<bigint>` | Get random number in inclusive range `[min, max]`. `context` is optional domain-separation bytes. |
+| `deriveRandomInRange(requestId, min, max)` | `Promise<bigint>` | Exactly uniform random number in inclusive range `[min, max]` (contract `derive_random_in_range`) |
+| `deriveRangeForDomain(requestId, domain, min, max)` | `Promise<bigint>` | Same, with a short domain separator (≤ 64 bytes) for several independent draws. **The domain must be fixed before fulfillment**: a constant, never a user-chosen value |
+| `getBeta(requestId)` | `Promise<Uint8Array>` | The verified 32-byte output. Kept after `cleanup_proof()` |
+
+> **2.0 breaking change:** the `context` argument of `deriveRandomInRange` is
+> gone. Choosing it after the result was public let a caller grind outputs.
+> SDK 2.x targets the next contract deployment. Keep using 1.0.1 against the
+> current Mainnet instance.
 
 ### `requestWithCallback`
 
@@ -114,11 +121,18 @@ const requestId = await client.request(context, {
 ### Utility Functions
 
 ```typescript
-import { deriveRandomFromBeta } from "stellar-vrf-sdk";
+import { deriveRangeFromBeta, deriveRangeForDomainFromBeta, deriveU64FromBeta } from "stellar-vrf-sdk";
 
-// Client-side derivation without a contract call
-const roll = deriveRandomFromBeta(betaHex, 1n, 6n);
+// Offline, byte-for-byte identical to the contract (shared test vectors):
+const beta = await client.getBeta(requestId);
+const roll = 1n + deriveRangeFromBeta(beta, requestId, 6n);   // == deriveRandomInRange(requestId, 1n, 6n)
+const card = deriveRangeForDomainFromBeta(beta, requestId, new TextEncoder().encode("card-1"), 52n);
+const word = deriveU64FromBeta(beta, requestId);              // == contract derive_random()
 ```
+
+`deriveRandomFromBeta(betaHex, min, max)` is **deprecated**. It isn't the
+contract's function, and it's only negligibly (≤ 2^-64) rather than exactly
+uniform.
 
 ## Networks
 

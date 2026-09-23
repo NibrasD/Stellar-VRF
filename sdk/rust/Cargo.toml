@@ -1,6 +1,6 @@
 [package]
 name = "stellar-vrf-sdk"
-version = "1.0.1"
+version = "2.0.0"
 edition = "2021"
 description = "Rust SDK for the Stellar VRF Oracle — verifiable on-chain randomness for Stellar/Soroban, backed by drand and on-chain BLS12-381 pairing verification"
 license = "MIT"
@@ -21,6 +21,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 thiserror = "1"
+# SHA-256 for offline derivation that matches the contract byte-for-byte.
+sha2 = "0.10"
 
 [dev-dependencies]
 tokio-test = "0.4"

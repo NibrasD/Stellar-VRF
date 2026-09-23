@@ -20,7 +20,7 @@ Your dApp  ◀─derive_random_in_range()──┘
 2. The oracle fetches a **future** drand quicknet beacon (`round_offset ≥ 2` — prevents prediction)
 3. Oracle generates a BLS12-381 VRF proof bound to your context + drand randomness
 4. The contract verifies the proof with **on-chain BLS12-381 pairing checks** (~58M CPU instructions)
-5. The verified random output is written to contract storage and emitted in the `fulfill` event. The `Fulfilled` flag is retained, but the proof data can later be removed by `cleanup_proof()` (requester or oracle), and all entries are subject to Soroban storage TTL. Read or cache your result after fulfillment (see [Storage TTL Management](docs/OPERATIONS.md#storage-ttl-management)).
+5. The verified random output (`beta`) is written to contract storage and emitted in the `fulfill` event. `cleanup_proof()` (requester or oracle) removes only the bulky proof: the `Fulfilled` flag and the 32-byte `beta` are kept, so `get_beta()` and the `derive_*()` functions keep working. All entries are still subject to Soroban storage TTL. Read or cache your result after fulfillment (see [Storage TTL Management](docs/OPERATIONS.md#storage-ttl-management)).
 6. Anyone can independently re-verify — no trust required
 
 ## Live
@@ -66,9 +66,41 @@ const requestId = await client.request(context);
 // Wait for oracle fulfillment (~10-30s)
 const proof = await client.waitForFulfillment(requestId, 120_000);
 
-// Derive a random number in range [1, 1000]
+// Derive a random number in range [1, 1000] (exactly uniform, no modulo bias)
 const result = await client.deriveRandomInRange(requestId, 1n, 1000n);
 ```
+
+> **SDK 2.x requires the next contract deployment.** SDK 2.0 calls the new
+> derivation signatures (`derive_random_in_range(request_id, max)`, no
+> `context`). The Mainnet instance above still runs the older WASM, whose
+> `derive_random_in_range` also takes a `context` argument. Use SDK 1.0.1
+> against it until the redeployment is live. See
+> [Deriving values](#deriving-values-from-a-result).
+
+### Deriving values from a result
+
+| Function | Output |
+|---|---|
+| `get_beta(id)` | the raw verified 32-byte output |
+| `derive_random(id)` | a uniform `u64` |
+| `derive_random_in_range(id, max)` | a value in `[0, max)`, **exactly** uniform |
+| `derive_range_for_domain(id, domain, max)` | same, plus a short domain separator for several independent draws per request |
+
+The inputs are the request id, `max` and `beta`, all fixed before anyone can
+see the result. Earlier versions also took a free-form `context` argument at
+derivation time. That let a caller who had already seen `beta` try many
+contexts and keep the output they liked (grinding). It has been removed. Put
+application data into `request(context)` instead: that value is committed
+before the drand round is public.
+
+> ⚠ **`derive_range_for_domain`: the domain must be fixed before fulfillment.**
+> Use constants in your code (`b"card-1"`, `b"card-2"`) or values stored before
+> `request()`. Never forward a user-chosen value there. The contract can't
+> tell when a domain was chosen.
+
+The SDKs reproduce all of these offline from `beta`
+(`deriveRangeFromBeta` / `derive_range_from_beta`, …), byte-for-byte, using
+shared test vectors.
 
 ## Quick Start — Rust SDK
 
@@ -95,9 +127,11 @@ let request_id: u64 = env.invoke_contract(
 pub fn on_vrf(env: Env, request_id: u64, beta_output: BytesN<32>, _alpha_seed: BytesN<32>) {
     let vrf_contract: Address = /* stored at init */;
     vrf_contract.require_auth(); // CRITICAL: verify caller is the VRF contract
-    // Use beta_output as your random value.
+    // Use beta_output as your random value. Keep on_vrf() cheap: the oracle
+    // refuses to send a fulfill() whose simulated cost exceeds its resource
+    // bounds (see "Consumer callbacks" below).
     // If this panics, fulfill() still succeeds and you are NOT called again:
-    // read the result later with get_proof(request_id).
+    // read the result later with get_beta(request_id).
 }
 ```
 
@@ -140,15 +174,28 @@ Please read these before integrating on Mainnet. Details are in [`docs/THREAT_MO
 
   Deferred requests stay pending. After the timeout, requesters can recover their escrowed fee with `timeout_refund()`, but that doesn't deliver the randomness. **What this means for integrators:** anyone can use up the shared unpaid budget with spam. The current instance therefore **does not guarantee liveness** to non-allowlisted requesters, whose requests may time out and be refunded. The structural fix is a redeployment with `fee_amount` ≥ the fulfill cost. `mainnet_deploy.mjs` now refuses to deploy without one.
 - **Fulfillment is best-effort, not guaranteed.** HA, the fee guard and reconciliation make fulfillment likely, but no component guarantees it. The contract guarantees only that a result, *if* delivered, is correct and final, and that an unfulfilled request can be refunded after `TIMEOUT_ROUNDS`.
-- **Consumer callbacks are isolated (source; next deployment).** If your `on_vrf()` panics, `fulfill()` still succeeds, your callback's writes are rolled back, and a `cb_failed` event is emitted. Read the result with `get_proof()`. The deployed Mainnet instance still reverts `fulfill()` on a callback panic. On that instance the worker caps sends per request (`MAX_SENDS_PER_REQUEST`) so a griefing consumer can't drain the oracle ([details](docs/THREAT_MODEL.md#callback-griefing-economic-dos-on-the-oracle)).
+- **Consumer callbacks are isolated from panics, not from cost (source; next deployment).** If your `on_vrf()` panics, `fulfill()` still succeeds, your callback's writes are rolled back, and a `cb_failed` event is emitted. Read the result with `get_beta()`. Soroban can't cap a sub-call's resources, though: `on_vrf()` runs inside the oracle's transaction and the oracle pays for it. An expensive callback can push `fulfill()` past network limits, and then **no** result is delivered. The worker therefore:
+  - simulates every `fulfill()` and refuses to sign it if CPU, resource fee or max fee exceed `MAX_FULFILL_INSTRUCTIONS` (default 90M), `MAX_FULFILL_RESOURCE_FEE_STROOPS` or `MAX_FULFILL_TX_FEE_STROOPS`;
+  - treats deterministic failures (contract panic, trapped / resource-limit-exceeded callback, refusal above) as **terminal**: the request is parked instead of retried, and the requester can `timeout_refund()`;
+  - caps sends per request (`MAX_SENDS_PER_REQUEST`) for everything else.
+
+  The deployed Mainnet instance still reverts `fulfill()` on a callback panic ([details](docs/THREAT_MODEL.md#callback-griefing-economic-dos-on-the-oracle)). **Keep `on_vrf()` small.** Store `beta` and do the heavy work in a later transaction.
 - **drand chain is fixed.** `rotate_drand_pk()` rotates the key of the *configured* drand chain. It can't migrate the contract to a different drand chain (genesis/period/scheme are fixed). See [OPERATIONS.md](docs/OPERATIONS.md#rotate-drand-public-key).
 - **Results are not stored forever.** See step 5 above.
-- **The Mainnet WASM predates the latest range-derivation fix.** The deployed contract still uses the earlier `derive_random_in_range` rejection loop, which has a biased fallback. That fallback is reachable only for very large `max` values, approaching 2^63. Everyday ranges are unaffected. The 128-bit fix is in the source and ships with the next deployment ([details](docs/AUDIT_REPORT.md)).
+- **The Mainnet WASM predates the current derivation and deployment fixes.** The deployed contract:
+  - still uses the earlier `derive_random_in_range` rejection loop, which has a biased fallback (reachable only for `max` approaching 2^63; everyday ranges are unaffected);
+  - still accepts a caller-chosen `context` at derivation time, which can be ground (see [Deriving values](#deriving-values-from-a-result));
+  - was configured by a separate `init()` call.
+
+  The source replaces all three. Range derivation is **exactly** uniform (two-candidate rejection sampling, explicit failure with probability < 2^-128, no biased fallback). There is no derivation-time context. Configuration is atomic via `__constructor`, with key validation (no identity/generator/off-curve keys, oracle ≠ drand key). These changes ship with the next deployment ([details](docs/AUDIT_REPORT.md)).
+- **"Can't bias" is conditional.** With the registered keys unchanged, the oracle can neither predict nor bias an output. The oracle account *can* rotate keys (see "Single oracle identity" above), and anything a caller chooses **after** seeing `beta` (for example a domain passed to `derive_range_for_domain`) can be ground by that caller. The contract only binds inputs committed before the drand round is public.
 - **SDK scope.** The Rust SDK is a read/verify client. It doesn't submit transactions ([details](sdk/rust/README.md#scope--read-this-first)).
 
 ## Performance
 
-`fulfill()` measured at **58,073,400 CPU instructions** (fee=0) and **58,342,003 CPU instructions** (nonzero-fee) on Stellar Mainnet — well within the 75M target with 22.2% headroom and 85.4% headroom under the 400M protocol limit. See [`docs/PROFILING.md`](docs/PROFILING.md).
+`fulfill()` **without a callback** measured at **58,073,400 CPU instructions** (fee=0) and **58,342,003 CPU instructions** (nonzero-fee) on Stellar Mainnet. That is 22.2% headroom under the 75M target and 85.4% under the 400M protocol limit. See [`docs/PROFILING.md`](docs/PROFILING.md).
+
+**Scope of the 75M figure:** it covers the **VRF core** only (drand signature check, BLS-VRF verification, Ed25519, storage, fee transfer), and a unit test enforces it. A callback request adds whatever the consumer's `on_vrf()` costs, which the contract can't bound. The worker's resource guard (`MAX_FULFILL_INSTRUCTIONS`, default 90M) is the operational cap for that case.
 
 ## Running the Oracle
 

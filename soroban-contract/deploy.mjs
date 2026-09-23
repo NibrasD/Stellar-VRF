@@ -15,6 +15,7 @@
 
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import { randomBytes } from "crypto";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -46,8 +47,6 @@ const ORACLE_PK_HEX =
 
 const DRAND_PK_HEX =
   "03cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a01a714f2edb74119a2f2b0d5a7c75ba902d163700a61bc224ededd8e63aef7be1aaf8e93d7a9718b047ccddb3eb5d68b0e5db2b6bfbb01c867749cadffca88b36c24f3012ba09fc4d3022c5c37dce0f977d3adb5d183c7477c442b1f04515273";
-const G2_GENERATOR_HEX =
-  "13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801";
 const DRAND_GENESIS_TIME = 1692803367;
 const DRAND_PERIOD = 3;
 const ROUND_OFFSET = 2;
@@ -137,13 +136,13 @@ async function main() {
   console.log(`Oracle Ed25519: ${Buffer.from(ORACLE_ED25519_PK).toString("hex")}`);
 
   // 2. Fund deployer AND oracle accounts
-  console.log("\n[1/4] Funding accounts via Friendbot...");
+  console.log("\n[1/3] Funding accounts via Friendbot...");
   await fundAccount(deployerKP.publicKey());
   await fundAccount(ORACLE_ADDRESS);
   await new Promise((r) => setTimeout(r, 5000));
 
   // 3. Upload WASM
-  console.log("\n[2/4] Uploading WASM...");
+  console.log("\n[2/3] Uploading WASM...");
   const wasmBytes = readFileSync(WASM_PATH);
   console.log(`  WASM size: ${wasmBytes.length} bytes`);
   let account = await server.getAccount(deployerKP.publicKey());
@@ -160,11 +159,24 @@ async function main() {
   const wasmHash = Buffer.from(uploadResult.returnValue.bytes()).toString("hex");
   console.log(`  WASM hash: ${wasmHash}`);
 
-  // 4. Create contract
-  console.log("\n[3/4] Creating contract instance...");
-  account = await server.getAccount(deployerKP.publicKey());
-  const salt = Buffer.alloc(32, 0);
-
+  // 4. Create + configure the contract in ONE operation.
+  //    The contract's __constructor runs during creation, so no uninitialised
+  //    instance ever exists (there is no init() to front-run). It calls
+  //    oracle_address.require_auth(), so the ORACLE account deploys: as the
+  //    transaction source its authorization is implicit.
+  console.log("\n[3/3] Creating + configuring contract instance (constructor)...");
+  const constructorArgs = [
+    nativeToScVal(Buffer.from(ORACLE_PK_HEX, "hex"), { type: "bytes" }),
+    new Address(ORACLE_ADDRESS).toScVal(),
+    nativeToScVal(Buffer.from(ORACLE_ED25519_PK), { type: "bytes" }),
+    nativeToScVal(Buffer.from(DRAND_PK_HEX, "hex"), { type: "bytes" }),
+    nativeToScVal(DRAND_GENESIS_TIME, { type: "u64" }),
+    nativeToScVal(DRAND_PERIOD, { type: "u32" }),
+    nativeToScVal(ROUND_OFFSET, { type: "u32" }),
+    new Address(FEE_TOKEN_ADDRESS).toScVal(),
+    nativeToScVal(BigInt(FEE_AMOUNT), { type: "i128" }),
+  ];
+  account = await server.getAccount(oracleKP.publicKey());
   const createTx = new TransactionBuilder(account, {
     fee: "1000000",
     networkPassphrase: NETWORK,
@@ -172,84 +184,18 @@ async function main() {
     .addOperation(
       Operation.createCustomContract({
         wasmHash: Buffer.from(wasmHash, "hex"),
-        address: new Address(deployerKP.publicKey()),
-        salt,
+        address: new Address(ORACLE_ADDRESS),
+        salt: randomBytes(32),
+        constructorArgs,
       })
     )
     .setTimeout(120)
     .build();
 
-  const createResult = await sendAndConfirm(server, deployerKP, createTx);
-  const contractAddressObj = Address.fromScVal(createResult.returnValue);
-  const contractAddress = contractAddressObj.toString();
+  const createResult = await sendAndConfirm(server, oracleKP, createTx);
+  const contractAddress = Address.fromScVal(createResult.returnValue).toString();
   console.log(`  Contract address: ${contractAddress}`);
-
-  // 5. Init with oracle BLS PK + oracle address + Ed25519 PK + drand settings
-  //    Use oracle as source account so require_auth() passes
-  console.log("\n[4/4] Initializing contract (oracle BLS + drand config)...");
-  account = await server.getAccount(oracleKP.publicKey());
-  const oraclePKScVal = nativeToScVal(Buffer.from(ORACLE_PK_HEX, "hex"), {
-    type: "bytes",
-  });
-  const oracleAddrScVal = new Address(ORACLE_ADDRESS).toScVal();
-  const oracleEd25519ScVal = nativeToScVal(Buffer.from(ORACLE_ED25519_PK), {
-    type: "bytes",
-  });
-  const drandPkScVal = nativeToScVal(Buffer.from(DRAND_PK_HEX, "hex"), {
-    type: "bytes",
-  });
-  const g2GeneratorScVal = nativeToScVal(Buffer.from(G2_GENERATOR_HEX, "hex"), {
-    type: "bytes",
-  });
-  const drandGenesisScVal = nativeToScVal(DRAND_GENESIS_TIME, {
-    type: "u64",
-  });
-  const drandPeriodScVal = nativeToScVal(DRAND_PERIOD, {
-    type: "u32",
-  });
-  const roundOffsetScVal = nativeToScVal(ROUND_OFFSET, {
-    type: "u32",
-  });
-  const feeTokenScVal = new Address(FEE_TOKEN_ADDRESS).toScVal();
-  const feeAmountScVal = nativeToScVal(BigInt(FEE_AMOUNT), { type: "i128" });
-
-  const initTx = new TransactionBuilder(account, {
-    fee: "1000000",
-    networkPassphrase: NETWORK,
-  })
-    .addOperation(
-      Operation.invokeContractFunction({
-        contract: contractAddress,
-        function: "init",
-        args: [
-          oraclePKScVal,
-          oracleAddrScVal,
-          oracleEd25519ScVal,
-          drandPkScVal,
-          g2GeneratorScVal,
-          drandGenesisScVal,
-          drandPeriodScVal,
-          roundOffsetScVal,
-          feeTokenScVal,
-          feeAmountScVal,
-        ],
-      })
-    )
-    .setTimeout(120)
-    .build();
-
-  const simInit = await server.simulateTransaction(initTx);
-  if (rpc.Api.isSimulationError(simInit)) {
-    throw new Error(`Init simulation error: ${simInit.error}`);
-  }
-  const preparedInit = rpc.assembleTransaction(initTx, simInit).build();
-  preparedInit.sign(oracleKP);
-  const sentInit = await server.sendTransaction(preparedInit);
-  if (sentInit.status === "ERROR") {
-    throw new Error(`Init send error: ${JSON.stringify(sentInit.errorResult)}`);
-  }
-  await pollTx(server, sentInit.hash);
-  console.log("  Contract initialized with oracle BLS PK, drand PK, and future round offset.");
+  console.log("  Configured atomically by __constructor (oracle BLS PK, drand PK, round offset).");
 
   // 6. Persist
   const result = {

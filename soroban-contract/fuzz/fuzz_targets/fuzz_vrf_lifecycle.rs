@@ -2,7 +2,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol};
-use soroban_vrf_oracle::{BlsVrfProof, DataKey, VRFOracleContract, VRFOracleContractClient};
+use soroban_vrf_oracle::{BlsVrfProof, VRFOracleContract, VRFOracleContractClient};
+use soroban_vrf_oracle::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
@@ -12,14 +13,10 @@ fuzz_target!(|data: &[u8]| {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(VRFOracleContract, ());
-    let client = VRFOracleContractClient::new(&env, &contract_id);
-
     let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &[0x02; 192]);
+    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &[0x22; 192]);
-    let g2_generator = BytesN::from_array(&env, &[0x33; 192]);
+    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
     let genesis: u64 = 1_000_000;
@@ -29,18 +26,23 @@ fuzz_target!(|data: &[u8]| {
 
     env.ledger().set_timestamp(genesis);
 
-    client.init(
-        &oracle_pk,
-        &oracle_addr,
-        &oracle_ed25519,
-        &drand_pk,
-        &g2_generator,
-        &genesis,
-        &period,
-        &round_offset,
-        &fee_token,
-        &fee_amount,
+    // Atomic construction: configuration is set at deploy time, there is
+    // no separate init() call to race.
+    let contract_id = env.register(
+        VRFOracleContract,
+        (
+            &oracle_pk,
+            &oracle_addr,
+            &oracle_ed25519,
+            &drand_pk,
+            &genesis,
+            &period,
+            &round_offset,
+            &fee_token,
+            &fee_amount,
+        ),
     );
+    let client = VRFOracleContractClient::new(&env, &contract_id);
 
     let mut requests: std::vec::Vec<u64> = std::vec::Vec::new();
     let mut current_time = genesis;

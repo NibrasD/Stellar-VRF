@@ -58,6 +58,15 @@ describe("SendAttemptTracker", () => {
     expect(t.count(3n)).toBe(1);
   });
 
+  it("park() exhausts the allowance at once (terminal failures cost nothing more)", () => {
+    const t = new SendAttemptTracker({ maxSendsPerRequest: 6, maxTrackedRequests: 100 });
+    expect(t.tryReserve(9n).ok).toBe(true);
+    t.park(9n);
+    expect(t.isExhausted(9n)).toBe(true);
+    expect(t.tryReserve(9n).ok).toBe(false);
+    expect(t.isExhausted(10n)).toBe(false);
+  });
+
   it("rejects a non-positive cap", () => {
     expect(() => new SendAttemptTracker({ maxSendsPerRequest: 0, maxTrackedRequests: 1 })).toThrow();
   });

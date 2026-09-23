@@ -19,9 +19,14 @@
 //!     let fulfilled = client.is_fulfilled(1).await?;
 //!     println!("Fulfilled: {}", fulfilled);
 //!
-//!     // Derive random in range
-//!     let roll = client.derive_random_in_range(1, 1, 100, b"").await?;
+//!     // Derive a uniform roll in [1, 100] (exact, no modulo bias)
+//!     let roll = client.derive_random_in_range(1, 1, 100).await?;
 //!     println!("Roll: {}", roll);
+//!
+//!     // Or reproduce it offline from the verified beta:
+//!     let beta = client.get_beta(1).await?;
+//!     let span = 100;
+//!     assert_eq!(roll, 1 + stellar_vrf_sdk::derive_range_from_beta(&beta, 1, span)?);
 //!
 //!     Ok(())
 //! }
@@ -282,12 +287,15 @@ impl VrfClient {
     /// Derive a random number in the inclusive range `[min, max]` from a
     /// fulfilled request.
     ///
-    /// The on-chain `derive_random_in_range(request_id, context, max)` returns
-    /// a value in `[0, max)`. This helper requests a span of `max - min + 1`
-    /// and shifts the result by `min` to cover the inclusive range.
+    /// The on-chain `derive_random_in_range(request_id, max)` returns a value
+    /// in `[0, max)` that is **exactly** uniform (rejection sampling, no modulo
+    /// bias). This helper requests a span of `max - min + 1` and shifts the
+    /// result by `min` to cover the inclusive range. The result equals
+    /// `min + `[`derive_range_from_beta`]`(beta, request_id, span)`.
     ///
-    /// `context` is the domain-separation byte string (must match what the
-    /// consumer used); pass an empty slice for the default.
+    /// There is no caller-chosen context: a value picked after the result is
+    /// known would allow grinding. Bind application data at `request()` time,
+    /// or use [`Self::derive_range_for_domain`] with a **fixed** domain.
     ///
     /// This calls the contract via simulation, so no transaction fee is charged.
     ///
@@ -301,35 +309,90 @@ impl VrfClient {
         request_id: u64,
         min: u64,
         max: u64,
-        context: &[u8],
     ) -> Result<u64, VrfError> {
         let span = inclusive_span(min, max)?;
         let result = self
             .simulate_call(
                 "derive_random_in_range",
+                &[encode_scval_u64(request_id), encode_scval_u64(span)],
+            )
+            .await?;
+        Ok(decode_u64_result(result, request_id)? + min)
+    }
+
+    /// Like [`Self::derive_random_in_range`], with a short domain separator so
+    /// one request can feed several independent draws.
+    ///
+    /// # The domain MUST be fixed before fulfillment
+    /// If anyone can choose `domain` after the randomness is public, they can
+    /// try many domains and keep the result they like. Only use constants or
+    /// values committed before `request()`. At most
+    /// [`MAX_DERIVE_DOMAIN_LEN`] bytes.
+    pub async fn derive_range_for_domain(
+        &self,
+        request_id: u64,
+        domain: &[u8],
+        min: u64,
+        max: u64,
+    ) -> Result<u64, VrfError> {
+        if domain.len() > MAX_DERIVE_DOMAIN_LEN {
+            return Err(VrfError::Rpc(format!(
+                "domain is {} bytes; the contract accepts at most {MAX_DERIVE_DOMAIN_LEN}",
+                domain.len()
+            )));
+        }
+        let span = inclusive_span(min, max)?;
+        let result = self
+            .simulate_call(
+                "derive_range_for_domain",
                 &[
                     encode_scval_u64(request_id),
-                    encode_scval_bytes(context),
+                    encode_scval_bytes(domain),
                     encode_scval_u64(span),
                 ],
             )
             .await?;
+        Ok(decode_u64_result(result, request_id)? + min)
+    }
 
+    /// The verified 32-byte beta of a fulfilled request (`get_beta`). Kept by
+    /// the contract after `cleanup_proof()`.
+    pub async fn get_beta(&self, request_id: u64) -> Result<[u8; 32], VrfError> {
+        let result = self
+            .simulate_call("get_beta", &[encode_scval_u64(request_id)])
+            .await?;
         match result {
             Some(xdr_b64) => {
                 let bytes = base64_decode(&xdr_b64)?;
-                // ScVal u64: 4-byte discriminant (5) + 8-byte BE value
-                if bytes.len() >= 12 {
-                    let val = u64::from_be_bytes(bytes[4..12].try_into().unwrap());
-                    Ok(val + min)
+                // ScVal bytes: 4-byte discriminant (13) + 4-byte length (32) + data
+                if bytes.len() >= 40 && bytes[0..4] == [0, 0, 0, 13] && bytes[4..8] == [0, 0, 0, 32] {
+                    Ok(bytes[8..40].try_into().unwrap())
                 } else {
-                    Err(VrfError::Rpc("Invalid u64 ScVal response".into()))
+                    Err(VrfError::Rpc("Invalid BytesN<32> ScVal response".into()))
                 }
             }
             None => Err(VrfError::NotFulfilled(request_id)),
         }
     }
+}
 
+/// Decode a simulated `u64` ScVal return value.
+fn decode_u64_result(result: Option<String>, request_id: u64) -> Result<u64, VrfError> {
+    match result {
+        Some(xdr_b64) => {
+            let bytes = base64_decode(&xdr_b64)?;
+            // ScVal u64: 4-byte discriminant (5) + 8-byte BE value
+            if bytes.len() >= 12 && bytes[0..4] == [0, 0, 0, 5] {
+                Ok(u64::from_be_bytes(bytes[4..12].try_into().unwrap()))
+            } else {
+                Err(VrfError::Rpc("Invalid u64 ScVal response".into()))
+            }
+        }
+        None => Err(VrfError::NotFulfilled(request_id)),
+    }
+}
+
+impl VrfClient {
     /// Wait until a request is fulfilled, polling every 3 seconds.
     pub async fn wait_for_fulfillment(
         &self,
@@ -748,8 +811,109 @@ fn inclusive_span(min: u64, max: u64) -> Result<u64, VrfError> {
     })
 }
 
+// ── Offline derivation (byte-for-byte identical to the contract) ─────────────
+
+/// Domain prefix of every contract derivation (`DERIVE_DOMAIN`).
+pub const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V2";
+const DERIVE_TAG_U64: u8 = 0x01;
+const DERIVE_TAG_RANGE: u8 = 0x02;
+const DERIVE_TAG_RANGE_DOMAIN: u8 = 0x03;
+/// Longest domain accepted by `derive_range_for_domain` (`MAX_DERIVE_DOMAIN_LEN`).
+pub const MAX_DERIVE_DOMAIN_LEN: usize = 64;
+
+fn derive_hash(tag: u8, request_id: u64, parts: &[&[u8]], beta: &[u8; 32]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(DERIVE_DOMAIN);
+    h.update([tag]);
+    h.update(request_id.to_be_bytes());
+    for p in parts {
+        h.update(p);
+    }
+    h.update(beta);
+    h.finalize().into()
+}
+
+/// Exact-uniform reduction of a 32-byte hash into `[0, max)`, identical to the
+/// contract's `reduce_uniform()`.
+///
+/// The hash is split into two 128-bit big-endian candidates. A candidate `c` is
+/// accepted iff `c < limit`, where `limit = 2^128 - (2^128 mod max)` is the
+/// largest multiple of `max` that fits. The result `c mod max` is then exactly
+/// uniform. If both are rejected (probability < 2^-128) this returns an error,
+/// just like the contract panics. There is no biased fallback.
+pub fn reduce_uniform(hash: &[u8; 32], max: u64) -> Result<u64, VrfError> {
+    if max == 0 {
+        return Err(VrfError::Rpc("max must be > 0".into()));
+    }
+    let m = max as u128;
+    let rem = 0u128.wrapping_sub(m) % m; // 2^128 mod max
+    for half in [&hash[0..16], &hash[16..32]] {
+        let c = u128::from_be_bytes(half.try_into().unwrap());
+        if c <= u128::MAX - rem {
+            return Ok((c % m) as u64);
+        }
+    }
+    Err(VrfError::Rpc(
+        "range derivation failed: both candidates rejected".into(),
+    ))
+}
+
+/// Offline equivalent of the contract's `derive_random(request_id)`.
+pub fn derive_u64_from_beta(beta: &[u8; 32], request_id: u64) -> u64 {
+    let h = derive_hash(DERIVE_TAG_U64, request_id, &[], beta);
+    u64::from_be_bytes(h[0..8].try_into().unwrap())
+}
+
+/// Offline equivalent of the contract's `derive_random_in_range(request_id, max)`:
+/// an exactly uniform value in `[0, max)`.
+pub fn derive_range_from_beta(beta: &[u8; 32], request_id: u64, max: u64) -> Result<u64, VrfError> {
+    if max == 0 {
+        return Err(VrfError::Rpc("max must be > 0".into()));
+    }
+    if max == 1 {
+        return Ok(0);
+    }
+    let h = derive_hash(DERIVE_TAG_RANGE, request_id, &[&max.to_be_bytes()], beta);
+    reduce_uniform(&h, max)
+}
+
+/// Offline equivalent of the contract's
+/// `derive_range_for_domain(request_id, domain, max)`.
+///
+/// **The domain must be fixed before fulfillment** (a constant, or a value
+/// committed before `request()`); otherwise whoever picks it can grind.
+pub fn derive_range_for_domain_from_beta(
+    beta: &[u8; 32],
+    request_id: u64,
+    domain: &[u8],
+    max: u64,
+) -> Result<u64, VrfError> {
+    if max == 0 {
+        return Err(VrfError::Rpc("max must be > 0".into()));
+    }
+    if domain.len() > MAX_DERIVE_DOMAIN_LEN {
+        return Err(VrfError::Rpc("domain exceeds maximum length".into()));
+    }
+    if max == 1 {
+        return Ok(0);
+    }
+    let len = (domain.len() as u32).to_be_bytes();
+    let h = derive_hash(
+        DERIVE_TAG_RANGE_DOMAIN,
+        request_id,
+        &[&len, domain, &max.to_be_bytes()],
+        beta,
+    );
+    reduce_uniform(&h, max)
+}
+
 /// Derive a random number in the inclusive range `[min, max]` client-side from a
 /// beta output, without a contract call.
+///
+/// **Deprecated:** not the contract's function, and only negligibly (≤ 2^-64)
+/// rather than exactly uniform. Use [`derive_range_from_beta`], which matches
+/// the contract's `derive_random_in_range` exactly.
 ///
 /// This is a pure, deterministic function of `beta`, so anyone holding the
 /// verified beta can reproduce it. It is **not** the same function as the
@@ -768,6 +932,10 @@ fn inclusive_span(min: u64, max: u64) -> Result<u64, VrfError> {
 /// An earlier version used only the first 64 bits, giving a bias of up to
 /// `range / 2^64`, which becomes significant for very large ranges (approaching
 /// a 50% skew as the range approaches `2^63`).
+#[deprecated(
+    since = "2.0.0",
+    note = "use derive_range_from_beta(), which matches the contract and is exactly uniform"
+)]
 pub fn derive_random_from_beta(beta: &[u8], min: u64, max: u64) -> Result<u64, VrfError> {
     if max <= min {
         return Err(VrfError::Rpc("max must be greater than min".into()));
@@ -969,8 +1137,73 @@ fn parse_scval_map_for_request(data: &[u8]) -> (u64, String, u64) {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(deprecated)] // the legacy derive_random_from_beta keeps its regression tests
 mod tests {
     use super::*;
+
+    /// Shared cross-implementation vectors: beta = 0x00..0x1f, request_id = 7.
+    /// Identical constants are asserted by the contract's
+    /// `test_derive_vectors_shared_with_sdks` and the JS SDK.
+    fn vec_beta() -> [u8; 32] {
+        let mut b = [0u8; 32];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = i as u8;
+        }
+        b
+    }
+
+    #[test]
+    fn test_derive_vectors_match_contract() {
+        let beta = vec_beta();
+        assert_eq!(derive_u64_from_beta(&beta, 7), 17_155_214_937_666_214_782);
+        assert_eq!(derive_range_from_beta(&beta, 7, 6).unwrap(), 4);
+        assert_eq!(derive_range_from_beta(&beta, 7, 1_000_000).unwrap(), 889_164);
+        assert_eq!(
+            derive_range_from_beta(&beta, 7, u64::MAX).unwrap(),
+            11_798_261_183_955_500_607
+        );
+        assert_eq!(
+            derive_range_for_domain_from_beta(&beta, 7, b"card-1", 1000).unwrap(),
+            595
+        );
+    }
+
+    fn halves(c1: u128, c2: u128) -> [u8; 32] {
+        let mut h = [0u8; 32];
+        h[..16].copy_from_slice(&c1.to_be_bytes());
+        h[16..].copy_from_slice(&c2.to_be_bytes());
+        h
+    }
+
+    #[test]
+    fn test_reduce_uniform_matches_contract_rules() {
+        // First candidate accepted.
+        assert_eq!(reduce_uniform(&halves(123_456_789, 42), 1_000_003).unwrap(), 123_456_789 % 1_000_003);
+        // max = 3: 2^128 mod 3 = 1, so u128::MAX is the single rejected value.
+        assert_eq!(reduce_uniform(&halves(u128::MAX - 1, 0), 3).unwrap(), ((u128::MAX - 1) % 3) as u64);
+        assert_eq!(reduce_uniform(&halves(u128::MAX, 5), 3).unwrap(), 2);
+        // Both rejected: explicit error, no biased fallback.
+        let err = reduce_uniform(&halves(u128::MAX, u128::MAX), (1 << 63) + 1).unwrap_err();
+        assert!(err.to_string().contains("both candidates rejected"));
+        // Powers of two never reject.
+        assert_eq!(reduce_uniform(&halves(u128::MAX, u128::MAX), 1 << 32).unwrap(), u32::MAX as u64);
+        assert!(reduce_uniform(&halves(0, 0), 0).is_err());
+    }
+
+    #[test]
+    fn test_derive_range_edge_cases() {
+        let beta = vec_beta();
+        assert_eq!(derive_range_from_beta(&beta, 7, 1).unwrap(), 0);
+        assert!(derive_range_from_beta(&beta, 7, 0).is_err());
+        assert!(derive_range_for_domain_from_beta(&beta, 7, &[0u8; 65], 10).is_err());
+        assert!(derive_range_for_domain_from_beta(&beta, 7, &[0u8; 64], 10).unwrap() < 10);
+        // Domains and request ids separate outputs.
+        let a = derive_range_for_domain_from_beta(&beta, 7, b"card-1", u64::MAX).unwrap();
+        let b = derive_range_for_domain_from_beta(&beta, 7, b"card-2", u64::MAX).unwrap();
+        let c = derive_range_from_beta(&beta, 8, u64::MAX).unwrap();
+        assert_ne!(a, b);
+        assert_ne!(c, derive_range_from_beta(&beta, 7, u64::MAX).unwrap());
+    }
 
     #[test]
     fn test_network_urls() {

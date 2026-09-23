@@ -5,6 +5,8 @@
 
 #[cfg(test)]
 mod test;
+#[cfg(any(test, feature = "testutils"))]
+pub mod testkeys;
 
 use soroban_sdk::crypto::bls12_381::{Bls12381G1Affine, Bls12381G2Affine};
 use soroban_sdk::{
@@ -20,10 +22,44 @@ const INSTANCE_TTL_EXTEND: u32 = 518_400;
 const DRAND_DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_";
 const VRF_DST: &[u8] = b"SOROBAN_VRF_BLS12381G1_XMD:SHA-256_SSWU_RO_";
 const BETA_DOMAIN: &[u8] = b"VREP_BETA_V1";
-const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V1";
+/// Domain tag for every value derived from a stored beta. `V2` because the
+/// derivation input changed in this version: it is now bound to the request id
+/// and (for range derivations) no longer takes a caller-chosen context.
+const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V2";
+/// Sub-domains inside `DERIVE_DOMAIN`, so a `u64` draw and a range draw of the
+/// same request never share hash input.
+const DERIVE_TAG_U64: u8 = 0x01;
+const DERIVE_TAG_RANGE: u8 = 0x02;
+const DERIVE_TAG_RANGE_DOMAIN: u8 = 0x03;
 const MIN_ROUND_OFFSET: u32 = 2;
 const TIMEOUT_ROUNDS: u64 = 20;
 const MAX_CONTEXT_LEN: u32 = 1024;
+/// Maximum length of the optional domain separator accepted by
+/// `derive_range_for_domain()`.
+pub const MAX_DERIVE_DOMAIN_LEN: u32 = 64;
+
+/// Canonical generator of the BLS12-381 G2 group, uncompressed
+/// (`X.c1 ‖ X.c0 ‖ Y.c1 ‖ Y.c0`, big-endian, 192 bytes).
+///
+/// This is a fixed parameter of the curve, not per-deployment configuration.
+/// Earlier versions took it as an `init()` argument and stored it, so a typo at
+/// deployment produced a contract that could never verify a proof. It is now
+/// compiled in. The value matches `G2.ProjectivePoint.BASE` in `@noble/curves`
+/// and the generator in the IETF BLS signature draft.
+pub const BLS12_381_G2_GENERATOR: [u8; 192] = [
+    0x13, 0xe0, 0x2b, 0x60, 0x52, 0x71, 0x9f, 0x60, 0x7d, 0xac, 0xd3, 0xa0, 0x88, 0x27, 0x4f, 0x65,
+    0x59, 0x6b, 0xd0, 0xd0, 0x99, 0x20, 0xb6, 0x1a, 0xb5, 0xda, 0x61, 0xbb, 0xdc, 0x7f, 0x50, 0x49,
+    0x33, 0x4c, 0xf1, 0x12, 0x13, 0x94, 0x5d, 0x57, 0xe5, 0xac, 0x7d, 0x05, 0x5d, 0x04, 0x2b, 0x7e,
+    0x02, 0x4a, 0xa2, 0xb2, 0xf0, 0x8f, 0x0a, 0x91, 0x26, 0x08, 0x05, 0x27, 0x2d, 0xc5, 0x10, 0x51,
+    0xc6, 0xe4, 0x7a, 0xd4, 0xfa, 0x40, 0x3b, 0x02, 0xb4, 0x51, 0x0b, 0x64, 0x7a, 0xe3, 0xd1, 0x77,
+    0x0b, 0xac, 0x03, 0x26, 0xa8, 0x05, 0xbb, 0xef, 0xd4, 0x80, 0x56, 0xc8, 0xc1, 0x21, 0xbd, 0xb8,
+    0x06, 0x06, 0xc4, 0xa0, 0x2e, 0xa7, 0x34, 0xcc, 0x32, 0xac, 0xd2, 0xb0, 0x2b, 0xc2, 0x8b, 0x99,
+    0xcb, 0x3e, 0x28, 0x7e, 0x85, 0xa7, 0x63, 0xaf, 0x26, 0x74, 0x92, 0xab, 0x57, 0x2e, 0x99, 0xab,
+    0x3f, 0x37, 0x0d, 0x27, 0x5c, 0xec, 0x1d, 0xa1, 0xaa, 0xa9, 0x07, 0x5f, 0xf0, 0x5f, 0x79, 0xbe,
+    0x0c, 0xe5, 0xd5, 0x27, 0x72, 0x7d, 0x6e, 0x11, 0x8c, 0xc9, 0xcd, 0xc6, 0xda, 0x2e, 0x35, 0x1a,
+    0xad, 0xfd, 0x9b, 0xaa, 0x8c, 0xbd, 0xd3, 0xa7, 0x6d, 0x42, 0x9a, 0x69, 0x51, 0x60, 0xd1, 0x2c,
+    0x92, 0x3a, 0xc9, 0xcc, 0x3b, 0xac, 0xa2, 0x89, 0xe1, 0x93, 0x54, 0x86, 0x08, 0xb8, 0x28, 0x01,
+];
 
 #[contracttype]
 #[derive(Clone)]
@@ -43,7 +79,6 @@ pub enum DataKey {
     OracleAddr,
     OracleEd25519,
     DrandPK,
-    G2Generator,
     DrandGenesis,
     DrandPeriod,
     RoundOffset,
@@ -54,7 +89,12 @@ pub enum DataKey {
     Refunded(u64),
     CallbackContract(u64),
     CallbackFn(u64),
+    /// Full proof (~450 bytes). Removable with `cleanup_proof()`.
     Proof(u64),
+    /// Verified 32-byte VRF output. Written at fulfillment and **kept** by
+    /// `cleanup_proof()`, so `get_beta()` / `derive_*()` keep working after the
+    /// bulky proof is gone. Subject to normal persistent-storage TTL.
+    Beta(u64),
     Fulfilled(u64),
     /// Transient re-entrancy guard: set true while callback is in-flight.
     /// Prevents a malicious callback from re-entering fulfill().
@@ -71,29 +111,48 @@ pub struct VRFOracleContract;
 
 #[contractimpl]
 impl VRFOracleContract {
-    /// Initialize the VRF Oracle contract.
+    /// Atomic constructor (Soroban Protocol 22+). Runs exactly once, inside the
+    /// same host call that creates the contract instance.
+    ///
+    /// # Why a constructor instead of `init()`
+    /// Earlier versions had a public `init()` guarded only by
+    /// "already initialized". Deploy and init were two transactions, so anyone
+    /// watching the deploy could call `init()` first with an oracle address they
+    /// controlled (front-running). There is now **no** initialization
+    /// entrypoint: configuration can only be supplied by whoever creates the
+    /// instance (`createCustomContract` with constructor args, or
+    /// `env.register(.., args)` in tests), and the host refuses to run a
+    /// constructor twice.
+    ///
+    /// `oracle_address.require_auth()` is kept so the oracle account must also
+    /// sign the deployment: nobody can deploy an instance that names someone
+    /// else's account as its oracle.
+    ///
+    /// # Validation (fail closed)
+    /// Every key is checked before anything is stored, so a misconfiguration
+    /// aborts the deployment instead of producing a contract whose every
+    /// `fulfill()` fails. See `validate_g2_public_key()` / `validate_ed25519_key()`.
     ///
     /// # Parameters
     /// - `fee_token`: SAC token address used to charge per-request fees.
-    /// - `fee_amount`: Amount of `fee_token` charged per VRF request (transferred
-    ///   from requester to oracle). Set to 0 for fee-free operation.
+    /// - `fee_amount`: Amount of `fee_token` charged per VRF request (escrowed from
+    ///   the requester, released to the oracle on fulfillment). 0 = fee-free.
+    ///
+    /// The BLS12-381 G2 generator is **not** a parameter: it is the compiled-in
+    /// constant [`BLS12_381_G2_GENERATOR`].
     #[allow(clippy::too_many_arguments)]
-    pub fn init(
+    pub fn __constructor(
         env: Env,
         oracle_pk: BytesN<192>,
         oracle_address: Address,
         oracle_ed25519_pk: BytesN<32>,
         drand_pk: BytesN<192>,
-        g2_generator: BytesN<192>,
         drand_genesis_time: u64,
         drand_period: u32,
         round_offset: u32,
         fee_token: Address,
         fee_amount: i128,
     ) {
-        if env.storage().instance().has(&DataKey::OraclePK) {
-            panic!("already initialized");
-        }
         if drand_period == 0 {
             panic!("drand period must be > 0");
         }
@@ -103,13 +162,18 @@ impl VRFOracleContract {
         if fee_amount < 0 {
             panic!("fee_amount must be >= 0");
         }
+        validate_g2_public_key(&env, &oracle_pk, "oracle pk");
+        validate_g2_public_key(&env, &drand_pk, "drand pk");
+        if oracle_pk == drand_pk {
+            panic!("oracle pk must differ from drand pk");
+        }
+        validate_ed25519_key(&oracle_ed25519_pk);
 
         oracle_address.require_auth();
         env.storage().instance().set(&DataKey::OraclePK, &oracle_pk);
         env.storage().instance().set(&DataKey::OracleAddr, &oracle_address);
         env.storage().instance().set(&DataKey::OracleEd25519, &oracle_ed25519_pk);
         env.storage().instance().set(&DataKey::DrandPK, &drand_pk);
-        env.storage().instance().set(&DataKey::G2Generator, &g2_generator);
         env.storage().instance().set(&DataKey::DrandGenesis, &drand_genesis_time);
         env.storage().instance().set(&DataKey::DrandPeriod, &drand_period);
         env.storage().instance().set(&DataKey::RoundOffset, &round_offset);
@@ -154,6 +218,19 @@ impl VRFOracleContract {
             .unwrap_or_else(|| panic!("not initialized"));
         current_oracle.require_auth();
 
+        // Fail closed: a structurally valid but unusable key would make every
+        // later fulfill() fail and strand pending requests until timeout.
+        validate_g2_public_key(&env, &new_oracle_pk, "oracle pk");
+        let drand_pk: BytesN<192> = env
+            .storage()
+            .instance()
+            .get(&DataKey::DrandPK)
+            .unwrap_or_else(|| panic!("drand pk missing"));
+        if new_oracle_pk == drand_pk {
+            panic!("oracle pk must differ from drand pk");
+        }
+        validate_ed25519_key(&new_oracle_ed25519_pk);
+
         env.storage().instance().set(&DataKey::OraclePK, &new_oracle_pk);
         env.storage().instance().set(&DataKey::OracleAddr, &new_oracle_address);
         env.storage().instance().set(&DataKey::OracleEd25519, &new_oracle_ed25519_pk);
@@ -169,7 +246,7 @@ impl VRFOracleContract {
     ///
     /// Use this when the configured drand chain rotates its group key. It is
     /// **not** a chain migration: `DrandGenesis`, `DrandPeriod` and the signature
-    /// DST (quicknet, G1, unchained) are fixed at `init()` or compiled in, and the
+    /// DST (quicknet, G1, unchained) are fixed at construction or compiled in, and the
     /// contract has no upgrade entrypoint. Moving to a different drand chain
     /// requires deploying a new contract instance.
     ///
@@ -188,6 +265,16 @@ impl VRFOracleContract {
             .get(&DataKey::OracleAddr)
             .unwrap_or_else(|| panic!("not initialized"));
         oracle_addr.require_auth();
+
+        validate_g2_public_key(&env, &new_drand_pk, "drand pk");
+        let oracle_pk: BytesN<192> = env
+            .storage()
+            .instance()
+            .get(&DataKey::OraclePK)
+            .unwrap_or_else(|| panic!("oracle pk missing"));
+        if new_drand_pk == oracle_pk {
+            panic!("oracle pk must differ from drand pk");
+        }
 
         env.storage().instance().set(&DataKey::DrandPK, &new_drand_pk);
         env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
@@ -411,6 +498,12 @@ impl VRFOracleContract {
     /// and cleared after. Any re-entrant call to `fulfill()` for the same request_id
     /// will see `Fulfilling = true` and panic with "fulfill already in progress".
     /// This provides defense-in-depth alongside the `Fulfilled = true` check.
+    ///
+    /// # Resource budget
+    /// The **VRF core** (checks + effects + fee transfer, i.e. everything except
+    /// the consumer callback) targets ≤ 75M CPU instructions (measured ~58M on
+    /// Mainnet). That target **excludes** the callback. The callback runs in the
+    /// same transaction and adds its own cost to the same transaction-wide limit.
     pub fn fulfill(env: Env, request_id: u64, proof: BlsVrfProof, signature: BytesN<64>) {
         // ── CHECKS ────────────────────────────────────────────────────────────────
 
@@ -517,9 +610,17 @@ impl VRFOracleContract {
             .set(&DataKey::Proof(request_id), &proof.clone());
         env.storage()
             .persistent()
+            .set(&DataKey::Beta(request_id), &proof.beta_output);
+        env.storage()
+            .persistent()
             .set(&DataKey::Fulfilled(request_id), &true);
         env.storage().persistent().extend_ttl(
             &DataKey::Proof(request_id),
+            PERSISTENT_TTL_THRESHOLD,
+            PERSISTENT_TTL_EXTEND,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::Beta(request_id),
             PERSISTENT_TTL_THRESHOLD,
             PERSISTENT_TTL_EXTEND,
         );
@@ -666,99 +767,123 @@ impl VRFOracleContract {
         fulfilled
     }
 
-    pub fn derive_random(env: Env, request_id: u64, context: Bytes) -> u64 {
-        let fulfilled: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Fulfilled(request_id))
-            .unwrap_or(false);
-        if !fulfilled {
-            panic!("request not yet fulfilled");
-        }
+    /// The verified 32-byte VRF output (`beta`) of a fulfilled request.
+    ///
+    /// Stored separately from the full proof and **retained** by
+    /// `cleanup_proof()`, so this keeps working after cleanup (until the entry's
+    /// storage TTL lapses; reads extend it).
+    pub fn get_beta(env: Env, request_id: u64) -> BytesN<32> {
+        read_beta(&env, request_id)
+    }
 
-        let proof: BlsVrfProof = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Proof(request_id))
-            .unwrap_or_else(|| panic!("proof missing"));
-
-        let mut input = Bytes::new(&env);
-        input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
-        input.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
-        input.append(&context);
-        let hash = env.crypto().sha256(&input);
-        let hash_arr = hash.to_array();
+    /// A uniformly random `u64` derived from the request's verified output.
+    ///
+    /// `sha256("VREP_DERIVE_V2" ‖ 0x01 ‖ request_id_be ‖ beta)[0..8]`.
+    ///
+    /// # No caller-chosen input
+    /// The only inputs are fixed before the result is known: the request id and
+    /// the verified beta. Earlier versions also took a `context: Bytes` argument
+    /// here. Because the caller picked it **after** seeing beta, it let anyone
+    /// grind over contexts until they liked the output. Bind application data
+    /// to the request via the `context` given to `request()` instead: that
+    /// value is committed before the drand round is public and already feeds
+    /// alpha (and so beta).
+    pub fn derive_random(env: Env, request_id: u64) -> u64 {
+        let beta = read_beta(&env, request_id);
+        let mut input = derive_prefix(&env, DERIVE_TAG_U64, request_id);
+        input.append(&Bytes::from_slice(&env, &beta.to_array()));
+        let hash_arr = env.crypto().sha256(&input).to_array();
 
         let mut buf = [0u8; 8];
         buf.copy_from_slice(&hash_arr[0..8]);
         u64::from_be_bytes(buf)
     }
 
-    /// Derives a random u64 in `[0, max)` with cryptographically negligible bias.
+    /// An **exactly uniform** value in `[0, max)` derived from the request's
+    /// verified output.
     ///
-    /// # Why not rejection sampling with a bounded loop
-    /// A previous version rejected candidates `>= u64::MAX - (u64::MAX % max)` and,
-    /// after 10 attempts, fell back to a plain `candidate % max`. That fallback is
-    /// **biased**, and the claimed failure probability of `2^-640` was wrong: the
-    /// per-attempt rejection probability is `(u64::MAX % max + 1) / 2^64`, which
-    /// approaches **1/2** as `max` approaches `2^63`. For such ranges the biased
-    /// fallback was reached with probability ≈ `2^-11`, not `2^-640`.
+    /// # Method: bounded rejection sampling over two 128-bit candidates
+    /// `h = sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ request_id_be ‖ max_be ‖ beta)`,
+    /// `c1 = h[0..16]`, `c2 = h[16..32]` (big-endian `u128`),
+    /// `limit = 2^128 − (2^128 mod max)` (the largest multiple of `max` ≤ 2^128).
     ///
-    /// # Current method — "extra bits" reduction (NIST SP 800-90A B.5.1.3 style)
-    /// Draw **128 bits** of hash entropy and reduce modulo `max`. For a uniform
-    /// `x ∈ [0, 2^128)` and any `max < 2^64`, the largest possible deviation between
-    /// residue classes is bounded by `max / 2^128 ≤ 2^-64` — i.e. negligible, and
-    /// smaller than the statistical distance anyone can detect. This is:
-    /// - **unbiased in practice** (≤ 2^-64, no biased fallback path),
-    /// - **constant cost** (exactly one sha256, no loop, deterministic instructions),
-    /// - **deterministic** (same inputs always yield the same output).
-    pub fn derive_random_in_range(env: Env, request_id: u64, context: Bytes, max: u64) -> u64 {
+    /// - if `c1 < limit` → `c1 mod max`
+    /// - else if `c2 < limit` → `c2 mod max`
+    /// - else → panic `"range derivation failed: both candidates rejected"`
+    ///
+    /// Conditioned on returning, `c mod max` is **exactly** uniform: `[0, limit)`
+    /// splits into `limit / max` complete residue cycles, so there is no modulo
+    /// bias at all (the previous 128-bit version had bias ≤ 2^-64, small but
+    /// not zero). There is no biased fallback. When both candidates are
+    /// rejected the call fails explicitly, with probability
+    /// `((2^128 mod max) / 2^128)^2 < (max / 2^128)^2 ≤ 2^-128` for any
+    /// `max < 2^64`. Cost is constant: one sha256, no loop.
+    ///
+    /// # No caller-chosen input
+    /// Inputs are the request id, `max` and the verified beta only. See
+    /// [`Self::derive_random`] for why the old `context` argument was removed.
+    /// `max` is bound into the hash so different ranges draw independent
+    /// candidates.
+    pub fn derive_random_in_range(env: Env, request_id: u64, max: u64) -> u64 {
         if max == 0 {
             panic!("max must be > 0");
         }
+        let beta = read_beta(&env, request_id);
         if max == 1 {
             return 0;
         }
-
-        let fulfilled: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Fulfilled(request_id))
-            .unwrap_or(false);
-        if !fulfilled {
-            panic!("request not yet fulfilled");
-        }
-
-        let proof: BlsVrfProof = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Proof(request_id))
-            .unwrap_or_else(|| panic!("proof missing"));
-
-        // Single sha256 over (domain ‖ beta ‖ context); take 128 bits of it.
-        let mut input = Bytes::new(&env);
-        input.append(&Bytes::from_slice(&env, DERIVE_DOMAIN));
-        input.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
-        input.append(&context);
-        let hash_arr = env.crypto().sha256(&input).to_array();
-
-        let mut wide = [0u8; 16];
-        wide.copy_from_slice(&hash_arr[0..16]);
-        let candidate = u128::from_be_bytes(wide);
-
-        // Reduce 128 bits into [0, max). Bias <= max / 2^128 <= 2^-64 for any
-        // max < 2^64, so no rejection loop (and no biased fallback) is needed.
-        (candidate % (max as u128)) as u64
+        let mut input = derive_prefix(&env, DERIVE_TAG_RANGE, request_id);
+        input.append(&u64_be_bytes(&env, max));
+        input.append(&Bytes::from_slice(&env, &beta.to_array()));
+        reduce_uniform(&env.crypto().sha256(&input).to_array(), max)
     }
 
-    /// Allows the requester (or oracle) to remove proof data for a fulfilled request,
-    /// reclaiming the associated storage rent. The fulfillment flag is preserved.
+    /// Like [`Self::derive_random_in_range`], plus a short **domain separator**
+    /// so one request can feed several independent draws (for example
+    /// `b"card-1"`, `b"card-2"`).
     ///
-    /// # TTL edge case
-    /// After cleanup, `DataKey::Proof` is removed but `DataKey::Fulfilled` is kept.
-    /// Callers relying on `is_fulfilled()` will continue to get `true`.
-    /// Callers calling `get_proof()` or `derive_random()` after cleanup will panic —
-    /// consumers must call `derive_random()` before cleanup or cache the result.
+    /// # ⚠ The domain MUST be fixed before fulfillment
+    /// The output is a deterministic function of `(request, domain, max)`. If a
+    /// party can pick `domain` **after** the randomness is revealed, it can try
+    /// `A`, `B`, `C`, … and keep whichever result suits it, which is grinding
+    /// over derived outputs. Only use constants from your contract's code, or
+    /// values your contract stored before calling `request()`. Never forward a
+    /// user-supplied value here. The contract cannot enforce this: it has no
+    /// way to know when your domain was chosen.
+    ///
+    /// The domain is length-prefixed in the hash input (no ambiguity between,
+    /// for example, `("ab", max)` and `("a", ...)`), and is capped at
+    /// [`MAX_DERIVE_DOMAIN_LEN`] bytes.
+    pub fn derive_range_for_domain(env: Env, request_id: u64, domain: Bytes, max: u64) -> u64 {
+        if max == 0 {
+            panic!("max must be > 0");
+        }
+        if domain.len() > MAX_DERIVE_DOMAIN_LEN {
+            panic!("domain exceeds maximum length");
+        }
+        let beta = read_beta(&env, request_id);
+        if max == 1 {
+            return 0;
+        }
+        let mut input = derive_prefix(&env, DERIVE_TAG_RANGE_DOMAIN, request_id);
+        input.append(&Bytes::from_slice(&env, &domain.len().to_be_bytes()));
+        input.append(&domain);
+        input.append(&u64_be_bytes(&env, max));
+        input.append(&Bytes::from_slice(&env, &beta.to_array()));
+        reduce_uniform(&env.crypto().sha256(&input).to_array(), max)
+    }
+
+    /// Lets the requester (or oracle) remove bulky data for a fulfilled request
+    /// to reclaim storage rent.
+    ///
+    /// Removed: `Proof` (~450 bytes), `RequestContext`, callback metadata.
+    /// **Kept:** `Fulfilled` and the 32-byte `Beta`, so `is_fulfilled()`,
+    /// `get_beta()`, `derive_random()`, `derive_random_in_range()` and
+    /// `derive_range_for_domain()` keep working. Only `get_proof()` (the full
+    /// proof, needed for independent re-verification) fails after cleanup.
+    /// Re-verifiers should fetch the proof from the `fulfill` transaction or
+    /// call `get_proof()` before cleanup. All entries remain subject to
+    /// Soroban storage TTL.
     pub fn cleanup_proof(env: Env, request_id: u64, caller: Address) {
         caller.require_auth();
 
@@ -854,6 +979,112 @@ fn u64_be_bytes(env: &Env, value: u64) -> Bytes {
     Bytes::from_slice(env, &value.to_be_bytes())
 }
 
+/// The canonical BLS12-381 G2 generator as a host point.
+fn g2_generator(env: &Env) -> Bls12381G2Affine {
+    Bls12381G2Affine::from_bytes(BytesN::from_array(env, &BLS12_381_G2_GENERATOR))
+}
+
+/// Uncompressed encoding of the point at infinity: only the infinity flag
+/// (bit 1 of byte 0) set, every other bit zero.
+fn is_g2_infinity_encoding(key: &BytesN<192>) -> bool {
+    let bytes = key.to_array();
+    bytes[0] == 0x40 && bytes[1..].iter().all(|b| *b == 0)
+}
+
+/// Fail-closed validation of a BLS12-381 G2 public key before it is stored.
+///
+/// Rejects, with a readable message, keys that would otherwise pass storage
+/// and then make every `fulfill()` fail (or, worse, verify trivially):
+/// - **point at infinity**: the identity element. Pairings with it are always
+///   1, so a pairing check against it says nothing about the signer.
+/// - **not on the curve / not in the prime-order subgroup**: checked with the
+///   host's `g2_is_in_subgroup`, which deserializes the point and checks the
+///   field encoding, the on-curve equation and subgroup membership. A malformed
+///   encoding traps in the host, which also aborts the call.
+/// - **the generator itself**: that is the public key of secret key `1`, so
+///   anyone can sign for it. This almost always means the generator was pasted
+///   where the key belonged.
+fn validate_g2_public_key(env: &Env, key: &BytesN<192>, what: &str) {
+    if is_g2_infinity_encoding(key) {
+        panic!("{} is the point at infinity", what);
+    }
+    if key.to_array() == BLS12_381_G2_GENERATOR {
+        panic!("{} must not be the G2 generator", what);
+    }
+    let point = Bls12381G2Affine::from_bytes(key.clone());
+    if !env.crypto().bls12_381().g2_is_in_subgroup(&point) {
+        panic!("{} is not in the G2 subgroup", what);
+    }
+}
+
+/// Ed25519 keys are always 32 bytes (`BytesN<32>` enforces that). An all-zero
+/// key is not a usable verifying key, and it is the typical result of an unset
+/// or mis-copied value. Point validity is also re-checked by the host on every
+/// `ed25519_verify`.
+fn validate_ed25519_key(key: &BytesN<32>) {
+    if key.to_array().iter().all(|b| *b == 0) {
+        panic!("oracle ed25519 key must not be all zero");
+    }
+}
+
+/// Read the verified beta of a fulfilled request (and keep it alive).
+fn read_beta(env: &Env, request_id: u64) -> BytesN<32> {
+    let fulfilled: bool = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Fulfilled(request_id))
+        .unwrap_or(false);
+    if !fulfilled {
+        panic!("request not yet fulfilled");
+    }
+    let beta: BytesN<32> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Beta(request_id))
+        .unwrap_or_else(|| panic!("beta missing"));
+    env.storage().persistent().extend_ttl(
+        &DataKey::Beta(request_id),
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL_EXTEND,
+    );
+    env.storage().persistent().extend_ttl(
+        &DataKey::Fulfilled(request_id),
+        PERSISTENT_TTL_THRESHOLD,
+        PERSISTENT_TTL_EXTEND,
+    );
+    beta
+}
+
+/// `DERIVE_DOMAIN ‖ tag ‖ request_id_be`: common prefix of every derivation.
+fn derive_prefix(env: &Env, tag: u8, request_id: u64) -> Bytes {
+    let mut input = Bytes::from_slice(env, DERIVE_DOMAIN);
+    input.push_back(tag);
+    input.append(&u64_be_bytes(env, request_id));
+    input
+}
+
+/// Exact-uniform reduction of a 32-byte hash into `[0, max)` by rejection
+/// sampling over its two 128-bit halves. See `derive_random_in_range()`.
+///
+/// Requires `max >= 2`.
+pub(crate) fn reduce_uniform(hash: &[u8; 32], max: u64) -> u64 {
+    let max128 = max as u128;
+    // 2^128 mod max == (2^128 - max) mod max == (u128::MAX - max + 1) % max.
+    // Values at or above `limit` belong to an incomplete final cycle.
+    let rem = (u128::MAX - max128 + 1) % max128;
+    let mut c = [0u8; 16];
+    for half in 0..2 {
+        c.copy_from_slice(&hash[half * 16..half * 16 + 16]);
+        let candidate = u128::from_be_bytes(c);
+        // candidate < limit  <=>  candidate <= u128::MAX - rem
+        // (limit = 2^128 - rem cannot be represented when rem == 0.)
+        if rem == 0 || candidate <= u128::MAX - rem {
+            return (candidate % max128) as u64;
+        }
+    }
+    panic!("range derivation failed: both candidates rejected");
+}
+
 fn derive_expected_alpha(
     env: &Env,
     request_id: u64,
@@ -892,12 +1123,6 @@ fn verify_bls_vrf_proof(env: &Env, proof: &BlsVrfProof) -> bool {
     let h = bls.hash_to_g1(&alpha_bytes, &dst);
     let gamma = Bls12381G1Affine::from_bytes(proof.gamma_point.clone());
 
-    let g2_generator_bytes: BytesN<192> = env
-        .storage()
-        .instance()
-        .get(&DataKey::G2Generator)
-        .unwrap_or_else(|| panic!("g2 generator missing"));
-    let g2_generator = Bls12381G2Affine::from_bytes(g2_generator_bytes);
     let pk = Bls12381G2Affine::from_bytes(proof.public_key.clone());
 
     let mut g1_vec = Vec::<Bls12381G1Affine>::new(env);
@@ -905,7 +1130,7 @@ fn verify_bls_vrf_proof(env: &Env, proof: &BlsVrfProof) -> bool {
     g1_vec.push_back(-h);
 
     let mut g2_vec = Vec::<Bls12381G2Affine>::new(env);
-    g2_vec.push_back(g2_generator);
+    g2_vec.push_back(g2_generator(env));
     g2_vec.push_back(pk);
 
     bls.pairing_check(g1_vec, g2_vec)
@@ -921,12 +1146,6 @@ fn verify_drand_signature(env: &Env, proof: &BlsVrfProof) -> bool {
         .get(&DataKey::DrandPK)
         .unwrap_or_else(|| panic!("drand pk missing"));
     let drand_pk = Bls12381G2Affine::from_bytes(drand_pk_bytes);
-    let g2_generator_bytes: BytesN<192> = env
-        .storage()
-        .instance()
-        .get(&DataKey::G2Generator)
-        .unwrap_or_else(|| panic!("g2 generator missing"));
-    let g2_generator = Bls12381G2Affine::from_bytes(g2_generator_bytes);
 
     let round_be = u64_be_bytes(env, proof.drand_round);
     let round_hash = env.crypto().sha256(&round_be);
@@ -939,7 +1158,7 @@ fn verify_drand_signature(env: &Env, proof: &BlsVrfProof) -> bool {
     g1_vec.push_back(-h_msg);
 
     let mut g2_vec = Vec::<Bls12381G2Affine>::new(env);
-    g2_vec.push_back(g2_generator);
+    g2_vec.push_back(g2_generator(env));
     g2_vec.push_back(drand_pk);
 
     bls.pairing_check(g1_vec, g2_vec)
@@ -1097,12 +1316,18 @@ fn request_internal(
 /// the oracle pay network fees indefinitely (callback-griefing DoS).
 ///
 /// Consumers therefore MUST NOT rely on the callback always succeeding;
-/// the canonical output is always readable via `get_proof(request_id)`.
+/// the canonical output is always readable via `get_beta(request_id)`.
 ///
-/// Limitation: host budget exhaustion (CPU/memory) is not recoverable in
-/// Soroban and still aborts the whole transaction. That case is detected at
-/// simulation time and is bounded off-chain by the worker's per-request
-/// attempt cap.
+/// # What is NOT isolated: resource exhaustion
+/// Only ordinary errors and panics are isolated. Soroban meters the **whole
+/// invocation tree under one transaction-wide budget** (currently 400M CPU
+/// instructions and 40 MiB of memory per transaction on Mainnet). There is no
+/// separate sub-budget for the callback. A callback that exhausts CPU or
+/// memory therefore aborts the **entire** `fulfill()` transaction, and nothing
+/// above is committed. Mitigations are off-chain: the worker simulates first,
+/// refuses to submit transactions above its configured instruction/memory
+/// ceilings (`resourceGuard.ts`), treats resource-limit failures as terminal
+/// instead of retrying them, and caps sends per request.
 pub(crate) fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &BlsVrfProof) {
     if !env
         .storage()

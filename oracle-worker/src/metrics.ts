@@ -67,11 +67,14 @@ export interface FeeGuardStats {
   unpaidSpendWindowStroops: bigint | null;
   /** Configured unpaid budget per rolling hour (stroops). */
   unpaidBudgetStroops: bigint | null;
+  /** Requests parked after a deterministic failure (never retried), by reason. */
+  terminalFailures: Record<string, number>;
 }
 
 const feeGuardStats: FeeGuardStats = {
   deferred: 0,
   unpaidFulfilled: 0,
+  terminalFailures: {},
   oracleBalanceStroops: null,
   unpaidSpendWindowStroops: null,
   unpaidBudgetStroops: null,
@@ -91,6 +94,10 @@ export function getFeeGuardStats(): Readonly<FeeGuardStats> {
 
 export function recordFeeDeferred(): void {
   feeGuardStats.deferred++;
+}
+
+export function recordTerminalFailure(reason: string): void {
+  feeGuardStats.terminalFailures[reason] = (feeGuardStats.terminalFailures[reason] ?? 0) + 1;
 }
 
 export function recordUnpaidFulfilled(): void {

@@ -86,6 +86,21 @@ export class SendAttemptTracker {
     return { ok: true };
   }
 
+  /**
+   * Use up the rest of a request's allowance at once. Called after a
+   * deterministic (terminal) failure: retrying cannot succeed, so later
+   * reconciliation passes must skip it without spending anything.
+   */
+  park(requestId: bigint): void {
+    const key = requestId.toString();
+    this.sends.delete(key);
+    this.sends.set(key, this.opts.maxSendsPerRequest);
+    while (this.sends.size > this.opts.maxTrackedRequests) {
+      const oldest = this.sends.keys().next().value as string;
+      this.sends.delete(oldest);
+    }
+  }
+
   /** Forget a request (e.g. once it is fulfilled or refunded on-chain). */
   clear(requestId: bigint): void {
     this.sends.delete(requestId.toString());

@@ -26,6 +26,7 @@ import {
   scValToNative,
   xdr,
   rpc,
+  hash as sha256,
 } from "@stellar/stellar-sdk";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -133,33 +134,58 @@ export class VrfClient {
 
   /**
    * Derive a verifiable random number in the inclusive range [min, max]
-   * using the contract's `derive_random_in_range(request_id, context, max)`,
-   * which returns a value in [0, max). We request a span of (max - min + 1)
-   * and shift the result by `min` to cover the inclusive range.
+   * using the contract's `derive_random_in_range(request_id, max)`, which
+   * returns an **exactly** uniform value in [0, max) (rejection sampling, no
+   * modulo bias). We request a span of (max - min + 1) and shift by `min`.
+   * Equals `min + deriveRangeFromBeta(beta, requestId, span)` offline.
    *
-   * @param requestId  The fulfilled request id.
-   * @param min        Inclusive lower bound.
-   * @param max        Inclusive upper bound.
-   * @param context    Domain-separation bytes (must match what the consumer
-   *                   used); defaults to an empty byte string.
+   * There is no caller-chosen context: a value picked after the result is
+   * known would allow grinding. Bind application data at `request()` time, or
+   * use `deriveRangeForDomain()` with a **fixed** domain.
    *
    * Range limit: the contract takes an exclusive u64 bound, so `[min, max]` must
-   * lie within u64 and contain at most 2^64 - 1 values. `[0, 2^64 - 1]` itself
-   * is rejected; use `deriveRandomFromBeta()` for full-width randomness.
+   * lie within u64 and contain at most 2^64 - 1 values.
    */
-  async deriveRandomInRange(
-    requestId: bigint,
-    min: bigint,
-    max: bigint,
-    context: Uint8Array = new Uint8Array()
-  ): Promise<bigint> {
+  async deriveRandomInRange(requestId: bigint, min: bigint, max: bigint): Promise<bigint> {
     const span = inclusiveSpan(min, max);
     const result = await this.simulate("derive_random_in_range", [
       nativeToScVal(requestId, { type: "u64" }),
-      nativeToScVal(context, { type: "bytes" }),
       nativeToScVal(span, { type: "u64" }),
     ]);
     return BigInt(result as string | number | bigint) + min;
+  }
+
+  /**
+   * Like `deriveRandomInRange()`, plus a short domain separator so one request
+   * can feed several independent draws.
+   *
+   * **The domain MUST be fixed before fulfillment** (a constant, or a value
+   * committed before `request()`). Whoever can pick it after the randomness is
+   * public can try many domains and keep the best result. At most
+   * `MAX_DERIVE_DOMAIN_LEN` bytes.
+   */
+  async deriveRangeForDomain(
+    requestId: bigint,
+    domain: Uint8Array,
+    min: bigint,
+    max: bigint
+  ): Promise<bigint> {
+    if (domain.length > MAX_DERIVE_DOMAIN_LEN) {
+      throw new Error(`domain is ${domain.length} bytes; the contract accepts at most ${MAX_DERIVE_DOMAIN_LEN}`);
+    }
+    const span = inclusiveSpan(min, max);
+    const result = await this.simulate("derive_range_for_domain", [
+      nativeToScVal(requestId, { type: "u64" }),
+      nativeToScVal(domain, { type: "bytes" }),
+      nativeToScVal(span, { type: "u64" }),
+    ]);
+    return BigInt(result as string | number | bigint) + min;
+  }
+
+  /** The verified 32-byte beta (`get_beta`). Survives `cleanup_proof()`. */
+  async getBeta(requestId: bigint): Promise<Uint8Array> {
+    const result = await this.simulate("get_beta", [nativeToScVal(requestId, { type: "u64" })]);
+    return toUint8Array(result);
   }
 
   /**
@@ -309,16 +335,6 @@ export class VrfClient {
    */
   private parseProofFromNative(requestId: bigint, raw: unknown): VrfProof {
     const obj = raw as Record<string, unknown>;
-    const toUint8Array = (v: unknown): Uint8Array => {
-      if (v instanceof Uint8Array) return v;
-      if (Array.isArray(v)) return new Uint8Array(v as number[]);
-      if (v instanceof ArrayBuffer) return new Uint8Array(v);
-      // scValToNative may return Buffer-like objects (which are Uint8Array subclasses)
-      if (typeof v === "object" && v !== null && "length" in v) {
-        return new Uint8Array(v as ArrayLike<number>);
-      }
-      throw new Error(`Cannot convert ${typeof v} to Uint8Array`);
-    };
     return {
       requestId,
       alphaSeed: toUint8Array(obj["alpha_seed"]),
@@ -332,6 +348,113 @@ export class VrfClient {
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
+
+function toUint8Array(v: unknown): Uint8Array {
+  if (v instanceof Uint8Array) return v;
+  if (Array.isArray(v)) return new Uint8Array(v as number[]);
+  if (v instanceof ArrayBuffer) return new Uint8Array(v);
+  // scValToNative may return Buffer-like objects (which are Uint8Array subclasses)
+  if (typeof v === "object" && v !== null && "length" in v) {
+    return new Uint8Array(v as ArrayLike<number>);
+  }
+  throw new Error(`Cannot convert ${typeof v} to Uint8Array`);
+}
+
+// ── Offline derivation (byte-for-byte identical to the contract) ─────────────
+
+/** Domain prefix of every contract derivation (`DERIVE_DOMAIN`). */
+export const DERIVE_DOMAIN = "VREP_DERIVE_V2";
+/** Longest domain accepted by `derive_range_for_domain`. */
+export const MAX_DERIVE_DOMAIN_LEN = 64;
+const TAG_U64 = 0x01;
+const TAG_RANGE = 0x02;
+const TAG_RANGE_DOMAIN = 0x03;
+const TWO_128 = 1n << 128n;
+
+function be64(v: bigint): Uint8Array {
+  const b = new Uint8Array(8);
+  new DataView(b.buffer).setBigUint64(0, v);
+  return b;
+}
+
+function be32(v: number): Uint8Array {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, v);
+  return b;
+}
+
+function bytesToBigInt(b: Uint8Array): bigint {
+  return b.length === 0 ? 0n : BigInt("0x" + toHex(b));
+}
+
+function deriveHash(tag: number, requestId: bigint, parts: Uint8Array[], beta: Uint8Array): Uint8Array {
+  if (beta.length !== 32) throw new Error("beta must be exactly 32 bytes");
+  if (requestId < 0n || requestId > U64_MAX) throw new Error("requestId must be a u64");
+  const input = Buffer.concat([
+    Buffer.from(DERIVE_DOMAIN, "utf8"),
+    Uint8Array.of(tag),
+    be64(requestId),
+    ...parts,
+    beta,
+  ]);
+  return new Uint8Array(sha256(input));
+}
+
+function checkMax(max: bigint): void {
+  if (max <= 0n || max > U64_MAX) throw new Error("max must be in [1, 2^64 - 1]");
+}
+
+/**
+ * Exact-uniform reduction of a 32-byte hash into [0, max), identical to the
+ * contract's `reduce_uniform()`: two 128-bit big-endian candidates, each
+ * accepted iff `c < 2^128 - (2^128 mod max)`. Throws if both are rejected
+ * (probability < 2^-128), exactly where the contract panics. No biased fallback.
+ */
+export function reduceUniform(hash: Uint8Array, max: bigint): bigint {
+  if (hash.length !== 32) throw new Error("hash must be 32 bytes");
+  checkMax(max);
+  const limit = TWO_128 - (TWO_128 % max);
+  for (const half of [hash.subarray(0, 16), hash.subarray(16, 32)]) {
+    const c = bytesToBigInt(half);
+    if (c < limit) return c % max;
+  }
+  throw new Error("range derivation failed: both candidates rejected");
+}
+
+/** Offline equivalent of the contract's `derive_random(request_id)`. */
+export function deriveU64FromBeta(beta: Uint8Array, requestId: bigint): bigint {
+  return bytesToBigInt(deriveHash(TAG_U64, requestId, [], beta).subarray(0, 8));
+}
+
+/**
+ * Offline equivalent of the contract's `derive_random_in_range(request_id, max)`:
+ * an exactly uniform value in [0, max).
+ */
+export function deriveRangeFromBeta(beta: Uint8Array, requestId: bigint, max: bigint): bigint {
+  checkMax(max);
+  if (max === 1n) {
+    deriveHash(TAG_RANGE, requestId, [], beta); // still validate inputs
+    return 0n;
+  }
+  return reduceUniform(deriveHash(TAG_RANGE, requestId, [be64(max)], beta), max);
+}
+
+/**
+ * Offline equivalent of the contract's `derive_range_for_domain(request_id, domain, max)`.
+ * **The domain must be fixed before fulfillment**, otherwise it can be ground.
+ */
+export function deriveRangeForDomainFromBeta(
+  beta: Uint8Array,
+  requestId: bigint,
+  domain: Uint8Array,
+  max: bigint
+): bigint {
+  checkMax(max);
+  if (domain.length > MAX_DERIVE_DOMAIN_LEN) throw new Error("domain exceeds maximum length");
+  if (max === 1n) return 0n;
+  const h = deriveHash(TAG_RANGE_DOMAIN, requestId, [be32(domain.length), domain, be64(max)], beta);
+  return reduceUniform(h, max);
+}
 
 const U64_MAX = (1n << 64n) - 1n;
 
@@ -348,7 +471,7 @@ function inclusiveSpan(min: bigint, max: bigint): bigint {
   if (span > U64_MAX) {
     throw new Error(
       "range [0, 2^64 - 1] has 2^64 values and cannot be expressed as the contract's " +
-        "exclusive u64 bound; use deriveRandomFromBeta() or the raw beta instead"
+        "exclusive u64 bound; use deriveU64FromBeta() or the raw beta instead"
     );
   }
   return span;
@@ -358,10 +481,9 @@ function inclusiveSpan(min: bigint, max: bigint): bigint {
  * Derive a random number in the inclusive range [min, max] client-side from a
  * beta output hex string, without a contract call.
  *
- * This is a pure, deterministic function of beta, so anyone holding the
- * verified beta can reproduce it. It is **not** the same function as the
- * contract's `derive_random_in_range(request_id, context, max)`, which first
- * hashes `domain ‖ beta ‖ context`. Don't mix the two for the same purpose.
+ * @deprecated Not the contract's function, and only negligibly (≤ 2^-64)
+ * rather than exactly uniform. Use `deriveRangeFromBeta()`, which reproduces
+ * the contract's `derive_random_in_range(request_id, max)` exactly.
  *
  * Bias: this consumes **128 bits** of beta and reduces modulo the range. For a
  * uniform `x` in [0, 2^128) and any range < 2^64, the deviation between residue

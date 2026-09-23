@@ -35,7 +35,16 @@ import { FeeGuard, feeGuardOptionsFromEnv, formatXlm, type Funding } from "./fee
 import { createSpendLedger } from "./spendLedger.js";
 import { SendAttemptTracker, sendAttemptOptionsFromEnv } from "./sendAttempts.js";
 import { Asset } from "@stellar/stellar-sdk";
-import { waitAndFetchBeacon } from "./drand.js";
+import { waitAndFetchBeacon, computeCurrentRound } from "./drand.js";
+import { FulfillTerminalError } from "./fulfillErrors.js";
+import { verifyChainConfig, chainConfigSkipPolicyError } from "./configCheck.js";
+import { readChainConfig } from "./listener.js";
+import {
+  DRAND_GENESIS_TIME,
+  DRAND_PUBLIC_KEY,
+  ORACLE_PUBLIC_KEY,
+} from "./config.js";
+import { Networks } from "@stellar/stellar-sdk";
 import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
 import { submitFulfillment } from "./fulfiller.js";
 import { log, bytesToHex, sleep } from "./utils.js";
@@ -59,6 +68,7 @@ import {
   recordOracleBalance,
   recordUnpaidSpendWindow,
   recordUnpaidBudget,
+  recordTerminalFailure,
 } from "./metrics.js";
 import { withRetry, withFulfillRetry, checkDrandLag } from "./retry.js";
 import { DRAND_PERIOD } from "./config.js";
@@ -175,9 +185,9 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     log.info(`  Required round: ${event.requiredRound}`);
 
     // 2. Wait for and fetch the drand beacon (with lag detection + retry)
-    const currentRound = Math.floor(
-      (Date.now() / 1000 - 1692803367) / DRAND_PERIOD
-    );
+    // Genesis/period come from config (verified against the contract at
+    // startup by configCheck.ts), never a hard-coded quicknet constant.
+    const currentRound = computeCurrentRound(Date.now() / 1000);
     checkDrandLag(Number(event.requiredRound), currentRound, DRAND_PERIOD * 1000);
 
     log.info(`  Waiting for drand round ${event.requiredRound}…`);
@@ -258,6 +268,21 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     recordFailure(msg);
     feeGuard.invalidateBalance(); // a failed send may still have charged a fee
+    if (err instanceof FulfillTerminalError) {
+      // Deterministic: the same inputs fail the same way. Park the request so
+      // reconciliation stops spending on it (see fulfillErrors.ts).
+      recordTerminalFailure(err.reason);
+      if (err.settled) {
+        sendAttempts.clear(event.requestId);
+        log.info(`Request ${event.requestId} needs no further work (${err.reason}).`);
+      } else {
+        sendAttempts.park(event.requestId);
+        log.warn(
+          `Request ${event.requestId} parked after terminal failure (${err.reason}); ` +
+            `not retrying. The requester can timeout_refund().`
+        );
+      }
+    }
     if (err instanceof Error && err.name === "FulfillAbortedError" && !/leadership lost/.test(msg)) {
       recordFeeDeferred(); // refused at send time by the fee guard; stays pending on-chain
     }
@@ -356,6 +381,33 @@ async function main(): Promise<void> {
   const blsPubKey = deriveBlsPublicKey();
   log.info(`Oracle BLS public key: ${bytesToHex(blsPubKey).slice(0, 40)}…`);
   log.info(`Instance ID: ${getInstanceId()}`);
+
+  // The contract is the single source of truth for drand genesis/period/key
+  // and the oracle keys. Refuse to start when the environment disagrees:
+  // every proof would be rejected on-chain and still cost fees.
+  const skipCheck = (process.env.SKIP_CHAIN_CONFIG_CHECK || "").toLowerCase() === "true";
+  const skipPolicy = chainConfigSkipPolicyError(
+    skipCheck,
+    NETWORK_PASSPHRASE,
+    process.env.NODE_ENV,
+    Networks.PUBLIC
+  );
+  if (skipPolicy) throw new Error(skipPolicy);
+  if (skipCheck) {
+    log.warn("SKIP_CHAIN_CONFIG_CHECK=true: NOT verifying config against the contract (debug only).");
+  } else {
+    await verifyChainConfig(
+      {
+        drandGenesisTime: DRAND_GENESIS_TIME,
+        drandPeriod: DRAND_PERIOD,
+        drandPublicKeyHex: DRAND_PUBLIC_KEY,
+        oracleBlsPublicKey: blsPubKey,
+        oracleAddress: ORACLE_PUBLIC_KEY,
+      },
+      () => withRetry("read_chain_config", () => readChainConfig(feeGuardServer))
+    );
+    log.info("Chain config check: drand genesis/period/key and oracle keys match the contract.");
+  }
 
   // Report the economic posture up front so operators see it in the first log lines.
   const { fulfillCostStroops, minBalanceStroops, unpaidBudgetStroops, allowlist } = feeGuardOptions;

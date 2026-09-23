@@ -9,6 +9,7 @@
 
 import { log } from "./utils.js";
 import { recordDrandDelay } from "./metrics.js";
+import { isNonRetryable } from "./fulfillErrors.js";
 
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || "5", 10);
 const BASE_DELAY_MS = parseInt(process.env.RETRY_BASE_DELAY_MS || "2000", 10);
@@ -93,19 +94,15 @@ export function checkDrandLag(
  * Retry a fulfill() transaction with sequence number refresh on conflict.
  * Soroban transactions can fail with "txBadSeq" if two nodes submit simultaneously.
  *
- * Errors named `FulfillAbortedError` (deliberate abort, e.g. leadership lost)
- * are rethrown immediately instead of being retried.
+ * `FulfillAbortedError` (deliberate abort, e.g. leadership lost) and
+ * `FulfillTerminalError` (deterministic failure, see fulfillErrors.ts) are
+ * rethrown immediately instead of being retried.
  */
 export async function withFulfillRetry<T>(
   label: string,
   fn: () => Promise<T>
 ): Promise<T> {
-  return withRetry(
-    label,
-    fn,
-    MAX_RETRIES,
-    (err) => !(err instanceof Error && err.name === "FulfillAbortedError")
-  );
+  return withRetry(label, fn, MAX_RETRIES, (err) => !isNonRetryable(err));
 }
 
 function sleep(ms: number): Promise<void> {

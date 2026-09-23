@@ -28,7 +28,7 @@ Consumer ──request()──▶ VRF Contract ◀──fulfill()── Oracle W
 to inject a chosen randomness value.
 
 **Remediation (Spoofing.1.R.1):** The contract enforces `oracle_address.require_auth()`.
-Only the Stellar account that was registered during `init()` can invoke `fulfill()`.
+Only the Stellar account registered at construction (`__constructor`; `init()` on the legacy WASM) can invoke `fulfill()`.
 The proof struct is additionally verified via on-chain `ed25519_verify()` (oracle signature)
 and `bls12_381_pairing_check()` (VRF proof validity). Forging any of these is
 computationally infeasible.
@@ -73,7 +73,7 @@ That residual is Tampering.3.
 to predict and potentially censor unfavorable results.
 
 **Remediation (Tampering.2.R.1):** Every request is bound to a future drand round
-(`round_offset >= 2`, enforced in `init()`). The beacon hasn't been published when the
+(`round_offset >= 2`, enforced in `__constructor`). The beacon hasn't been published when the
 request is created, so the oracle cannot know the VRF input in advance.
 
 ### Tampering.3 — Key rotation used to install a malicious oracle key
@@ -156,16 +156,24 @@ an unfair advantage in games or lotteries.
 BLS secret key (known only to the oracle) and the drand beacon (unpublished at request time
 due to `round_offset >= 2`). Even the oracle cannot predict the output until the drand
 round is published, **provided it does not rotate the drand key to one it controls**
-(Tampering.3). `derive_random_in_range()` maps the output into `[0, max)` by drawing
-**128 bits** of hash entropy and reducing modulo `max` ("extra bits" reduction, NIST
-SP 800-90A B.5.1.3 style): the deviation between residue classes is bounded by
-$max / 2^{128} \le 2^{-64}$ for any `max < 2^64`, with **no biased fallback path** and a
-**constant** instruction cost (one `sha256`, no loop). An earlier bounded rejection loop
-that fell back to a plain 64-bit `% max` after 10 attempts was removed — that fallback was
-biased and its documented $2^{-640}$ failure probability was incorrect (the true
-per-attempt rejection probability approaches $1/2$ for `max` near $2^{63}$).
-**Deployment note:** the live Mainnet contract predates this change and still runs the
-old loop (verified on-chain). That matters only for very large `max`. A redeployment ships the fix.
+(Tampering.3). `derive_random_in_range(request_id, max)` maps the output into `[0, max)`
+**exactly uniformly**. It hashes `"VREP_DERIVE_V2" ‖ tag ‖ request_id ‖ max ‖ beta` and
+splits the digest into two 128-bit candidates. A candidate `c` is accepted iff
+$c < 2^{128} - (2^{128} \bmod max)$, which is a whole number of residue cycles, so
+`c mod max` has **zero** bias. If both candidates are rejected (probability
+$< (max/2^{128})^2 \le 2^{-128}$) the call **fails explicitly**: there is no biased fallback.
+Cost is constant: one `sha256`, no loop. Earlier versions were negligibly biased
+(≤ $2^{-64}$, 128-bit modulo), and before that used a loop with a biased 64-bit fallback.
+
+**Derivation-time grinding (removed).** The derive functions used to take a free `context`
+argument chosen by the caller **after** `beta` was public, so a caller could try contexts
+until it liked the result. The derive functions now take only values fixed before
+fulfillment. `derive_range_for_domain` keeps a short domain separator for independent draws.
+It is documented as MUST-be-fixed-before-fulfillment, because the contract can't enforce
+when a domain was chosen.
+
+**Deployment note:** the live Mainnet contract predates these changes. It still runs the old
+loop and accepts a derivation `context` (verified on-chain). A redeployment ships the fix.
 
 ---
 
@@ -218,7 +226,7 @@ the deployment-wide ceiling.
 the oracle to spend gas on `fulfill()` for each one.
 
 **Remediation (Denial_of_Service.2.R.1):** The `fee_token` and `fee_amount` parameters
-in `init()` charge per-request fees via SAC token transfer into escrow. The fee is held
+in `__constructor` charge per-request fees via SAC token transfer into escrow. The fee is held
 in the VRF contract and released to the oracle only upon successful fulfillment, or
 refunded to the requester on timeout. Currently deployed with `fee_amount = 0`;
 this can be configured to make spam economically costly.

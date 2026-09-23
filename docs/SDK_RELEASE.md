@@ -11,9 +11,28 @@ _Registry state verified 2026-09-22 against the live registries (`npm view`, cra
 
 npm 1.0.1 includes the `Networks.MAINNET` alias: commit `cde82d9` is an ancestor of `e90347e`.
 
-### Unreleased (in `main`, not in any published version)
+### Unreleased (in `main`, not in any published version): **2.0.0**
 
-These changes are newer than `e90347e` and need a new release (proposed **1.1.0**):
+Both manifests are bumped to **2.0.0** (`sdk/js/package.json`, `sdk/rust/Cargo.toml`). The
+release is **major** because the derivation API follows the audit round 5 contract changes. It
+must be published **together with the contract redeployment**, because 2.0 calls signatures the
+current Mainnet WASM doesn't have:
+
+- **Breaking, both SDKs:** `deriveRandomInRange` / `derive_random_in_range` no longer take a
+  `context` argument. The contract dropped it because a caller could choose it after seeing
+  `beta` and grind the output.
+- **New, both SDKs:** `deriveRangeForDomain` / `derive_range_for_domain` (domain ≤ 64 bytes, must
+  be fixed before fulfillment) and `getBeta` / `get_beta`.
+- **New, both SDKs:** offline equivalents that match the contract byte-for-byte:
+  `deriveU64FromBeta` / `derive_u64_from_beta`, `deriveRangeFromBeta` / `derive_range_from_beta`,
+  `deriveRangeForDomainFromBeta` / `derive_range_for_domain_from_beta` and `reduceUniform` /
+  `reduce_uniform`. They use **exact** rejection sampling and fail explicitly with probability
+  < 2^-128. Shared vectors (beta = `00..1f`, id 7) are asserted by the contract, both SDKs and
+  the consumer example.
+- **Deprecated:** `deriveRandomFromBeta` / `derive_random_from_beta`.
+- **Rust SDK:** new dependency `sha2 = "0.10"`. **JS SDK:** `npm test` runs the vector tests.
+
+Earlier unreleased changes, also included in 2.0.0:
 
 - **Both SDKs:** client-side `deriveRandomFromBeta` / `derive_random_from_beta` now use 128 bits
   of beta instead of 64, which reduces bias for very large ranges. This **changes the output**
@@ -25,8 +44,8 @@ These changes are newer than `e90347e` and need a new release (proposed **1.1.0*
   overflowed before widening.
 - **Rust SDK:** event `requester` values are proper StrKey addresses. Previously they were a
   non-decodable `G<hex>` string.
-- **Docs:** the client-side helpers are documented as **not** the same function as the
-  contract's `derive_random_in_range`, which hashes `domain ‖ beta ‖ context` first.
+- **Docs:** the legacy client-side helpers are documented as **not** the same function as the
+  contract's `derive_random_in_range`. Use the new `*FromBeta` functions above instead.
 
 Publishing needs maintainer credentials: `npm login` with a publish-capable token, and
 `cargo login`. After publishing, update the table above.

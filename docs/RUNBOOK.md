@@ -44,34 +44,52 @@ cp .env.example .env
 # NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 ```
 
-### 1.3 Deploy contract (testnet)
+### 1.3 Deploy + configure contract (testnet), one step
+
+The contract is configured by its `__constructor` **during deployment**. There
+is no separate `init()` call, so no uninitialised instance ever exists that
+someone else could configure first. The constructor calls
+`oracle_address.require_auth()`, so deploy **from the oracle account**. The
+BLS12-381 G2 generator is compiled in and is not an argument.
 
 ```bash
 stellar contract deploy \
   --wasm soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.wasm \
-  --source-account deployer \
-  --network testnet
-```
-
-### 1.4 Initialize contract
-
-```bash
-stellar contract invoke \
-  --id <CONTRACT_ID> \
-  --source-account deployer \
+  --source-account oracle \
   --network testnet \
-  -- init \
+  -- \
   --oracle_pk <BLS_PUBLIC_KEY_HEX> \
   --oracle_address <ORACLE_STELLAR_ADDRESS> \
   --oracle_ed25519_pk <ED25519_PK_HEX> \
   --drand_pk <DRAND_PK_HEX> \
-  --g2_generator <G2_GEN_HEX> \
   --drand_genesis_time 1692803367 \
   --drand_period 3 \
   --round_offset 2 \
   --fee_token <SAC_ADDRESS> \
-  --fee_amount 0
+  --fee_amount <FEE_STROOPS>
 ```
+
+The deployment fails (nothing is created) if a key is invalid:
+- either G2 key is the point at infinity, the generator, or not a valid subgroup point;
+- `oracle_pk == drand_pk`;
+- the Ed25519 key is all zero.
+
+It also fails if `drand_period == 0`, `round_offset < 2` or `fee_amount < 0`.
+Scripts: `soroban-contract/deploy.mjs` (testnet) and
+`oracle-worker/mainnet_deploy.mjs` (Mainnet) do the same through
+`createCustomContract({ constructorArgs })`, then read `oracle_pk()` /
+`oracle_address()` back to confirm the configuration.
+
+### 1.4 Verify configuration
+
+```bash
+stellar contract invoke --id <CONTRACT_ID> --network testnet -- oracle_pk
+stellar contract invoke --id <CONTRACT_ID> --network testnet -- oracle_address
+```
+
+At startup the worker also compares its drand genesis/period/key and oracle
+keys with the contract, and refuses to run on any mismatch (see
+`SKIP_CHAIN_CONFIG_CHECK` in [OPERATIONS.md](OPERATIONS.md#environment-variables)).
 
 ### 1.5 Start oracle worker (single node)
 
@@ -297,7 +315,7 @@ If oracle server is lost entirely:
 - [x] Generate fresh keypair
 - [x] Fund oracle account on mainnet (minimum 5 XLM for fees)
 - [x] Deploy contract WASM to mainnet
-- [x] Initialize with production keys and `fee_amount`
+- [x] Initialize with production keys and `fee_amount` (current instance: separate `init()`; the next deployment configures atomically via `__constructor`)
 - [x] Start primary oracle on production server
 - [x] Start standby oracle on secondary server
 - [x] Verify health endpoints

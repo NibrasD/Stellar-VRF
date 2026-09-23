@@ -1,11 +1,11 @@
 /**
- * mainnet_deploy.mjs — Deploy and initialize VRF contract on Stellar Mainnet
+ * mainnet_deploy.mjs — Deploy the VRF contract on Stellar Mainnet (configured atomically by its constructor)
  *
  * Usage:
  *   DRY_RUN=1 FEE_AMOUNT_STROOPS=2000000 node mainnet_deploy.mjs   # preflight only
  *   FEE_AMOUNT_STROOPS=2000000 node mainnet_deploy.mjs             # deploy
  *
- * FEE_AMOUNT_STROOPS is required and immutable after init(); see below.
+ * FEE_AMOUNT_STROOPS is required and immutable after deployment; see below.
  *
  * Configuration precedence (highest first):
  *   1. the shell environment (explicit, e.g. `FEE_AMOUNT_STROOPS=… node …`)
@@ -45,7 +45,7 @@ const DRY_RUN = /^(1|true|yes)$/i.test(process.env.DRY_RUN ?? "");
 
 const SDK_INDEX = path.resolve(__dirname, "node_modules/@stellar/stellar-sdk/lib/esm/index.js");
 const stellar = await import(pathToFileURL(SDK_INDEX).href);
-const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal, rpc, xdr, Account } =
+const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal, scValToNative, rpc, xdr, Account } =
   stellar.default || stellar;
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -110,12 +110,11 @@ if (PINNED_BLS_PK && PINNED_BLS_PK !== ORACLE_BLS_PK) {
 }
 // drand quicknet G2 public key — 192 bytes UNCOMPRESSED (required by contract's Bls12381G2Affine::from_bytes)
 const DRAND_PK = "03cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a01a714f2edb74119a2f2b0d5a7c75ba902d163700a61bc224ededd8e63aef7be1aaf8e93d7a9718b047ccddb3eb5d68b0e5db2b6bfbb01c867749cadffca88b36c24f3012ba09fc4d3022c5c37dce0f977d3adb5d183c7477c442b1f04515273";
-const G2_GEN        = "13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801";
 
 // XLM SAC on mainnet
 const XLM_SAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 
-// ── Per-request fee (immutable after init) ──────────────────────────────────
+// ── Per-request fee (immutable after deployment) ──────────────────────────────────
 // The requester escrows FEE_AMOUNT_STROOPS in XLM on request(); fulfill()
 // releases it to the oracle. The oracle pays the fulfill() network fee
 // (measured ~1.39–1.49M stroops on Mainnet, see docs/PROFILING.md). A fee below
@@ -128,7 +127,7 @@ const feeEnv = process.env.FEE_AMOUNT_STROOPS;
 if (!feeEnv || !/^\d+$/.test(feeEnv)) {
   console.error(
     "ERROR: set FEE_AMOUNT_STROOPS (integer stroops, e.g. 2000000 = 0.2 XLM).\n" +
-      "       It is immutable after init() and must cover the oracle's fulfill() cost."
+      "       It is immutable after deployment and must cover the oracle's fulfill() cost."
   );
   process.exit(1);
 }
@@ -191,23 +190,16 @@ async function pollTx(hash) {
   throw new Error("Timeout: " + hash);
 }
 
-async function simAndSend(signerKP, contractId, fn, fnArgs) {
-  const account = await getAccount(signerKP.publicKey());
-  const tx = new TransactionBuilder(account, { fee: "1000000", networkPassphrase: NETWORK })
+/** Read-only contract call via simulation (nothing is signed or sent). */
+async function simRead(publicKey, contractId, fn, fnArgs) {
+  const account = await getAccount(publicKey);
+  const tx = new TransactionBuilder(account, { fee: "100", networkPassphrase: NETWORK })
     .addOperation(Operation.invokeContractFunction({ contract: contractId, function: fn, args: fnArgs }))
-    .setTimeout(300)
+    .setTimeout(60)
     .build();
-
   const sim = await server.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(sim)) throw new Error(`Sim error: ${JSON.stringify(sim.error)}`);
-
-  const prepared = rpc.assembleTransaction(tx, sim).build();
-  prepared.sign(signerKP);
-
-  const sent = await server.sendTransaction(prepared);
-  if (sent.status === "ERROR") throw new Error(`Send error: ${JSON.stringify(sent.errorResult)}`);
-  console.log(`  TX: https://stellar.expert/explorer/public/tx/${sent.hash}`);
-  return pollTx(sent.hash);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(`Sim error (${fn}): ${JSON.stringify(sim.error)}`);
+  return scValToNative(sim.result.retval);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -258,9 +250,25 @@ try {
 console.log(`  WASM hash: ${wasmHash.toString("hex")}`);
 
 // 3. Deploy contract instance
-console.log("\n[3/4] Deploying contract instance...");
+console.log("\n[3/4] Deploying + configuring contract instance (constructor)...");
 const salt = crypto.randomBytes(32);
 console.log(`  Salt (hex): ${salt.toString("hex")}`);
+
+// Deploy + configure in ONE operation: the contract's `__constructor` runs as
+// part of creation, so there is no window in which an uninitialised instance
+// exists and someone else could call an `init()` first (there is no init()).
+// The G2 generator is compiled into the contract and no longer passed.
+const constructorArgs = [
+  bytesVal(ORACLE_BLS_PK),
+  new Address(ORACLE_PUBLIC).toScVal(),
+  bytesVal(ORACLE_ED25519),
+  bytesVal(DRAND_PK),
+  u64Val(1692803367n),
+  u32Val(3),
+  u32Val(2),
+  new Address(XLM_SAC).toScVal(),
+  i128Val(FEE_AMOUNT),
+];
 
 const deployAcct = await getAccount(ORACLE_PUBLIC);
 const deployTx = new TransactionBuilder(deployAcct, { fee: "1000000", networkPassphrase: NETWORK })
@@ -268,6 +276,7 @@ const deployTx = new TransactionBuilder(deployAcct, { fee: "1000000", networkPas
     wasmHash: wasmHash,
     address: new Address(ORACLE_PUBLIC),
     salt: salt,
+    constructorArgs,
   }))
   .setTimeout(300)
   .build();
@@ -297,20 +306,17 @@ try {
 if (!contractId) throw new Error("Could not extract contract ID from deploy result");
 console.log(`  CONTRACT ID: ${contractId}`);
 
-// 4. Init
-console.log("\n[4/4] Initializing contract...");
-const initRes = await simAndSend(ORACLE_KP, contractId, "init", [
-  bytesVal(ORACLE_BLS_PK),
-  new Address(ORACLE_PUBLIC).toScVal(),
-  bytesVal(ORACLE_ED25519),
-  bytesVal(DRAND_PK),
-  bytesVal(G2_GEN),
-  u64Val(1692803367n),
-  u32Val(3),
-  u32Val(2),
-  new Address(XLM_SAC).toScVal(),
-  i128Val(FEE_AMOUNT),
-]);
+// 4. Verify the constructor stored what we passed (read-only simulation).
+console.log("\n[4/4] Verifying constructor configuration...");
+const storedPkHex = Buffer.from(await simRead(ORACLE_PUBLIC, contractId, "oracle_pk", [])).toString("hex");
+if (storedPkHex !== ORACLE_BLS_PK) {
+  throw new Error(`Constructor check failed: oracle_pk() = ${storedPkHex.slice(0, 32)}…, expected ${ORACLE_BLS_PK.slice(0, 32)}…`);
+}
+const storedOracle = await simRead(ORACLE_PUBLIC, contractId, "oracle_address", []);
+if (storedOracle !== ORACLE_PUBLIC) {
+  throw new Error(`Constructor check failed: oracle_address() = ${storedOracle}, expected ${ORACLE_PUBLIC}`);
+}
+console.log("  oracle_pk() and oracle_address() match the constructor arguments ✔");
 
 const deployedRecord = {
   contractAddress: contractId,
@@ -325,7 +331,7 @@ const deployedRecord = {
   explorerUrl: `https://stellar.expert/explorer/public/contract/${contractId}`,
   uploadTxHash: uploadSent.hash,
   deployTxHash: deploySent.hash,
-  initTxHash: initRes.hash || "confirmed",
+  configuredBy: "__constructor (atomic with deployment)",
   feeAmountStroops: FEE_AMOUNT.toString(),
   securityFeatures: [
     "require_auth() — only oracle address can call fulfill()",

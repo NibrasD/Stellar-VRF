@@ -35,10 +35,10 @@ not pull in `stellar-xdr`, and instead talks to Soroban JSON-RPC
 
 | Capability | Supported |
 |---|---|
-| Query state (`is_fulfilled`, `is_refunded`, `derive_random_in_range`) | ✅ |
+| Query state (`is_fulfilled`, `is_refunded`, `get_beta`, `derive_random_in_range`, `derive_range_for_domain`) | ✅ |
 | Read events (`get_request_events`, `get_fulfill_events`) | ✅ |
 | Wait for fulfillment | ✅ |
-| Client-side derivation (`derive_random_from_beta`) | ✅ |
+| Offline derivation identical to the contract (`derive_range_from_beta`, `derive_range_for_domain_from_beta`, `derive_u64_from_beta`) | ✅ |
 | **Submitting transactions** (`request`, `fulfill`) | ❌ **not supported** |
 
 **Why:** signed transaction submission needs a fully-formed, correctly serialized
@@ -69,8 +69,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("fulfilled: {fulfilled}");
 
     // Derive a number in the inclusive range [1, 100].
-    // The last argument is the domain-separation context; pass &[] for the default.
-    let roll = client.derive_random_in_range(1, 1, 100, &[]).await?;
+    // Exactly uniform in [1, 100]. SDK 2.x: no derivation-time context (it allowed grinding).
+    let roll = client.derive_random_in_range(1, 1, 100).await?;
     println!("roll: {roll}");
 
     Ok(())

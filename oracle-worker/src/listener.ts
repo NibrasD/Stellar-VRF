@@ -15,6 +15,7 @@ import {
 } from "./config.js";
 import { log, sleep } from "./utils.js";
 import { recordListenerHeartbeat } from "./metrics.js";
+import type { OnChainConfig } from "./configCheck.js";
 
 export interface VrfRequestEvent {
   requestId: bigint;
@@ -130,6 +131,37 @@ async function readInstanceValue(server: rpc.Server, name: string): Promise<xdr.
     }
   }
   return null;
+}
+
+/**
+ * Chain-authoritative configuration from contract instance storage, for
+ * configCheck.ts. One RPC round-trip.
+ */
+export async function readChainConfig(server: rpc.Server): Promise<OnChainConfig> {
+  const entry = await server.getContractData(
+    CONTRACT_ADDRESS,
+    xdr.ScVal.scvLedgerKeyContractInstance(),
+    rpc.Durability.Persistent
+  );
+  const val = (entry.val as any).contractData.val;
+  const storage: Array<{ key: xdr.ScVal; val: xdr.ScVal }> = val.instance.storage ?? [];
+  const byName = new Map<string, xdr.ScVal>();
+  for (const item of storage) {
+    const key = scValToNative(item.key);
+    if (Array.isArray(key) && key.length === 1 && typeof key[0] === "string") byName.set(key[0], item.val);
+  }
+  const need = (name: string): xdr.ScVal => {
+    const v = byName.get(name);
+    if (!v) throw new Error(`${name} not found in contract instance storage`);
+    return v;
+  };
+  return {
+    drandGenesis: BigInt(scValToNative(need("DrandGenesis")) as bigint | number),
+    drandPeriod: BigInt(scValToNative(need("DrandPeriod")) as bigint | number),
+    drandPk: new Uint8Array(scValToNative(need("DrandPK")) as Buffer),
+    oraclePk: new Uint8Array(scValToNative(need("OraclePK")) as Buffer),
+    oracleAddress: Address.fromScVal(need("OracleAddr")).toString(),
+  };
 }
 
 /** Requester address of a request (`DataKey::Requester(id)`), or null if absent. */

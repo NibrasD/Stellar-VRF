@@ -1,3 +1,7 @@
+// LEGACY WASM ONLY: this script calls init() and passes a G2 generator. It targets
+// the pre-audit-round-5 contract (the current Mainnet instance / profiling deploys).
+// Current contract source has no init(): it is configured atomically by
+// __constructor at deployment. Use mainnet_deploy.mjs for new deployments.
 /**
  * mainnet_init.mjs — Initialize contract CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU on Stellar Mainnet
  */

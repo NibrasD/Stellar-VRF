@@ -190,24 +190,11 @@ impl VrfSamplingContract {
             .get(&ConsumerKey::PendingSample(sample_id))
             .unwrap_or_else(|| panic!("unknown sample_id"));
 
-        // Derive a random value in [0, range_max) with negligible bias, using the
-        // same "extra bits" reduction as the VRF contract's `derive_random_in_range()`
-        // (NIST SP 800-90A B.5.1.3 style).
-        //
-        // Reducing only 64 bits (`raw % range_max`) is biased unless `range_max`
-        // divides 2^64: the deviation between residue classes is bounded by
-        // range_max / 2^64, which approaches a 50% skew as range_max approaches 2^63.
-        //
-        // Taking **128 bits** of beta instead bounds that deviation by
-        // range_max / 2^128 <= 2^-64 — cryptographically negligible. Note this is
-        // deliberately NOT a rejection loop: an unbounded loop inside a callback can
-        // blow the instruction budget and make `fulfill()` revert, and a *bounded*
-        // loop needs a fallback that reintroduces the very bias it set out to avoid.
-        // This form is constant-cost and has no biased path at all.
-        let beta_arr = beta_output.to_array();
-        let mut wide = [0u8; 16];
-        wide.copy_from_slice(&beta_arr[0..16]);
-        let sample = (u128::from_be_bytes(wide) % (range_max as u128)) as u64;
+        // Derive an exactly uniform value in [0, range_max). This is the VRF
+        // contract's own `derive_random_in_range(sample_id, range_max)`,
+        // computed locally from the beta we were just handed, so anyone can
+        // re-check a stored sample against the oracle with one read-only call.
+        let sample = derive_in_range(&env, sample_id, &beta_output, range_max);
 
         // Store the result.
         env.storage()
@@ -294,5 +281,61 @@ impl VrfSamplingContract {
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
         vrf
+    }
+}
+
+/// Byte-for-byte copy of the VRF contract's `derive_random_in_range()`:
+///
+/// `h = sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ request_id_be ‖ max_be ‖ beta)`, split
+/// into two 128-bit big-endian candidates. A candidate `c` is accepted iff
+/// `c < 2^128 - (2^128 mod max)`, the largest multiple of `max` that fits, so
+/// `c mod max` is **exactly** uniform (no modulo bias).
+///
+/// Constant cost: one sha256, no loop. That matters inside a callback, where an
+/// unbounded loop could exhaust the budget. If both candidates are rejected
+/// (probability < 2^-128) this panics, as the oracle contract does; there is
+/// no biased fallback.
+fn derive_in_range(env: &Env, request_id: u64, beta: &BytesN<32>, max: u64) -> u64 {
+    if max == 1 {
+        return 0;
+    }
+    let mut input = Bytes::from_slice(env, b"VREP_DERIVE_V2");
+    input.push_back(0x02);
+    input.append(&Bytes::from_slice(env, &request_id.to_be_bytes()));
+    input.append(&Bytes::from_slice(env, &max.to_be_bytes()));
+    input.append(&Bytes::from_slice(env, &beta.to_array()));
+    let h = env.crypto().sha256(&input).to_array();
+
+    let m = max as u128;
+    let rem = 0u128.wrapping_sub(m) % m; // 2^128 mod max
+    for half in [&h[0..16], &h[16..32]] {
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(half);
+        let c = u128::from_be_bytes(buf);
+        if c <= u128::MAX - rem {
+            return (c % m) as u64;
+        }
+    }
+    panic!("range derivation failed: both candidates rejected");
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Shared cross-implementation vectors (beta = 0x00..0x1f, request_id = 7),
+    /// also asserted by the oracle contract and both SDKs.
+    #[test]
+    fn derive_in_range_matches_oracle_contract() {
+        let env = Env::default();
+        let mut b = [0u8; 32];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = i as u8;
+        }
+        let beta = BytesN::from_array(&env, &b);
+        assert_eq!(derive_in_range(&env, 7, &beta, 6), 4);
+        assert_eq!(derive_in_range(&env, 7, &beta, 1_000_000), 889_164);
+        assert_eq!(derive_in_range(&env, 7, &beta, u64::MAX), 11_798_261_183_955_500_607);
+        assert_eq!(derive_in_range(&env, 7, &beta, 1), 0);
     }
 }

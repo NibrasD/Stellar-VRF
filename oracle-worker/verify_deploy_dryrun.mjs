@@ -4,8 +4,9 @@
  * DRY-RUN of the exact logic used by mainnet_deploy.mjs WITHOUT submitting any
  * transaction to Mainnet (no sendTransaction, no network account lookups).
  * Validates: (1) SDK loads via PUBLIC entrypoint, (2) Node+SDK compat,
- * (3) optimized WASM present/readable, (4) all init ScVals build under v17,
- * (5) upload + init TX BUILD offline against a dummy account.
+ * (3) optimized WASM present/readable, (4) all constructor ScVals build under v17,
+ * (5) upload + createCustomContract(constructorArgs) TX BUILD offline against a
+ * dummy account.
  *
  * Usage: node verify_deploy_dryrun.mjs   (exit 0 = pass, 1 = fail)
  */
@@ -70,8 +71,8 @@ if (fs.existsSync(WASM_PATH)) {
   bad(`optimized WASM NOT found at ${WASM_PATH}`);
 }
 
-// ── [4/5] ScVal init-args build under v17 ───────────────────────────────────
-console.log("\n[4/5] Building all init ScVal args (v17 encoding)...");
+// ── [4/5] ScVal constructor-args build under v17 ────────────────────────────
+console.log("\n[4/5] Building all constructor ScVal args (v17 encoding)...");
 function bytesVal(hex) { return nativeToScVal(Buffer.from(hex, "hex"), { type: "bytes" }); }
 function u64Val(n) { return xdr.ScVal.scvU64(BigInt(n)); }
 function u32Val(n) { return xdr.ScVal.scvU32(Number(n)); }
@@ -103,25 +104,35 @@ try {
 } catch (e) { bad(`upload TX build failed: ${e.message}`); }
 
 try {
-  const initArgs = [
+  // Must match the contract's __constructor exactly (9 args; the G2 generator
+  // is compiled in and there is no separate init()).
+  const constructorArgs = [
     bytesVal(BLS_PK),
     new Address(dummyKP.publicKey()).toScVal(),
     bytesVal("11".repeat(32)),
-    bytesVal("22".repeat(96)),
-    bytesVal("33".repeat(96)),
+    bytesVal("22".repeat(192)),
     u64Val(1692803367),
     u32Val(3),
     u32Val(2),
     new Address(dummyKP.publicKey()).toScVal(),
     i128Val(0),
   ];
-  const dummyContract = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
-  const invokeTx = new TransactionBuilder(dummyAccount, { fee: "5000000", networkPassphrase: NETWORK })
-    .addOperation(Operation.invokeContractFunction({ contract: dummyContract, function: "init", args: initArgs }))
+  const deployTx = new TransactionBuilder(dummyAccount, { fee: "5000000", networkPassphrase: NETWORK })
+    .addOperation(Operation.createCustomContract({
+      address: new Address(dummyKP.publicKey()),
+      wasmHash: Buffer.alloc(32, 7),
+      salt: Buffer.alloc(32, 9),
+      constructorArgs,
+    }))
     .setTimeout(300)
     .build();
-  if (invokeTx.toXDR()) ok(`init() invoke TX built + XDR-serialized offline (10 args)`);
-} catch (e) { bad(`init invoke TX build failed: ${e.message}`); }
+  // stellar-sdk v17 XDR objects expose plain fields (`type`, `createContractV2`).
+  const hf = deployTx.operations[0].func;
+  if (hf.type !== "hostFunctionTypeCreateContractV2") throw new Error(`unexpected host fn ${hf.type}`);
+  const argCount = hf.createContractV2.constructorArgs.length;
+  if (argCount !== 9) throw new Error(`constructor carries ${argCount} args, expected 9`);
+  if (deployTx.toXDR()) ok(`createCustomContract TX with 9 constructor args built + XDR-serialized offline`);
+} catch (e) { bad(`constructor deploy TX build failed: ${e.message}`); }
 
 // ── Summary ─────────────────────────────────────────────────────────────────
 console.log("\n=== Summary ===");

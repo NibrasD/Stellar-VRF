@@ -1,3 +1,7 @@
+// LEGACY WASM ONLY: this script calls init() and passes a G2 generator. It targets
+// the pre-audit-round-5 contract (the current Mainnet instance / profiling deploys).
+// Current contract source has no init(): it is configured atomically by
+// __constructor at deployment. Use mainnet_deploy.mjs for new deployments.
 /**
  * prove_fee_refund.mjs — Proves timeout_refund() returns nonzero SAC fee on Testnet
  *

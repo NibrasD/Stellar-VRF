@@ -23,6 +23,21 @@ import {
 } from "./config.js";
 import { log, sleep, bytesToHex } from "./utils.js";
 import type { VrfProofData } from "./vrf.js";
+import {
+  checkSimulatedResources,
+  resourceGuardOptionsFromEnv,
+  simulatedResourcesOf,
+  type ResourceGuardOptions,
+} from "./resourceGuard.js";
+import {
+  FulfillTerminalError,
+  classifyFulfillError,
+  failureError,
+  isNonRetryable,
+} from "./fulfillErrors.js";
+
+// Parsed once at startup so a bad value fails fast instead of on the first request.
+const RESOURCE_GUARD: ResourceGuardOptions = resourceGuardOptionsFromEnv();
 
 /**
  * Thrown when submission is aborted on purpose (e.g. leadership lost). Callers
@@ -99,21 +114,33 @@ export async function submitFulfillment(
       // 3. Simulate
       const simulated = await server.simulateTransaction(tx);
       if (rpc.Api.isSimulationError(simulated)) {
-        throw new Error(`Simulation error: ${simulated.error}`);
+        // Contract panics (already fulfilled, bad proof, …) are terminal.
+        throw failureError("Simulation error", simulated.error);
+      }
+      if (!rpc.Api.isSimulationSuccess(simulated)) {
+        // Restore-needed: an archived entry. Not something retrying fixes.
+        throw new FulfillTerminalError(
+          `Simulation requires a state restore for fulfill(${requestId})`,
+          "entry_archived",
+          false
+        );
       }
 
-      // Log the estimated CPU budget
-      if (rpc.Api.isSimulationSuccess(simulated)) {
-        const cost = (simulated as any).cost;
-        if (cost) {
-          log.info(
-            `  Estimated CPU: ${cost.cpuInsns} instructions, Mem: ${cost.memBytes} bytes`
-          );
-        }
-      }
-
-      // 4. Assemble, sign, and submit
+      // 4. Assemble, then bound the cost BEFORE signing (see resourceGuard.ts).
       const prepared = rpc.assembleTransaction(tx, simulated).build();
+      const resources = simulatedResourcesOf(simulated, BigInt(prepared.fee));
+      log.info(
+        `  Simulated CPU: ${resources.instructions} instructions, resource fee ` +
+          `${resources.resourceFeeStroops} stroops, max fee ${resources.txFeeStroops} stroops`
+      );
+      const bounded = checkSimulatedResources(resources, RESOURCE_GUARD);
+      if (!bounded.ok) {
+        throw new FulfillTerminalError(
+          `refusing fulfill(${requestId}): ${bounded.reason}`,
+          "resource_bound_exceeded",
+          false
+        );
+      }
 
       // Last gate before money can move. `prepared.fee` is the envelope's max
       // fee (inclusion + resource fee): Stellar never charges more than this.
@@ -131,9 +158,7 @@ export async function submitFulfillment(
 
       const sent = await server.sendTransaction(prepared);
       if (sent.status === "ERROR") {
-        throw new Error(
-          `Send error: ${JSON.stringify(sent.errorResult)}`
-        );
+        throw failureError("Send error", sent.errorResult);
       }
 
       // 5. Poll for confirmation
@@ -145,11 +170,15 @@ export async function submitFulfillment(
 
       return sent.hash;
     } catch (err: unknown) {
-      if (err instanceof FulfillAbortedError) throw err; // deliberate: never retry
+      if (isNonRetryable(err)) throw err; // deliberate abort or deterministic failure
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error(
         `Fulfill attempt ${attempt} failed for request ${requestId}: ${errMsg}`
       );
+      const cls = classifyFulfillError(err);
+      if (cls.kind === "terminal") {
+        throw new FulfillTerminalError(errMsg, cls.reason, cls.settled);
+      }
 
       if (attempt < MAX_RETRIES) {
         const backoff = Math.min(2000 * 2 ** (attempt - 1), 15_000);
@@ -220,7 +249,9 @@ async function pollTransaction(
 
     if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
       process.stdout.write(" ✖\n");
-      throw new Error(`Transaction failed: ${hash}`);
+      // Applied and failed (fee charged). The result code says whether a
+      // retry could ever succeed, e.g. a trapping callback never will.
+      throw failureError(`Transaction failed: ${hash}`, (status as any).resultXdr);
     }
 
     process.stdout.write(".");

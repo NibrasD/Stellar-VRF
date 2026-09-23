@@ -136,7 +136,8 @@ and never pay it.
 returns an error or doesn't exist, the host rolls back **only the callback's own writes** and the
 contract emits `cb_failed` with `(request_id, callback_contract)`. `Fulfilled`, the stored proof,
 the oracle fee transfer and the `fulfill` event all stay committed. The result is always readable
-with `get_proof(request_id)`, so a consumer whose callback failed can still pull it.
+with `get_beta(request_id)` (kept even after `cleanup_proof()`), so a consumer whose callback
+failed can still pull it.
 Tests: `test_panicking_callback_does_not_revert_fulfill`,
 `test_honest_callback_receives_output_without_failure_event`.
 
@@ -150,8 +151,20 @@ request is **parked** and the requester can `timeout_refund()`. The cap is per p
 or failover gives a fresh allowance. The unpaid-spend budget in the fee guard stays the
 deployment-wide ceiling.
 
+**Resource guard (worker, applies to every deployment).** Before signing, the worker checks the
+simulated CPU instructions, `minResourceFee` and assembled max fee against
+`MAX_FULFILL_INSTRUCTIONS` (default 90M), `MAX_FULFILL_RESOURCE_FEE_STROOPS` and
+`MAX_FULFILL_TX_FEE_STROOPS` (`oracle-worker/src/resourceGuard.ts`). An expensive `on_vrf()` is
+refused before any fee is spent. Deterministic failures (contract panics, `trapped` /
+`resource_limit_exceeded` results, guard refusals) are classified **terminal**
+(`fulfillErrors.ts`): the request is parked at once instead of being retried until the send cap.
+
+**Consequence for integrators (liveness).** Callback isolation protects the oracle from *panics*,
+not from *cost*. A callback too expensive to fit the guard or the network limits means the
+request is **not fulfilled at all**, and only `timeout_refund()` remains. Keep `on_vrf()` small.
+
 **Deployed Mainnet contract:** still uses `invoke_contract` until redeployment. On that
-instance only the worker-side send cap applies.
+instance the resource guard, terminal classification and the send cap apply.
 
 ### Signature forgery
 
@@ -217,7 +230,7 @@ verification (~56M instructions), not storage operations.
 - **Fee economics / request spam** — the `fee_amount` parameter and escrow mechanism are fully
   implemented and tested (fees are escrowed in the VRF contract on request, released to oracle on
   fulfill, refunded to requester on timeout). The Mainnet instance is deployed with
-  `fee_amount = 0` (verified from instance storage), and `fee_amount` is immutable after `init()`.
+  `fee_amount = 0` (verified from instance storage), and `fee_amount` is immutable after construction (`init()` on the legacy WASM).
   Consequence: a requester pays only the Stellar network fee per `request()`, while the oracle
   pays ~0.14 XLM per `fulfill()`. Unchecked, an attacker could **drain the oracle's XLM
   balance**. That's an availability/cost attack, not an integrity one. **Mitigation in the
