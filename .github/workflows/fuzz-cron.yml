@@ -1,0 +1,74 @@
+name: Scheduled Fuzzing Campaign
+
+on:
+  schedule:
+    # Run weekly every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: 'Maximum run time per target in seconds (default: 1800s = 30m)'
+        required: false
+        default: '1800'
+      runs:
+        description: 'Maximum runs per target (default: 1000000)'
+        required: false
+        default: '1000000'
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-fuzz:
+    name: Weekly Deep Fuzzing Campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install nightly Rust (cargo-fuzz needs -Z sanitizer)
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: nightly-2026-09-01
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly-2026-09-01 install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Run fuzzing campaign across all targets
+        working-directory: soroban-contract
+        env:
+          MAX_TIME: ${{ github.event.inputs.max_total_time || '1800' }}
+          MAX_RUNS: ${{ github.event.inputs.runs || '1000000' }}
+        run: |
+          mkdir -p fuzz-artifacts fuzz-logs
+          echo "Discovered fuzz targets:"
+          cargo +nightly-2026-09-01 fuzz list
+
+          EXIT_CODE=0
+          for target in $(cargo +nightly-2026-09-01 fuzz list); do
+            echo "=========================================================="
+            echo "Starting fuzz target: $target (max_time=${MAX_TIME}s, runs=${MAX_RUNS})"
+            echo "=========================================================="
+
+            cargo +nightly-2026-09-01 fuzz run "$target" -- \
+              -max_total_time="$MAX_TIME" \
+              -runs="$MAX_RUNS" \
+              -artifact_prefix="fuzz-artifacts/${target}-" \
+              2>&1 | tee "fuzz-logs/${target}.log" || {
+                echo "CRASH DETECTED on target: $target"
+                touch "fuzz-artifacts/CRASH_DETECTED_${target}.txt"
+                EXIT_CODE=1
+              }
+          done
+
+          exit $EXIT_CODE
+
+      - name: Upload fuzzing campaign evidence and artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: weekly-fuzz-campaign-evidence
+          path: |
+            soroban-contract/fuzz-logs/
+            soroban-contract/fuzz-artifacts/
+            soroban-contract/fuzz/corpus/

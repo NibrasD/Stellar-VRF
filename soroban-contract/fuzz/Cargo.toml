@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 soroban-sdk = { version = "=26.1.0", features = ["testutils"] }
+stellar-vrf-sdk = { path = "../../sdk/rust" }
 
 [dependencies.soroban-vrf-oracle]
 path = ".."
@@ -39,6 +40,13 @@ bench = false
 [[bin]]
 name = "fuzz_vrf_lifecycle"
 path = "fuzz_targets/fuzz_vrf_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rust_sdk"
+path = "fuzz_targets/fuzz_rust_sdk.rs"
 test = false
 doc = false
 bench = false

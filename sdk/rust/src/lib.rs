@@ -228,8 +228,9 @@ fn encode_scval_symbol(sym: &str) -> Vec<u8> {
 // ── XDR ScVal decoding ───────────────────────────────────────────────────────
 
 /// The subset of `ScVal` this SDK reads (contract return values and events).
+#[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ScVal {
+pub enum ScVal {
     Bool(bool),
     Void,
     U32(u32),
@@ -247,7 +248,8 @@ fn xdr_err(msg: impl std::fmt::Display) -> VrfError {
 }
 
 /// Decode one base64 ScVal, rejecting trailing bytes.
-fn decode_scval_b64(b64: &str) -> Result<ScVal, VrfError> {
+#[doc(hidden)]
+pub fn decode_scval_b64(b64: &str) -> Result<ScVal, VrfError> {
     let bytes = base64_decode(b64)?;
     let mut r = XdrReader::new(&bytes);
     let val = r.scval(0)?;
@@ -259,13 +261,14 @@ fn decode_scval_b64(b64: &str) -> Result<ScVal, VrfError> {
 
 /// Bounds-checked XDR reader. Every read fails cleanly on truncated input;
 /// nothing is silently defaulted.
-struct XdrReader<'a> {
-    data: &'a [u8],
-    pos: usize,
+#[doc(hidden)]
+pub struct XdrReader<'a> {
+    pub data: &'a [u8],
+    pub pos: usize,
 }
 
 impl<'a> XdrReader<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
@@ -314,7 +317,7 @@ impl<'a> XdrReader<'a> {
         Ok(n)
     }
 
-    fn scval(&mut self, depth: u32) -> Result<ScVal, VrfError> {
+    pub fn scval(&mut self, depth: u32) -> Result<ScVal, VrfError> {
         if depth > 8 {
             return Err(xdr_err("ScVal nesting too deep"));
         }
@@ -793,7 +796,8 @@ pub fn strkey_encode_contract(hash: &[u8]) -> String {
 /// The length, the contract version byte (`2 << 3`) and the CRC16 checksum are
 /// all checked, so a typo or a `G...` account address is rejected instead of
 /// being silently turned into a different contract hash.
-fn strkey_decode_contract(contract_id: &str) -> Result<[u8; 32], VrfError> {
+#[doc(hidden)]
+pub fn strkey_decode_contract(contract_id: &str) -> Result<[u8; 32], VrfError> {
     let bad = |m: &str| VrfError::Rpc(format!("Invalid contract ID: {}", m));
     if contract_id.len() != 56 {
         return Err(bad("expected 56 characters"));
@@ -822,7 +826,8 @@ fn strkey_decode_contract(contract_id: &str) -> Result<[u8; 32], VrfError> {
 }
 
 /// Simple base32 decoder (RFC 4648, no padding required).
-fn base32_decode(input: &str) -> Result<Vec<u8>, String> {
+#[doc(hidden)]
+pub fn base32_decode(input: &str) -> Result<Vec<u8>, String> {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let input = input.trim_end_matches('=');
     let mut bits = 0u64;
@@ -848,7 +853,8 @@ fn base32_decode(input: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Decode base64 to bytes.
-fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
+#[doc(hidden)]
+pub fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
     const TABLE: [u8; 128] = {
         let mut t = [0xFF; 128];
         let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -886,6 +892,13 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
     }
 
     Ok(out)
+}
+
+#[doc(hidden)]
+pub mod internal {
+    pub use super::{
+        base32_decode, base64_decode, decode_scval_b64, strkey_decode_contract, ScVal, XdrReader,
+    };
 }
 
 /// Build an unsigned `TransactionEnvelope` (v1) that invokes
