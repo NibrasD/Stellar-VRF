@@ -1,0 +1,4 @@
+# Gitleaks ignore list
+# False-positive synthetic test key in commit aa95b1e
+aa95b1e74f83fe0e46aee0e954fd27a496a89249:sdk/rust/src/lib.rs:generic-api-key:1645
+sdk/rust/src/lib.rs:generic-api-key:1645
