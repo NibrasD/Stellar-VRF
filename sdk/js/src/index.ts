@@ -37,6 +37,37 @@ export interface VrfClientConfig {
   networkPassphrase: string;
   keypair: Keypair;
   maxFee?: string;
+  /**
+   * Allow a plain `http://` RPC URL to a non-loopback host. Off by default: the
+   * client signs and submits transactions, and a plaintext RPC can be
+   * tampered with in transit (e.g. fake simulation results). `http://` to
+   * `localhost` / `127.0.0.1` / `::1` (a local node) is always allowed.
+   */
+  allowHttp?: boolean;
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/**
+ * Validate the RPC URL: HTTPS required, except `http://` to loopback or with
+ * an explicit `allowHttp: true`. Returns the `allowHttp` flag for rpc.Server.
+ */
+export function checkRpcUrl(rpcUrl: string, allowHttp = false): boolean {
+  let u: URL;
+  try {
+    u = new URL(rpcUrl);
+  } catch {
+    throw new Error(`Invalid rpcUrl: ${rpcUrl}`);
+  }
+  if (u.protocol === "https:") return false;
+  if (u.protocol !== "http:") {
+    throw new Error(`rpcUrl must use https:// (got ${u.protocol})`);
+  }
+  if (LOOPBACK_HOSTS.has(u.hostname) || allowHttp) return true;
+  throw new Error(
+    `rpcUrl uses plaintext http:// to ${u.hostname}. Use https://, or pass ` +
+      `allowHttp: true if you really mean it (a local/test node only).`
+  );
 }
 
 export interface VrfProof {
@@ -61,8 +92,9 @@ export class VrfClient {
   private config: Required<VrfClientConfig>;
 
   constructor(config: VrfClientConfig) {
-    this.config = { maxFee: "1000000", ...config };
-    this.server = new rpc.Server(config.rpcUrl, { allowHttp: config.rpcUrl.startsWith("http://") });
+    this.config = { maxFee: "1000000", allowHttp: false, ...config };
+    const allowHttp = checkRpcUrl(config.rpcUrl, this.config.allowHttp);
+    this.server = new rpc.Server(config.rpcUrl, { allowHttp });
   }
 
   /**

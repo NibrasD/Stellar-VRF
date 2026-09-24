@@ -27,6 +27,7 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import { RedisClient } from "./redisLock.js";
+import { withFileMutex } from "./fileMutex.js";
 
 export const HOUR_MS = 3_600_000;
 
@@ -147,24 +148,31 @@ export class FileSpendLedger implements SpendLedger {
     return sum(this.load(nowMs));
   }
 
+  // load → check → save runs under a cross-process file mutex. Without it two
+  // processes could both read the same total, both pass the limit check and
+  // both append, overshooting the budget.
   async tryReserve(amount: bigint, nowMs: number, limit: bigint, id?: string): Promise<boolean> {
     if (id !== undefined) checkId(id);
-    const entries = this.load(nowMs);
-    if (sum(entries) + amount > limit) return false;
-    entries.push({ t: nowMs, amount: amount.toString(), id });
-    this.save(entries);
-    return true;
+    return withFileMutex(this.file, () => {
+      const entries = this.load(nowMs);
+      if (sum(entries) + amount > limit) return false;
+      entries.push({ t: nowMs, amount: amount.toString(), id });
+      this.save(entries);
+      return true;
+    });
   }
 
   async release(id: string, amount: bigint, nowMs: number): Promise<boolean> {
-    const entries = this.load(nowMs);
-    if (!removeEntry(entries, id, amount)) return false;
-    this.save(entries);
-    return true;
+    return withFileMutex(this.file, () => {
+      const entries = this.load(nowMs);
+      if (!removeEntry(entries, id, amount)) return false;
+      this.save(entries);
+      return true;
+    });
   }
 
   describe(): string {
-    return `file ${this.file} (single host only; survives restarts)`;
+    return `file ${this.file} (single host only; survives restarts; dev fallback)`;
   }
 }
 

@@ -30,7 +30,7 @@ for (const p of candidates) {
 }
 
 import { Keypair, Networks } from "@stellar/stellar-sdk";
-import { drandVerificationPolicyError } from "./policy.js";
+import { drandVerificationPolicyError, redisPolicyError } from "./policy.js";
 
 function requireEnv(key: string): string {
   const val = process.env[key];
@@ -127,6 +127,16 @@ export const DRAND_VERIFY_BEACONS =
     process.env.NODE_ENV
   );
   if (policyError) throw new Error(policyError);
+}
+
+{
+  const redisError = redisPolicyError(
+    process.env.REDIS_URL,
+    NETWORK_PASSPHRASE,
+    process.env.NODE_ENV,
+    process.env.REDIS_ALLOW_PLAINTEXT
+  );
+  if (redisError) throw new Error(redisError);
 }
 
 /** drand DST for quicknet (`bls-unchained-g1-rfc9380`); matches DRAND_DST on-chain. */

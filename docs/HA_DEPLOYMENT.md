@@ -33,8 +33,21 @@ Two backends are selected automatically at runtime:
 
 | Backend | When | Multi-host? |
 |---|---|---|
-| **Redis lease** (`src/redisLock.ts`) | `REDIS_URL` is set | ✅ Yes — production |
-| **Atomic file lock** (`src/leader.ts`) | `REDIS_URL` is empty | ❌ Single host / shared volume only |
+| **Redis lease** (`src/redisLock.ts`) | `REDIS_URL` is set | ✅ Yes — **required on Mainnet / `NODE_ENV=production`** |
+| **Atomic file lock** (`src/leader.ts`) | `REDIS_URL` is empty | ❌ Single host only — development fallback |
+
+**Production rules (enforced at startup, `src/policy.ts`).** On Mainnet or with
+`NODE_ENV=production` the worker refuses to start without `REDIS_URL`, and refuses a
+plaintext `redis://` URL to a non-loopback host. Use `rediss://` (TLS). The only exception is
+`REDIS_ALLOW_PLAINTEXT=true`, for Redis on an isolated private network such as the internal
+network of `docker-compose.ha.yml` (Redis there is `expose`d only, never published).
+
+**File fallback.** The file lock and the file spend ledger do their read → decide → write under a
+cross-process mutex (`src/fileMutex.ts`, an exclusively-created `.mutex` file, broken only after
+10 s so a crashed holder can't block forever). This closes the race where two standbys both saw a
+stale lock and both took it, and the one where two processes both passed the spend-limit check.
+It relies on atomic `O_EXCL` create + rename, which local filesystems provide but some network
+filesystems don't — another reason it is a development fallback only.
 
 ## Leader Election Protocol (Redis, multi-server)
 
@@ -81,7 +94,7 @@ Holding the lease isn't enough. The leader must also be *processing requests*. A
 3. **Demotion on repeated failure.** After `LISTENER_MAX_RESTARTS` crashes within `LISTENER_RESTART_WINDOW_MS`, the node calls `relinquishLeadership()`. This releases the Redis lease (fenced `del`) and enters a cooldown (`LEADER_RELINQUISH_COOLDOWN_MS`, default 2×TTL) during which it won't re-acquire, so the **standby takes over** instead of the broken node taking the lease back. An unexpected error inside the supervisor itself also triggers a relinquish.
 4. **Reconciliation.** Event polling alone can miss requests: events that fell out of the RPC retention window during downtime, a crash between seeing an event and fulfilling it, or a failover. Reconciliation catches these. It runs **when each listener session starts** and **every `RECONCILE_INTERVAL_MS`** (default 120s) while leader. It reads the on-chain `Counter`, then batch-reads `Fulfilled` / `Refunded` / `RequestRound` for the newest `RECONCILE_MAX_SCAN` request IDs (newest first, ≤150 ledger keys per `getLedgerEntries` call). Every ID that is neither fulfilled nor refunded is handed to the normal fulfillment path. The on-chain `Fulfilled` flag makes this idempotent.
 
-   > Requests older than the newest `RECONCILE_MAX_SCAN` IDs are not reconciled. After `TIMEOUT_ROUNDS` (~60s) such requests can be refunded by the requester anyway, so raise the window only if you expect very long outages with very high request volume.
+   > Each pass also checks **one more window of older IDs**, with a cursor that walks down to ID 1 and then wraps. The newest `RECONCILE_MAX_SCAN` IDs are checked every pass, and every older ID at least once every `ceil(older IDs / RECONCILE_MAX_SCAN)` passes, so no pending request stays undiscovered after a long outage, whatever the request volume. The cursor is in memory; after a restart it starts from the top again, which only re-checks IDs.
 
 **Pre-submit gate inside retries.** `submitFulfillment()` takes a `canSubmit` callback (wired to `isLeader()`) and checks it before **every** internal attempt, including simulate/send retries. A node that loses the lease mid-retry throws `FulfillAbortedError`, and the outer retry wrapper does not retry that error.
 
@@ -116,12 +129,12 @@ the SAME `REDIS_URL` on each oracle. No shared filesystem is required.
 
 # 2. On HOST A (.env):
 INSTANCE_ID=oracle-primary
-REDIS_URL=redis://:password@redis.internal:6379
+REDIS_URL=rediss://:password@redis.internal:6380    # TLS — required across hosts
 HEALTH_PORT=8080
 
 # 3. On HOST B (.env):
 INSTANCE_ID=oracle-standby
-REDIS_URL=redis://:password@redis.internal:6379   # same Redis
+REDIS_URL=rediss://:password@redis.internal:6380    # same Redis
 HEALTH_PORT=8080
 
 # 4. Start the worker on each host:

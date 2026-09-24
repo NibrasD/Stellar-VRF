@@ -234,6 +234,20 @@ Persistent storage entries could theoretically expire before the oracle fulfills
 by extending TTL on all request-related entries at creation time (`PERSISTENT_TTL_EXTEND` = 518,400
 ledgers, ~30 days). `fulfill()` extends again on completion.
 
+**Escrowed fees are not lost if a request's entries expire.** On Soroban, an expired *persistent*
+entry is **archived, not deleted**: it can't be read until it is restored, but it can always be
+restored with a `RestoreFootprint` operation (Stellar CLI: `stellar contract restore`), paid by
+whoever submits it. The escrowed fee itself sits in the contract's XLM SAC balance entry, which is
+also persistent and restorable. So an abandoned request whose `Requester` / `RequestRound` /
+`Refunded` / `Fulfilled` entries were archived is recovered by:
+
+1. restoring those entries (the requester, or anyone on their behalf), then
+2. calling `timeout_refund(request_id)` as usual.
+
+The refund window opens ~63 s after the request, while the TTL is ~30 days, so in practice this
+only matters for requests abandoned for weeks. The contract has no sweep function for such fees by
+design: a sweep would need an admin role that could take other users' escrow.
+
 `cleanup_proof()` is a separate concern: it removes the bulky proof data to save on rent, but
 explicitly preserves the `Fulfilled` flag so that `is_fulfilled()` queries continue to work.
 

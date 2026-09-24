@@ -24,7 +24,7 @@ vi.mock("./utils.js", () => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
-import { findPendingRequests, readRequestCounter } from "./listener.js";
+import { findPendingRequests, readRequestCounter, resetReconcileSweep } from "./listener.js";
 import { getListenerStatus } from "./metrics.js";
 
 interface FakeRequest {
@@ -113,18 +113,39 @@ describe("findPendingRequests", () => {
     expect(pending.map((p) => p.requestId)).toEqual([9n]);
   });
 
-  it("scans newest-first and respects maxScan", async () => {
+  it("always scans the newest maxScan IDs, plus one rolling window of older IDs", async () => {
+    resetReconcileSweep();
     const reqs = populate(250, {
-      7: { fulfilled: false },   // outside the window
+      7: { fulfilled: false },   // far outside the newest window
       240: { fulfilled: false }, // inside
     });
+    const server = fakeServer(250n, reqs);
 
-    const pending = await findPendingRequests(fakeServer(250n, reqs), 20);
+    // Pass 1: newest 231..250 + older 211..230 → only 240.
+    expect((await findPendingRequests(server, 20)).map((p) => p.requestId)).toEqual([240n]);
+  });
 
-    expect(pending.map((p) => p.requestId)).toEqual([240n]);
+  it("the older-ID sweep eventually reaches every ID (no request stays undiscovered)", async () => {
+    resetReconcileSweep();
+    const reqs = populate(250, { 7: { fulfilled: false } });
+    const server = fakeServer(250n, reqs);
+
+    // 230 older IDs / 20 per pass → 12 passes cover 1..230.
+    let found = false;
+    let passes = 0;
+    for (; passes < 12 && !found; passes++) {
+      found = (await findPendingRequests(server, 20)).some((p) => p.requestId === 7n);
+    }
+    expect(found).toBe(true);
+    expect(passes).toBe(12);
+
+    // The sweep then wraps back to the top of the older range.
+    const again = await findPendingRequests(server, 20);
+    expect(again.some((p) => p.requestId === 7n)).toBe(false); // 211..230 this pass
   });
 
   it("batches ledger reads within the RPC's 200-key limit", async () => {
+    resetReconcileSweep();
     const server = fakeServer(120n, populate(120, {}));
 
     await findPendingRequests(server, 1000);

@@ -22,6 +22,7 @@ import os from "os";
 import path from "path";
 import { log } from "./utils.js";
 import { RedisLease } from "./redisLock.js";
+import { withFileMutex } from "./fileMutex.js";
 
 const LOCK_FILE = process.env.LEADER_LOCK_FILE || path.join(os.tmpdir(), "vrf-oracle.lock");
 const LOCK_TTL_MS = parseInt(process.env.LEADER_LOCK_TTL_MS || "30000", 10);    // 30s
@@ -112,6 +113,18 @@ async function tryAcquire(): Promise<boolean> {
  * Returns true if this instance is now the leader.
  */
 function tryAcquireLock(): boolean {
+  // The whole read → decide → write runs under a cross-process mutex. Before,
+  // two standbys that both saw a stale lock could both call writeLock() and
+  // both believe they were leader.
+  try {
+    return withFileMutex(LOCK_FILE, tryAcquireLockUnlocked);
+  } catch (err) {
+    log.error(`[Leader] Could not take the lock mutex (failing closed): ${err}`);
+    return false;
+  }
+}
+
+function tryAcquireLockUnlocked(): boolean {
   try {
     // If lock file exists, check if it's ours or stale
     let raw: string;
@@ -194,14 +207,16 @@ function writeLock(): void {
 
 function releaseFileLock(): void {
   try {
-    if (fs.existsSync(LOCK_FILE)) {
-      const raw = fs.readFileSync(LOCK_FILE, "utf-8");
-      const lock: LockFile = JSON.parse(raw);
-      if (lock.instanceId === INSTANCE_ID) {
-        fs.unlinkSync(LOCK_FILE);
-        log.info("[Leader] Lock released.");
+    withFileMutex(LOCK_FILE, () => {
+      if (fs.existsSync(LOCK_FILE)) {
+        const raw = fs.readFileSync(LOCK_FILE, "utf-8");
+        const lock: LockFile = JSON.parse(raw);
+        if (lock.instanceId === INSTANCE_ID) {
+          fs.unlinkSync(LOCK_FILE);
+          log.info("[Leader] Lock released.");
+        }
       }
-    }
+    });
   } catch {
     // Best-effort
   }

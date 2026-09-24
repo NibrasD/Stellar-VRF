@@ -11,7 +11,18 @@ import {
   deriveRangeForDomainFromBeta,
   reduceUniform,
   MAX_DERIVE_DOMAIN_LEN,
+  checkRpcUrl,
 } from "../dist/index.js";
+
+test("rpcUrl: HTTPS required; http only to loopback or with explicit allowHttp", () => {
+  assert.equal(checkRpcUrl("https://mainnet.sorobanrpc.com"), false);
+  assert.equal(checkRpcUrl("http://localhost:8000/soroban/rpc"), true);
+  assert.equal(checkRpcUrl("http://127.0.0.1:8000"), true);
+  assert.throws(() => checkRpcUrl("http://rpc.example.com"), /plaintext http/);
+  assert.equal(checkRpcUrl("http://rpc.example.com", true), true);
+  assert.throws(() => checkRpcUrl("ftp://rpc.example.com", true), /https/);
+  assert.throws(() => checkRpcUrl("not a url"), /Invalid rpcUrl/);
+});
 
 const beta = Uint8Array.from({ length: 32 }, (_, i) => i);
 const U64_MAX = (1n << 64n) - 1n;

@@ -43,6 +43,9 @@ services:
       HEALTH_PORT: "8080"
       # Distributed leader election via Redis (multi-server safe).
       REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in environment}@redis:6379"
+      # Plaintext is only acceptable because Redis is reachable solely on this
+      # compose network (`expose`, no published port). Across hosts use rediss://.
+      REDIS_ALLOW_PLAINTEXT: "true"
       LEADER_REDIS_KEY: vrf-oracle:leader
       LEADER_LOCK_TTL_MS: "30000"
       LEADER_HEARTBEAT_MS: "10000"
@@ -68,6 +71,7 @@ services:
       INSTANCE_ID: oracle-standby
       HEALTH_PORT: "8081"
       REDIS_URL: "redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in environment}@redis:6379"
+      REDIS_ALLOW_PLAINTEXT: "true"
       LEADER_REDIS_KEY: vrf-oracle:leader
       LEADER_LOCK_TTL_MS: "30000"
       LEADER_HEARTBEAT_MS: "10000"

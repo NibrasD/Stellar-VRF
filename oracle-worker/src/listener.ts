@@ -226,10 +226,63 @@ export async function findPendingRequests(
     return pending;
   }
 
-  const lowest = counter - BigInt(Math.max(1, maxScan)) + 1n;
+  const window = BigInt(Math.max(1, maxScan));
+  const lowest = counter - window + 1n;
   const floor = lowest > 1n ? lowest : 1n;
 
-  for (let hi = counter; hi >= floor; hi -= BigInt(RECONCILE_BATCH_IDS)) {
+  await scanIdRange(server, floor, counter, pending);
+
+  // Older IDs: sweep one more window per pass with a cursor that walks down to
+  // 1 and then wraps. The newest window is checked every pass; every older ID
+  // is checked at least once every ceil((floor-1)/maxScan) passes, so after a
+  // long outage with heavy traffic nothing stays undiscovered forever.
+  let sweep: { lo: bigint; hi: bigint } | null = null;
+  if (floor > 1n) {
+    let hi = olderSweepCursor !== null && olderSweepCursor < floor ? olderSweepCursor : floor - 1n;
+    if (hi < 1n) hi = floor - 1n;
+    const lo = hi - window + 1n > 1n ? hi - window + 1n : 1n;
+    await scanIdRange(server, lo, hi, pending);
+    olderSweepCursor = lo > 1n ? lo - 1n : null; // null → wrap to the top next pass
+    sweep = { lo, hi };
+  } else {
+    olderSweepCursor = null;
+  }
+
+  pending.sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
+  recordListenerHeartbeat();
+
+  const scanned = `${floor}..${counter}` + (sweep ? ` + older ${sweep.lo}..${sweep.hi}` : "");
+  if (pending.length) {
+    log.warn(
+      `Reconciliation found ${pending.length} unfulfilled request(s) ` +
+        `(scanned ${scanned}): ` +
+        pending.map((p) => String(p.requestId)).join(", ")
+    );
+  } else {
+    log.info(`Reconciliation: no outstanding requests (scanned ${scanned}).`);
+  }
+  return pending;
+}
+
+/**
+ * Position of the rolling sweep over IDs older than the newest window.
+ * In-memory: after a restart the sweep restarts from the top, which only
+ * re-checks IDs (idempotent), never skips them.
+ */
+let olderSweepCursor: bigint | null = null;
+
+/** Test hook: reset the older-ID sweep. */
+export function resetReconcileSweep(): void {
+  olderSweepCursor = null;
+}
+
+async function scanIdRange(
+  server: rpc.Server,
+  floor: bigint,
+  top: bigint,
+  pending: PendingRequest[]
+): Promise<void> {
+  for (let hi = top; hi >= floor; hi -= BigInt(RECONCILE_BATCH_IDS)) {
     const ids: bigint[] = [];
     for (let id = hi; id >= floor && id > hi - BigInt(RECONCILE_BATCH_IDS); id--) {
       ids.push(id);
@@ -264,20 +317,6 @@ export async function findPendingRequests(
       }
     }
   }
-
-  pending.sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
-  recordListenerHeartbeat();
-
-  if (pending.length) {
-    log.warn(
-      `Reconciliation found ${pending.length} unfulfilled request(s) ` +
-        `(scanned ${floor}..${counter}): ` +
-        pending.map((p) => String(p.requestId)).join(", ")
-    );
-  } else {
-    log.info(`Reconciliation: no outstanding requests (scanned ${floor}..${counter}).`);
-  }
-  return pending;
 }
 
 /**

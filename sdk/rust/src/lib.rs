@@ -788,17 +788,34 @@ pub fn strkey_encode_contract(hash: &[u8]) -> String {
 }
 
 /// Decode a Stellar StrKey contract ID (C...) to its 32-byte hash.
+///
+/// Layout: `base32(version_byte ‖ 32-byte payload ‖ crc16_xmodem_le)`, 56 chars.
+/// The length, the contract version byte (`2 << 3`) and the CRC16 checksum are
+/// all checked, so a typo or a `G...` account address is rejected instead of
+/// being silently turned into a different contract hash.
 fn strkey_decode_contract(contract_id: &str) -> Result<[u8; 32], VrfError> {
-    // StrKey encoding: base32 of (version_byte + payload + checksum)
-    // Contract version byte: 2 (shifted: 2 << 3 = 16)
-    let decoded = base32_decode(contract_id)
-        .map_err(|e| VrfError::Rpc(format!("Invalid contract ID: {}", e)))?;
-
-    if decoded.len() < 35 {
-        return Err(VrfError::Rpc("Contract ID too short".into()));
+    let bad = |m: &str| VrfError::Rpc(format!("Invalid contract ID: {}", m));
+    if contract_id.len() != 56 {
+        return Err(bad("expected 56 characters"));
+    }
+    let decoded = base32_decode(contract_id).map_err(|e| bad(&e))?;
+    if decoded.len() != 35 {
+        return Err(bad("wrong decoded length"));
+    }
+    if decoded[0] != 2 << 3 {
+        return Err(bad("not a contract (C...) address"));
+    }
+    let expected = crc16_xmodem(&decoded[..33]);
+    let actual = u16::from_le_bytes([decoded[33], decoded[34]]);
+    if expected != actual {
+        return Err(bad("checksum mismatch"));
+    }
+    // Re-encoding must reproduce the input exactly (rejects non-canonical
+    // trailing bits in the last base32 character).
+    if strkey_encode(2 << 3, &decoded[1..33]) != contract_id {
+        return Err(bad("non-canonical encoding"));
     }
 
-    // Skip version byte (1) and take 32 bytes of payload
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&decoded[1..33]);
     Ok(hash)
@@ -1654,5 +1671,36 @@ mod tests {
             strkey_decode_contract("CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE");
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 32);
+    }
+
+    #[test]
+    fn test_strkey_decode_contract_rejects_bad_ids() {
+        let good = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
+        assert!(strkey_decode_contract(good).is_ok());
+
+        // One changed character → checksum mismatch.
+        let mut typo = good.to_string();
+        typo.replace_range(10..11, if &good[10..11] == "A" { "B" } else { "A" });
+        assert!(
+            strkey_decode_contract(&typo).is_err(),
+            "typo must fail the CRC"
+        );
+
+        // Right length, wrong version byte: an account (G...) address.
+        let account = strkey_encode_ed25519(&[7u8; 32]);
+        assert_eq!(account.len(), 56);
+        assert!(
+            strkey_decode_contract(&account).is_err(),
+            "G... must be rejected"
+        );
+
+        // Wrong lengths.
+        assert!(strkey_decode_contract(&good[..55]).is_err());
+        assert!(strkey_decode_contract(&format!("{good}A")).is_err());
+        assert!(strkey_decode_contract("").is_err());
+
+        // Invalid base32 characters.
+        let lower = good.to_lowercase();
+        assert!(strkey_decode_contract(&lower).is_err());
     }
 }

@@ -184,6 +184,9 @@ jobs:
         env:
           REDIS_URL: redis://127.0.0.1:6399
         run: node spend_ledger_drill.mjs
+      - name: File-mutex drill (real processes — no lost updates, file ledger never overshoots)
+        working-directory: oracle-worker
+        run: node file_mutex_drill.mjs
 
   js-sdk:
     name: JS SDK (build)

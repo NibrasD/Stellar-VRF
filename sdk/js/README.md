@@ -91,6 +91,7 @@ console.log("Random roll:", roll);
 | `networkPassphrase` | `string` | Stellar network passphrase |
 | `keypair` | `Keypair` | Keypair for signing transactions |
 | `maxFee` | `string?` | Max fee in stroops (default: `"1000000"`) |
+| `allowHttp` | `boolean?` | Allow a plaintext `http://` RPC to a non-loopback host (default `false`). `rpcUrl` must otherwise be `https://`; `http://localhost` is always allowed. |
 
 ### Methods
 
