@@ -9,24 +9,17 @@ on mainnet.
 
 | Network | Contract ID | Oracle Account |
 |---|---|---|
-| **Mainnet** | `CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` |
-| Testnet | `CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE` | — |
+| **Mainnet** | `CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` |
+| Testnet | `CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` |
 
 ### Mainnet Transaction Proof
 
 | Transaction | Hash | Explorer |
 |---|---|---|
-| WASM Upload | `0b555662fcdf5083237b7ab337583cb9d8c8124deb4c1220a385745299702222` | [View](https://stellar.expert/explorer/public/tx/0b555662fcdf5083237b7ab337583cb9d8c8124deb4c1220a385745299702222) |
-| Contract Deploy | `348f0fde4ac4954f4ebed808b1bba9dbdbf2137cbb29156f69188fc69fad3af1` | [View](https://stellar.expert/explorer/public/tx/348f0fde4ac4954f4ebed808b1bba9dbdbf2137cbb29156f69188fc69fad3af1) |
-| Contract Init (legacy WASM only) | `6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc` | [View](https://stellar.expert/explorer/public/tx/6e1c73daa40844480228de844f61d2fd56bca050965911d08eea090e1d03fbbc) |
-
-> The current instance was configured by a separate `init()` call. The current
-> source has **no `init()`**. It is configured atomically by `__constructor` in
-> the deploy transaction (`mainnet_deploy.mjs` passes `constructorArgs` to
-> `createCustomContract`), so the next deployment has no init step. See
-> [RUNBOOK §1.3](RUNBOOK.md#13-deploy--configure-contract-testnet-one-step).
-| First request() | `0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3` | [View](https://stellar.expert/explorer/public/tx/0051354cb715ce8af3f2d591d5f040441a41aa0531fdb96aa6d23126690c5cd3) |
-| First fulfill() | `f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf` | [View](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) |
+| WASM Upload | `fe1b7f85b738bdc65620bffd9f10abbfdf7995adfbb4a7a90803c3a17c6cf41b` | [View](https://stellar.expert/explorer/public/tx/fe1b7f85b738bdc65620bffd9f10abbfdf7995adfbb4a7a90803c3a17c6cf41b) |
+| Contract Deploy & Atomic Config | `fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50` | [View](https://stellar.expert/explorer/public/tx/fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50) |
+| Verified request() | `978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae` | [View](https://stellar.expert/explorer/public/tx/978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae) |
+| Verified fulfill() | `e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b` | [View](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) |
 
 ### Reproducible contract build (pinned toolchain)
 

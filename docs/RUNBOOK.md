@@ -9,8 +9,8 @@ troubleshooting for the Stellar VRF Oracle.
 
 | Item | Value |
 |---|---|
-| Contract (Testnet) | `CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE` |
-| Contract (Mainnet) | `CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU` |
+| Contract (Testnet) | `CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR` |
+| Contract (Mainnet) | `CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX` |
 | Health endpoint | `http://localhost:8080/health` |
 | Metrics endpoint | `http://localhost:8080/metrics` |
 | drand chain | quicknet (`52db9ba7…`) |

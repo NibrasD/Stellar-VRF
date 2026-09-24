@@ -19,7 +19,7 @@ keys unchanged the oracle can neither predict nor bias the outcome.
 > [THREAT_MODEL.md](https://github.com/NibrasD/Stellar-VRF/blob/main/docs/THREAT_MODEL.md).
 
 **Live on Stellar Mainnet:**
-[`CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU`](https://stellar.expert/explorer/public/contract/CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU)
+[`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`](https://stellar.expert/explorer/public/contract/CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX)
 
 ## Installation
 
@@ -76,7 +76,7 @@ use stellar_vrf_sdk::{VrfClient, VrfClientConfig, Network};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = VrfClient::new(VrfClientConfig {
-        contract_id: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU".into(),
+        contract_id: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX".into(),
         network: Network::Mainnet,
         secret_key: String::new(), // unused: this client is read-only
     });

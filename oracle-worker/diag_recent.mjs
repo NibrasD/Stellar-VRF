@@ -3,7 +3,7 @@ const stellar = stellarNs.default || stellarNs;
 const { rpc, scValToNative, Networks, TransactionBuilder, Operation, nativeToScVal } = stellar;
 
 const server = new rpc.Server("https://mainnet.sorobanrpc.com", { allowHttp: false });
-const CONTRACT_ID = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
+const CONTRACT_ID = "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX";
 const ORACLE_PUBLIC = "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P";
 
 const health = await server.getHealth();

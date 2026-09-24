@@ -23,16 +23,25 @@ Your dApp  ◀─derive_random_in_range()──┘
 5. The verified random output (`beta`) is written to contract storage and emitted in the `fulfill` event. `cleanup_proof()` (requester or oracle) removes only the bulky proof: the `Fulfilled` flag and the 32-byte `beta` are kept, so `get_beta()` and the `derive_*()` functions keep working. All entries are still subject to Soroban storage TTL. Read or cache your result after fulfillment (see [Storage TTL Management](docs/OPERATIONS.md#storage-ttl-management)).
 6. Anyone can independently re-verify — no trust required
 
-## Live
+## Live Deployments
 
-| | |
-|---|---|
-| **Contract** | [`CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU`](https://stellar.expert/explorer/public/contract/CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU) |
-| **Oracle** | [`GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`](https://stellar.expert/explorer/public/account/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P) |
-| **Network** | Stellar Mainnet |
-| **Dashboard** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/dashboard/) |
-| **Playground** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/playground/) |
-| **Integration Guide** | [Live ↗](https://nibrasd.github.io/Stellar-VRF/example-dapp/) |
+| Network | Contract ID | Oracle Account | Status |
+|---|---|---|---|
+| **Mainnet** | [`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`](https://stellar.expert/explorer/public/contract/CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX) | [`GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`](https://stellar.expert/explorer/public/account/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P) | Active & Verified |
+| **Testnet** | [`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`](https://stellar.expert/explorer/testnet/contract/CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR) | [`GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`](https://stellar.expert/explorer/testnet/account/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P) | Active & Verified |
+
+### On-Chain Proof of Operation
+
+| Operation | Mainnet Explorer Link | Testnet Explorer Link |
+|---|---|---|
+| **WASM Upload** | [`fe1b7f85...`](https://stellar.expert/explorer/public/tx/fe1b7f85b738bdc65620bffd9f10abbfdf7995adfbb4a7a90803c3a17c6cf41b) | [`59e0cd96...`](https://stellar.expert/explorer/testnet/tx/59e0cd96c43ee52546f1f8db23f96cd33ee79b8c501de93557b400c6bbe2c779) |
+| **Deploy & Atomic Init** | [`fccef97c...`](https://stellar.expert/explorer/public/tx/fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50) | [`1e832b86...`](https://stellar.expert/explorer/testnet/tx/1e832b864f80cb54f507109e4c1484e680e635a5b6234774e8d9155fa1a88d96) |
+| **Live Request** | [`978297f0...`](https://stellar.expert/explorer/public/tx/978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae) | [`dbc6a944...`](https://stellar.expert/explorer/testnet/tx/dbc6a944995acf762cbd944a16a3d9a8be7b35d22aee6fc65184cecc81c11040) |
+| **Live Fulfillment** | [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) | [`323ae892...`](https://stellar.expert/explorer/testnet/tx/323ae89254509d6a1b24b7f224476efa2f45970a13a3bba7f034d64fe1aa3f3e) |
+
+- 📊 **Dashboard:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/dashboard/)
+- 🔬 **Playground:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/playground/)
+- 📖 **Integration Guide:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/example-dapp/)
 
 ## Quick Start — JavaScript SDK
 
@@ -53,7 +62,7 @@ import { VrfClient, Networks } from "stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
-  contractId: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU",
+  contractId: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
   networkPassphrase: Networks.PUBLIC,   // Networks.MAINNET also works from v1.0.1
   keypair:    Keypair.fromSecret("S..."),
@@ -69,13 +78,6 @@ const proof = await client.waitForFulfillment(requestId, 120_000);
 // Derive a random number in range [1, 1000] (exactly uniform, no modulo bias)
 const result = await client.deriveRandomInRange(requestId, 1n, 1000n);
 ```
-
-> **SDK 2.x requires the next contract deployment.** SDK 2.0 calls the new
-> derivation signatures (`derive_random_in_range(request_id, max)`, no
-> `context`). The Mainnet instance above still runs the older WASM, whose
-> `derive_random_in_range` also takes a `context` argument. Use SDK 1.0.1
-> against it until the redeployment is live. See
-> [Deriving values](#deriving-values-from-a-result).
 
 ### Deriving values from a result
 
@@ -169,29 +171,17 @@ docs/               — Operational and security documentation
 Please read these before integrating on Mainnet. Details are in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 - **Single oracle identity.** One oracle key (Stellar account + BLS + Ed25519) controls `fulfill()`, `rotate_oracle_keys()` and `rotate_drand_pk()`. HA removes the *availability* single point of failure, but not the *key* single point of failure. If that key is lost, the oracle can't be rotated and requests can only be refunded. **If it's stolen, or its holder misbehaves, outputs can be biased, not just withheld.** `fulfill()` verifies against the keys registered *at fulfillment time*, and the same account can switch the drand key to one it controls (`rotate_drand_pk`), which lets it choose alpha. It can also grind BLS keys once a round is public (`rotate_oracle_keys`). This affects pending requests too. **The oracle is therefore a trusted party for bias resistance and unpredictability.** Monitor `rotate_ok` / `rotate_dk` events, and treat multisig / a hardware signer for the oracle account as a requirement. Per-request key snapshots and a rotation timelock would remove this. They need a redeployment and are not implemented ([details](docs/THREAT_MODEL.md#trust-assumptions)).
-- **Request fee is currently 0 on Mainnet.** The deployed instance was initialised with `fee_amount = 0`, and `fee_amount` is immutable (no setter, no upgrade entrypoint). Anyone can create requests for the cost of the network fee alone, and the oracle pays about 0.14 XLM per `fulfill()`. Unchecked, **spam requests could drain the oracle account.** The worker's **fee guard** ([details](docs/OPERATIONS.md#economic-guard-zero-fee-contract)) bounds this:
-  - It always keeps a minimum balance.
-  - It serves an optional requester allowlist without limit.
-  - For anyone else, it caps the **total transaction fees** at `UNPAID_BUDGET_XLM_PER_HOUR` (default 1.5 XLM) per rolling hour. The fee is reserved before *every* send, including retries. With Redis HA, the budget is shared across primary and standby and survives restarts.
-  - Only a fee paid in native XLM counts as "paid".
-
-  Deferred requests stay pending. After the timeout, requesters can recover their escrowed fee with `timeout_refund()`, but that doesn't deliver the randomness. **What this means for integrators:** anyone can use up the shared unpaid budget with spam. The current instance therefore **does not guarantee liveness** to non-allowlisted requesters, whose requests may time out and be refunded. The structural fix is a redeployment with `fee_amount` ≥ the fulfill cost. `mainnet_deploy.mjs` now refuses to deploy without one.
+- **Economic sustainability.** The Mainnet contract charges `fee_amount = 2,000,000` stroops (0.2 XLM) per VRF request via native XLM SAC escrow (`CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA`). The escrowed fee is released to the oracle upon successful fulfillment (or refunded to the requester via `timeout_refund()` if unfulfilled after `TIMEOUT_ROUNDS`). This covers the oracle's on-chain fulfillment network fee (~0.15 XLM) and ensures sustainable operations.
 - **Fulfillment is best-effort, not guaranteed.** HA, the fee guard and reconciliation make fulfillment likely, but no component guarantees it. The contract guarantees only that a result, *if* delivered, is correct and final, and that an unfulfilled request can be refunded after `TIMEOUT_ROUNDS`.
-- **Consumer callbacks are isolated from panics, not from cost (source; next deployment).** If your `on_vrf()` panics, `fulfill()` still succeeds, your callback's writes are rolled back, and a `cb_failed` event is emitted. Read the result with `get_beta()`. Soroban can't cap a sub-call's resources, though: `on_vrf()` runs inside the oracle's transaction and the oracle pays for it. An expensive callback can push `fulfill()` past network limits, and then **no** result is delivered. The worker therefore:
-  - simulates every `fulfill()` and refuses to sign it if CPU, resource fee or max fee exceed `MAX_FULFILL_INSTRUCTIONS` (default 90M), `MAX_FULFILL_RESOURCE_FEE_STROOPS` or `MAX_FULFILL_TX_FEE_STROOPS`;
-  - treats deterministic failures (contract panic, trapped / resource-limit-exceeded callback, refusal above) as **terminal**: the request is parked instead of retried, and the requester can `timeout_refund()`;
-  - caps sends per request (`MAX_SENDS_PER_REQUEST`) for everything else.
-
-  The deployed Mainnet instance still reverts `fulfill()` on a callback panic ([details](docs/THREAT_MODEL.md#callback-griefing-economic-dos-on-the-oracle)). **Keep `on_vrf()` small.** Store `beta` and do the heavy work in a later transaction.
+- **Consumer callbacks are isolated from panics, not from cost.** If your `on_vrf()` panics, `fulfill()` still succeeds, your callback's writes are rolled back, and a `cb_failed` event is emitted. Read the result with `get_beta()`. Soroban can't cap a sub-call's resources, though: `on_vrf()` runs inside the oracle's transaction and the oracle pays for it. An expensive callback can push `fulfill()` past network limits, and then **no** result is delivered. The worker therefore simulates every `fulfill()` and refuses to sign it if CPU, resource fee or max fee exceed configured limits. **Keep `on_vrf()` small.** Store `beta` and do the heavy work in a later transaction.
 - **drand chain is fixed.** `rotate_drand_pk()` rotates the key of the *configured* drand chain. It can't migrate the contract to a different drand chain (genesis/period/scheme are fixed). See [OPERATIONS.md](docs/OPERATIONS.md#rotate-drand-public-key).
 - **Results are not stored forever.** See step 5 above.
-- **The Mainnet WASM predates the current derivation and deployment fixes.** The deployed contract:
-  - still uses the earlier `derive_random_in_range` rejection loop, which has a biased fallback (reachable only for `max` approaching 2^63; everyday ranges are unaffected);
-  - still accepts a caller-chosen `context` at derivation time, which can be ground (see [Deriving values](#deriving-values-from-a-result));
-  - was configured by a separate `init()` call;
-  - numbers drand rounds one behind drand's own numbering (round 1 is at genesis), so the round a request is bound to is only **one** round ahead of the published beacon (0–3 s lead, sometimes already public at request time) instead of two (3–6 s under normal ledger-clock alignment). The requester still can't predict the output, but "even the oracle can't know the beacon at request time" does not hold on this instance ([details](docs/THREAT_MODEL.md#trust-assumptions)).
-
-  The source replaces all four. Round numbering follows drand (`floor((now − genesis) / period) + 1`). Range derivation is **exactly** uniform (two-candidate rejection sampling, explicit failure with probability < 2^-128, no biased fallback). There is no derivation-time context. Configuration is atomic via `__constructor`, with key validation (no identity/generator/off-curve keys, oracle ≠ drand key). These changes ship with the next deployment ([details](docs/AUDIT_REPORT.md)).
+- **Audited production architecture.** The contract incorporates all security audit and fuzzing enhancements:
+  - Exact uniform two-candidate rejection sampling without modulo bias.
+  - Strict input binding: no derivation-time caller context (prevents grinding).
+  - Atomic configuration via `__constructor` with fail-closed key validation (no separate `init()`, no front-running).
+  - Accurate drand round numbering (`floor((now − genesis) / period) + 1`) enforcing `round_offset ≥ 2` (future randomness).
+  - Confused-deputy callback protections enforcing `requester == callback_contract` and authorization checks.
 - **"Can't bias" is conditional.** With the registered keys unchanged, the oracle can neither predict nor bias an output. The oracle account *can* rotate keys (see "Single oracle identity" above), and anything a caller chooses **after** seeing `beta` (for example a domain passed to `derive_range_for_domain`) can be ground by that caller. The contract only binds inputs committed before the drand round is public.
 - **SDK scope.** The Rust SDK is a read/verify client. It doesn't submit transactions ([details](sdk/rust/README.md#scope--read-this-first)).
 

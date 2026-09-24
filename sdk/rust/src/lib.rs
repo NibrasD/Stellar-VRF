@@ -10,7 +10,7 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let client = VrfClient::new(VrfClientConfig {
-//!         contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE".into(),
+//!         contract_id: "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR".into(),
 //!         network: Network::Testnet,
 //!         secret_key: String::new(), // unused: read-only client
 //!     });
@@ -1666,14 +1666,14 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let client = VrfClient::new(VrfClientConfig {
-            contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE".into(),
+            contract_id: "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR".into(),
             network: Network::Testnet,
             secret_key: String::new(),
         });
         // Client creation should not fail
         assert_eq!(
             client.config.contract_id,
-            "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE"
+            "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR"
         );
     }
 
@@ -1681,14 +1681,14 @@ mod tests {
     fn test_strkey_decode_contract() {
         // Valid contract ID should decode to 32 bytes
         let result =
-            strkey_decode_contract("CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE");
+            strkey_decode_contract("CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR");
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 32);
     }
 
     #[test]
     fn test_strkey_decode_contract_rejects_bad_ids() {
-        let good = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
+        let good = "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX";
         assert!(strkey_decode_contract(good).is_ok());
 
         // One changed character → checksum mismatch.

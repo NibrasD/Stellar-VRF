@@ -229,10 +229,10 @@
 
       <h3>Mainnet Contract</h3>
       <p style="margin-bottom:4px">
-        <span class="inline-code">CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU</span>
+        <span class="inline-code">CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX</span>
       </p>
       <p>
-        <a class="tx-link" href="https://stellar.expert/explorer/public/contract/CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU" target="_blank" rel="noopener noreferrer">View on Stellar Expert ↗</a>
+        <a class="tx-link" href="https://stellar.expert/explorer/public/contract/CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX" target="_blank" rel="noopener noreferrer">View on Stellar Expert ↗</a>
       </p>
     </div>
 
@@ -251,7 +251,7 @@
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
-  contractId: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU",
+  contractId: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
   networkPassphrase: Networks.PUBLIC,
   keypair:    Keypair.fromSecret("S..."),  // signs locally, never sent
@@ -367,7 +367,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
   const { Keypair, TransactionBuilder, Operation,
           nativeToScVal, scValToNative, rpc } = StellarSdk;
 
-  const CONTRACT = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
+  const CONTRACT = "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX";
   const server   = new rpc.Server("https://mainnet.sorobanrpc.com");
   const keypair  = Keypair.fromSecret("S...");
 
@@ -485,13 +485,13 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
 
     const NETWORKS = {
       testnet: {
-        contract: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
+        contract: "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR",
         soroban: "https://soroban-testnet.stellar.org",
         passphrase: Networks.TESTNET,
         explorer: "https://stellar.expert/explorer/testnet",
       },
       mainnet: {
-        contract: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU",
+        contract: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
         soroban: "https://mainnet.sorobanrpc.com",
         passphrase: Networks.PUBLIC,
         explorer: "https://stellar.expert/explorer/public",

@@ -290,7 +290,7 @@ console.log(`  Salt (hex): ${salt.toString("hex")}`);
 const constructorArgs = [
   bytesVal(ORACLE_BLS_PK),
   new Address(ORACLE_PUBLIC).toScVal(),
-  bytesVal(ORACLE_ED25519),
+  nativeToScVal(ORACLE_KP.rawPublicKey(), { type: "bytes" }),
   bytesVal(DRAND_PK),
   u64Val(1692803367n),
   u32Val(3),

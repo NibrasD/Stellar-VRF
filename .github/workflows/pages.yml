@@ -41,7 +41,7 @@ jobs:
       - name: Verify the built site is current
         run: |
           set -e
-          NEW=CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU
+          NEW=CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX
           fail=0
           for f in _site/dashboard/index.html _site/playground/index.html _site/example-dapp/index.html; do
             if ! grep -q "$NEW" "$f"; then echo "::error::$f missing current mainnet contract"; fail=1; fi

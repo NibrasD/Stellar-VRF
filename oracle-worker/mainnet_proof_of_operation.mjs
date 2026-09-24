@@ -15,7 +15,7 @@ const { Keypair, Networks, TransactionBuilder, Operation, Address, nativeToScVal
 
 const MAINNET_RPC   = "https://mainnet.sorobanrpc.com";
 const NETWORK       = Networks.PUBLIC;
-const CONTRACT_ID   = "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU";
+const CONTRACT_ID   = "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX";
 const ORACLE_SECRET = process.env.ORACLE_STELLAR_SECRET || process.env.ORACLE_SECRET;
 if (!ORACLE_SECRET) { console.error("ERROR: ORACLE_SECRET env var is required"); process.exit(1); }
 const ORACLE_KP     = Keypair.fromSecret(ORACLE_SECRET);

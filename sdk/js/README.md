@@ -19,7 +19,7 @@ the registered keys unchanged the oracle can neither predict nor bias the output
 > [THREAT_MODEL.md](https://github.com/NibrasD/Stellar-VRF/blob/main/docs/THREAT_MODEL.md).
 
 **Live on Stellar Mainnet:**
-[`CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU`](https://stellar.expert/explorer/public/contract/CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU)
+[`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`](https://stellar.expert/explorer/public/contract/CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX)
 
 - 🔬 [Interactive Playground](https://nibrasd.github.io/Stellar-VRF/playground/)
 - 📊 [Live Dashboard](https://nibrasd.github.io/Stellar-VRF/dashboard/)
@@ -60,7 +60,7 @@ import { VrfClient, Networks } from "stellar-vrf-sdk";
 import { Keypair } from "@stellar/stellar-sdk";
 
 const client = new VrfClient({
-  contractId: "CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU",
+  contractId: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   rpcUrl: "https://mainnet.sorobanrpc.com",
   networkPassphrase: Networks.PUBLIC,
   keypair: Keypair.fromSecret("S..."),
