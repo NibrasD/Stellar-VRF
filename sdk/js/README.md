@@ -112,8 +112,9 @@ console.log("Random roll:", roll);
 
 > **2.0 breaking change:** the `context` argument of `deriveRandomInRange` is
 > gone. Choosing it after the result was public let a caller grind outputs.
-> SDK 2.x targets the next contract deployment. Keep using 1.0.1 against the
-> current Mainnet instance.
+> SDK 2.x matches the current deployment (Mainnet `CAW6KECQ…UPRX`). SDK 1.0.x only
+> works with the legacy instance `CBTCC5QL…`: its `deriveRandomInRange` sends a
+> `context` argument the current contract rejects.
 
 ### `requestWithCallback`
 

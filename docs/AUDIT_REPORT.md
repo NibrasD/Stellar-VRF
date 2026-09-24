@@ -73,10 +73,10 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
 | **Centralization Risk** | `[CR]` | Oracle admin privilege boundaries, theft of escrow funds | Oracle cannot withdraw arbitrary funds; fees can only be released upon valid cryptographic proof | **VERIFIED** |
 | **SEP-41 Token Safety** | `[ST]` | SAC fee escrow handling, balance drain prevention | Escrowed fee locked per-request; refunded only to authenticated requester; released only to oracle | **VERIFIED** |
 | **Custom Type Safety** | `[CT]` | `DataKey` enum, deserialization attacks, ScVal boundaries | Strong typing on all keys; bounded context input (`MAX_CONTEXT_LEN = 1024`) | **VERIFIED** |
-| **Modulo Bias Elimination**| `[MB]` | Random range mapping uniform distribution | 128-bit "extra bits" reduction; bias $\le 2^{-64}$, no biased fallback, constant cost | **VERIFIED** |
+| **Modulo Bias Elimination**| `[MB]` | Random range mapping uniform distribution | Exact two-candidate rejection sampling (zero bias); explicit failure with probability $< 2^{-128}$, no biased fallback (updated since this report; see MB-01) | **VERIFIED** |
 | **Confused Deputy** | `[CD]` | Third-party callback hijacking | `callback_contract == requester` enforced; `callback_fn == "on_vrf"` restricted | **VERIFIED** |
-| **Storage Rent Reclamation**| `[SR]` | Rent explosion prevention on long-lived contracts | `cleanup_proof` allows purging 384-byte proof while keeping `Fulfilled` flag; timeout deletes context | **VERIFIED** |
-| **Gas / CPU Headroom** | `[GH]` | Resource consumption within Soroban host limits | Nonzero-fee fulfill consumes 56,122,588 instructions (Soroban cap is 100,000,000; 43.9% headroom) | **VERIFIED** |
+| **Storage Rent Reclamation**| `[SR]` | Rent explosion prevention on long-lived contracts | `cleanup_proof` purges the proof while keeping the `Fulfilled` flag and the 32-byte `Beta`; timeout deletes context | **VERIFIED** |
+| **Gas / CPU Headroom** | `[GH]` | Resource consumption within Soroban host limits | Historical figure at report time: 56,122,588 instructions against the then-100M cap. Current Mainnet measurement: 58,342,003 instructions (nonzero fee) against the 400M protocol limit; see `PROFILING.md` | **VERIFIED** |
 | **Frontend Injection / XSS**| `[XSS]` | Client DOM interpolation of blockchain events and user inputs | Strict `esc()` and `encodeURIComponent()` applied across all HTML files; 0 findings on Semgrep | **VERIFIED** |
 | **Secrets Exposure** | `[SE]` | Private keys, seeds, or credentials committed to repository | 0 private keys in code; `.env` gitignored; verified with Semgrep and git log scans | **VERIFIED** |
 | **Panic & Release Profile** | `[RP]` | WASM size and execution profile | `panic = "abort"` enabled for optimal size (35,291 bytes optimized WASM) | **VERIFIED** |
@@ -123,12 +123,14 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
 ### [MB-01] Elimination of Modulo Bias in Random Range Derivation [VERIFIED-SECURE]
 - **Analysis**: Reducing a **64-bit** hash value with `candidate % max` introduces statistical bias whenever `max` does not divide $2^{64}$. The deviation between residue classes is bounded by $max / 2^{64}$, which is negligible for small ranges (dice, percentages) but approaches a **50% skew** as `max` approaches $2^{63}$.
 - **Superseded mitigation (removed)**: an earlier version rejected candidates $\ge \text{u64::MAX} - (\text{u64::MAX} \bmod max)$ and, after 10 attempts, **fell back to a plain `candidate % max`**. That fallback was biased, and the documented failure probability of $2^{-640}$ was **incorrect**: the per-attempt rejection probability is $(\text{u64::MAX} \bmod max + 1) / 2^{64}$, which tends to $1/2$ as `max` tends to $2^{63}$ — making the biased fallback reachable with probability $\approx 2^{-11}$, not $2^{-640}$.
-- **Current mitigation — "extra bits" reduction (NIST SP 800-90A B.5.1.3 style)**:
-  - `derive_random_in_range` draws **128 bits** of hash entropy and reduces modulo `max`.
-  - For uniform $x \in [0, 2^{128})$ and any $max < 2^{64}$, the deviation between residue classes is bounded by $max / 2^{128} \le 2^{-64}$ — cryptographically negligible.
-  - Properties: **no biased fallback path**, **constant cost** (exactly one `sha256`, no loop, deterministic instruction count), and **deterministic** output for identical inputs.
-  - The client-side helpers `deriveRandomFromBeta()` (JS SDK) and `derive_random_from_beta()` (Rust SDK) use the same 128-bit reduction, but they are **not the same function** as the contract's: they reduce the first 16 bytes of `beta` directly, while the contract reduces `sha256("VREP_DERIVE_V1" ‖ beta ‖ context)`. Their outputs differ for the same request.
-  - **Deployment status:** the 128-bit uniform reduction is compiled into WASM `81ffb2f2…` and is deployed live on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`), verified via live fulfillment and on-chain derivations. The earlier legacy instance (`CBTCC5QL…`) ran the prior algorithm.
+- **Intermediate mitigation (also superseded)**: a single 128-bit candidate reduced with `% max`. Bias was bounded by $2^{-64}$ but not zero.
+- **Current mitigation — exact two-candidate rejection sampling** (audit round 5):
+  - `derive_random_in_range(request_id, max)` hashes `"VREP_DERIVE_V2" ‖ tag ‖ request_id ‖ max ‖ beta` and splits the 32-byte digest into two 128-bit candidates.
+  - A candidate $c$ is accepted iff $c < 2^{128} - (2^{128} \bmod max)$ (a whole number of residue cycles), and the result is $c \bmod max$. Accepted results are **exactly uniform**.
+  - If both candidates are rejected (probability $< 2^{-128}$), the call fails explicitly. There is **no biased fallback** and no unbounded loop.
+  - There is **no caller-chosen context** at derivation time. `derive_range_for_domain` exists for multiple values from one result, and its domain must be fixed before fulfillment (see README).
+  - The SDK helpers (`deriveRandomInRange` / `derive_random_in_range` offline variants) implement the same algorithm and are checked against shared test vectors.
+  - **Deployment status:** deployed on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`), WASM hash `6a261a26976ca5a45c5bd23b545b0a83faec363b3de132a882cfbe1b4f19e556`. The legacy instance (`CBTCC5QL…`) ran the earlier algorithm.
   - Verified by tests: `test_derive_random_in_range_bounds`, `test_derive_random_in_range_worst_case_sampling`, `test_property_derive_random_in_range_boundary_max_one`, and `test_property_derive_random_in_range_fuzz_various_ranges`.
 
 ### [SL-01] Storage Rent Reclamation & Bounded Growth [VERIFIED-SECURE]

@@ -6,8 +6,8 @@
  * ───────────────────
  * `request()` is permissionless and the requester pays the on-chain
  * `FeeAmount`, while the oracle pays the network fee of `fulfill()`
- * (~0.14 XLM on Mainnet). When `FeeAmount` is below that cost (the live
- * Mainnet instance has `FeeAmount = 0`, and it is immutable), anyone can make
+ * (~0.14 XLM on Mainnet). When `FeeAmount` is below that cost (the legacy
+ * Mainnet instance and Testnet have `FeeAmount = 0`, and it is immutable), anyone can make
  * the oracle spend real XLM per request for the price of a cheap `request()`.
  *
  * Two checkpoints

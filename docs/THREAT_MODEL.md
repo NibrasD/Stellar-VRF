@@ -110,9 +110,10 @@ can pass a larger `round_offset` at construction.
 > **Production deployment (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) includes the round 6 fix.**
 > In earlier legacy WASM code (`CBTCC5QL…SUHU`), `current_round` was computed without the `+ 1`,
 > which was one round behind drand. The active production contract `CAW6KEC…` enforces the correct
-> drand round formula (`floor((now - genesis) / period) + 1 + round_offset`), guaranteeing that the beacon
-> is strictly emitted 3–6 s in the future after the request ledger timestamp. The legacy instance (`CBTCC5QL…`)
-> is superseded.
+> drand round formula (`current = floor((now - genesis) / period) + 1`, `required = current + round_offset`).
+> Under normal ledger-clock alignment the bound beacon is emitted 3–6 s after the request ledger
+> timestamp (see the caveat above; this is a timing margin, not a guarantee). The legacy instance
+> (`CBTCC5QL…`) is superseded.
 
 ## Attack surface
 
@@ -150,7 +151,7 @@ still paid the network fee. The worker retried, and reconciliation re-queued the
 `RECONCILE_INTERVAL_MS`. Any consumer could make the oracle pay fees on its request indefinitely,
 and never pay it.
 
-**Now (contract source; takes effect with the next deployment):**
+**Now (live on the current deployment `CAW6KECQ…UPRX` / `CBEDNSJ6…JTBR`):**
 `invoke_callback_if_configured()` uses `env.try_invoke_contract`. If the callback panics, traps,
 returns an error or doesn't exist, the host rolls back **only the callback's own writes** and the
 contract emits `cb_failed` with `(request_id, callback_contract)`. `Fulfilled`, the stored proof,
@@ -270,11 +271,15 @@ verification (~56M instructions), not storage operations.
   multi-oracle threshold committee so that no single key can withhold service.
 - **Fee economics / request spam** — the `fee_amount` parameter and escrow mechanism are fully
   implemented and tested (fees are escrowed in the VRF contract on request, released to oracle on
-  fulfill, refunded to requester on timeout). The Mainnet instance is deployed with
-  `fee_amount = 0` (verified from instance storage), and `fee_amount` is immutable after construction (`init()` on the legacy WASM).
-  Consequence: a requester pays only the Stellar network fee per `request()`, while the oracle
-  pays ~0.14 XLM per `fulfill()`. Unchecked, an attacker could **drain the oracle's XLM
-  balance**. That's an availability/cost attack, not an integrity one. **Mitigation in the
+  fulfill, refunded to requester on timeout). `fee_amount` is immutable after construction.
+  **Current deployment:** Mainnet `CAW6KECQ…UPRX` charges **0.2 XLM** (2,000,000 stroops, XLM
+  SAC), which covers the measured fulfill cost (~0.14 XLM). The legacy instance `CBTCC5QL…` was
+  deployed with `fee_amount = 0`: there, a requester paid only the network fee while the oracle
+  paid ~0.14 XLM per `fulfill()`, so an attacker could **drain the oracle's XLM balance**
+  (an availability/cost attack, not an integrity one). Note that 0.2 XLM is **below** the
+  worker's `MAX_FULFILL_TX_FEE_STROOPS` (0.6 XLM): a fulfill that costs more than 0.2 XLM is
+  only partly reimbursed, and the shortfall is charged to the unpaid budget below
+  (`feeCoversMaxTxFee: false` in `deployed.mainnet.json`). **Mitigation in the
   worker (fee guard, `src/feeGuard.ts`):** before any drand wait or proof work, each request is
   checked:
   1. The oracle never submits below `MIN_ORACLE_BALANCE_XLM`, and fails closed if the balance
@@ -303,9 +308,10 @@ verification (~56M instructions), not storage operations.
   **Residual risk: selective liveness denial.** Anyone can use up the shared unpaid budget
   with cheap `request()` calls. After that, legitimate non-allowlisted requesters wait and may
   only get `timeout_refund()`. The attack changes from *economic drain* into *denial of
-  service for permissionless users*. The current Mainnet instance therefore **does not
-  guarantee liveness to non-allowlisted requesters**. The structural fix is a deployment with
-  `fee_amount` ≥ the fulfill cost, **in XLM**. `mainnet_deploy.mjs` enforces this.
+  service for permissionless users*. This applied fully to the zero-fee legacy instance. On the
+  current instance (0.2 XLM), requests count as "paid" and are served, and only a fulfill
+  costing more than 0.2 XLM touches the unpaid budget. Liveness is still best-effort (oracle,
+  RPC and drand availability), with `timeout_refund()` as the fallback.
 - **Oracle key is a single point of failure for administration** — there is no separate admin
   role. The oracle Stellar account authorizes `fulfill()`, `rotate_oracle_keys()` and
   `rotate_drand_pk()`. Losing it makes the deployment unrotatable (requests can only time out

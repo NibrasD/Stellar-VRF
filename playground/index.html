@@ -310,7 +310,7 @@
         ? `🔴 <strong>Stellar Mainnet</strong> — Real XLM will be spent on transactions.
            Your secret key signs locally and is <strong>never sent to any server</strong>.
            Contract: <code style="color:#86efac;font-size:0.78rem">CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX</code>`
-        : `â ï¸  Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+        : `⚠️  Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
            Need a funded testnet account?
            <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>`;
 
@@ -496,13 +496,14 @@
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
         addLog("random-log", `Oracle fulfilled request #${requestId} ✓`, "success");
 
-        // derive_random_in_range(request_id, context, max) → [0, max).
-        // The contract returns [0, span); we shift by minVal to map onto
-        // the inclusive range [minVal, maxVal].
+        // derive_random_in_range(request_id, max) → [0, max), exactly uniform.
+        // The context was bound at request() time; there is no
+        // derivation-time context (it could be ground after the result is
+        // known). We shift by minVal to map onto [minVal, maxVal].
+        if (maxVal < minVal) throw new Error("max must be >= min");
         const span = maxVal - minVal + 1n;
         const raw = await simulate("derive_random_in_range", [
           nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(contextBytes, { type: "bytes" }),
           nativeToScVal(span, { type: "u64" }),
         ]);
         const resultNum = Number(BigInt(raw) + minVal);
@@ -513,7 +514,7 @@
           <div class="result-label">Range [${esc(String(minVal))} – ${esc(String(maxVal))}] — verified on Stellar</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${esc(String(requestId))} | Context: ${esc(ctx)}</div>`;
       } catch(e) {
-        output.innerHTML = `<div style="color:#fca5a5">â  ${esc(e.message)}</div>`;
+        output.innerHTML = `<div style="color:#fca5a5">⚠️  ${esc(e.message)}</div>`;
         addLog("random-log", `Error: ${esc(e.message)}`, "error");
       } finally { btn.disabled = false; }
     };

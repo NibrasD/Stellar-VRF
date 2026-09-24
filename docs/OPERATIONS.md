@@ -39,10 +39,15 @@ sha256sum target/wasm32v1-none/release/soroban_vrf_oracle.wasm
 |---|---|---|---|
 | current `main` (callback isolation) | 1.95.0 | `feb19ddd87aa483af842853be5a870fc3543f424b84b4b62049c4b6e9362703a` | 53,045 B |
 
-Two clean release builds on Windows produced this same hash. The **deployed** Mainnet WASM
-comes from older source and has a different hash. A redeploy is needed for the callback
-isolation fix to take effect on-chain. This hash is for the unoptimized `cargo build` output.
-If you upload an `stellar contract optimize` output, record that hash too.
+Two clean release builds on Windows produced this same hash (it was recorded for an earlier
+revision of `main`; re-record it after contract changes). This hash is for the unoptimized
+`cargo build` output.
+
+The **deployed** contract (Mainnet `CAW6KECQ…UPRX` and Testnet `CBEDNSJ6…JTBR`) runs the
+`stellar contract optimize` output, whose on-chain WASM hash is
+`6a261a26976ca5a45c5bd23b545b0a83faec363b3de132a882cfbe1b4f19e556` (see
+`oracle-worker/deployed.mainnet.json`). To verify it, rebuild, optimize, and compare the
+SHA256 of `soroban_vrf_oracle.optimized.wasm` with that value.
 
 ## Starting the Oracle Worker
 
@@ -177,11 +182,14 @@ Point your load balancer / uptime monitor at `/health` and alert on non-200 from
 | `vrf_unpaid_fulfillments_total` | counter | informational: fulfillments that didn't pay for themselves |
 | `vrf_unpaid_spend_window_stroops` / `vrf_unpaid_budget_stroops` | gauge | spend ≥ 80% of budget for > 15 min (budget being exhausted: legitimate non-allowlisted users are about to be deferred) |
 
-### Economic guard (zero-fee contract)
+### Economic guard
 
-The live Mainnet contract has `FeeAmount = 0`, which is immutable. So each `fulfill()` costs the
-oracle about 0.14 XLM, and the requester pays nothing towards it. Before any drand wait, proof
-generation, or submission, the worker checks each request in this order:
+The current Mainnet contract (`CAW6KECQ…UPRX`) has `FeeAmount = 2,000,000` stroops (0.2 XLM,
+native XLM SAC), which covers the measured fulfill cost (~0.14 XLM), so its requests are "paid"
+under rule 2. The guard still matters for zero-fee deployments (the Testnet instance and the
+legacy `CBTCC5QL…`, both `FeeAmount = 0`) and for the part of a transaction's max fee above
+`FeeAmount`. Before any drand wait, proof generation, or submission, the worker checks each
+request in this order:
 
 | # | Rule | Setting (default) |
 |---|---|---|

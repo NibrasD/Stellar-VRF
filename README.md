@@ -53,9 +53,10 @@ Published on npm as
 npm install stellar-vrf-sdk @stellar/stellar-sdk
 ```
 
-> **Note for npm v1.0.0:** use `Networks.PUBLIC` instead of `Networks.MAINNET`
-> (the `MAINNET` alias lands in v1.0.1). See
-> [docs/SDK_RELEASE.md](docs/SDK_RELEASE.md).
+> ⚠ **Use SDK 2.0.0 with the current contract.** The published 1.0.x packages send a
+> `context` argument to `derive_random_in_range` that the current contract (`CAW6KECQ…UPRX`)
+> no longer accepts. Until 2.0.0 is on npm/crates.io, build the SDK from `sdk/js` / `sdk/rust`.
+> See [docs/SDK_RELEASE.md](docs/SDK_RELEASE.md).
 
 ```typescript
 import { VrfClient, Networks } from "stellar-vrf-sdk";
@@ -64,7 +65,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 const client = new VrfClient({
   contractId: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
-  networkPassphrase: Networks.PUBLIC,   // Networks.MAINNET also works from v1.0.1
+  networkPassphrase: Networks.PUBLIC,   // Networks.MAINNET is an alias
   keypair:    Keypair.fromSecret("S..."),
 });
 

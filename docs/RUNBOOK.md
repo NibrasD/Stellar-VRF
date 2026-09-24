@@ -318,7 +318,7 @@ If oracle server is lost entirely:
 - [x] Generate fresh keypair
 - [x] Fund oracle account on mainnet (minimum 5 XLM for fees)
 - [x] Deploy contract WASM to mainnet
-- [x] Initialize with production keys and `fee_amount` (current instance: separate `init()`; the next deployment configures atomically via `__constructor`)
+- [x] Configure with production keys and `fee_amount` atomically via `__constructor` (current instance `CAW6KECQ…UPRX`, fee 0.2 XLM; the legacy `CBTCC5QL…` used a separate `init()`)
 - [x] Start primary oracle on production server
 - [x] Start standby oracle on secondary server
 - [x] Verify health endpoints

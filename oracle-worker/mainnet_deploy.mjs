@@ -68,7 +68,9 @@ const ORACLE_SECRET  = process.env.ORACLE_STELLAR_SECRET || process.env.ORACLE_S
 if (!ORACLE_SECRET) { console.error("ERROR: ORACLE_STELLAR_SECRET or ORACLE_SECRET env var is required"); process.exit(1); }
 const ORACLE_KP      = Keypair.fromSecret(ORACLE_SECRET);
 const ORACLE_PUBLIC  = ORACLE_KP.publicKey();
-const ORACLE_ED25519 = ORACLE_KP.rawPublicKey().toString("hex");
+// rawPublicKey() may be a Uint8Array, whose toString() ignores "hex" and
+// yields "60,124,…"; wrap it in a Buffer to get real hex.
+const ORACLE_ED25519 = Buffer.from(ORACLE_KP.rawPublicKey()).toString("hex");
 
 if (process.env.NETWORK_PASSPHRASE && process.env.NETWORK_PASSPHRASE !== NETWORK) {
   console.error(
@@ -118,7 +120,7 @@ const XLM_SAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 // The requester escrows FEE_AMOUNT_STROOPS in XLM on request(); fulfill()
 // releases it to the oracle. The oracle pays the fulfill() network fee
 // (measured ~1.39–1.49M stroops on Mainnet, see docs/PROFILING.md). A fee below
-// that lets anyone drain the oracle with permissionless requests. The live
+// that lets anyone drain the oracle with permissionless requests. The legacy
 // instance CBTCC5QL… was initialised with 0 and can't be changed.
 // So this script refuses to deploy unless the fee is set explicitly and covers
 // the cost. There is no default.
@@ -378,7 +380,7 @@ const deployedRecord = {
     "MAX_CONTEXT_LEN = 1024 cap on user context",
     "PK match — proof.public_key must equal stored oracle BLS12-381 PK",
     "Ed25519 signature — proof data signed by oracle Ed25519 key, verified on-chain",
-    "Alpha binding — alpha = sha256(context || round || sha256(drand_signature))",
+    "Alpha binding — alpha = sha256(request_id || context || round || sha256(drand_signature))",
     "On-chain BLS verification — drand + VRF pairing checks",
     "Future round enforcement — round_offset >= 2"
   ]

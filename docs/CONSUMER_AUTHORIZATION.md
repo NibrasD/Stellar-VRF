@@ -62,8 +62,9 @@ that exhausts the transaction's CPU/memory budget can't be isolated by Soroban, 
 makes the whole `fulfill()` fail. The oracle worker stops retrying such a request after
 a few sends (`MAX_SENDS_PER_REQUEST`), and you'd have to use `timeout_refund()`.
 
-> This behaviour ships with the next contract deployment. The currently deployed Mainnet
-> instance still reverts `fulfill()` when a callback panics.
+> This behaviour is live on the current deployment (Mainnet `CAW6KECQ…UPRX`, Testnet
+> `CBEDNSJ6…JTBR`). Only the legacy instance `CBTCC5QL…` reverted `fulfill()` when a callback
+> panicked.
 
 **What is isolated and what is not:**
 
@@ -137,8 +138,10 @@ if !env.storage().persistent().has(&pending_key) {
   it's included for transparency but isn't random.
 - **Don't assume timing.** The oracle might fulfill within seconds or it might take a minute.
   Your callback should work regardless.
-- **Call `derive_random()` during the callback** if you need additional derived values.
-  After `cleanup_proof()` is called, the raw proof data is gone.
+- **Derive values from `beta_output` in the callback** (see `derive_in_range` in the example),
+  or later via `get_beta()` / `derive_random()` / `derive_random_in_range()`. These keep working
+  after `cleanup_proof()`, which removes only the bulky proof (the 32-byte `beta` is kept).
+  They are still subject to Soroban storage TTL, so store what you need.
 
 For a working example, see [`consumer-example/src/lib.rs`](../consumer-example/src/lib.rs) —
 it implements a random sampling contract that demonstrates all of the above.

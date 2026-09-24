@@ -213,9 +213,9 @@ async function main() {
       "require_auth() — only oracle address can call fulfill()",
       "PK match — proof.public_key must equal stored oracle BLS12-381 PK",
       "Ed25519 signature — proof data signed by oracle Ed25519 key, verified on-chain",
-      "Alpha binding — alpha = sha256(context || round || sha256(drand_signature))",
+      "Alpha binding — alpha = sha256(request_id || context || round || sha256(drand_signature))",
       "On-chain BLS verification — drand + VRF pairing checks",
-      "Future round enforcement — round_offset >= 1",
+      "Future round enforcement — round_offset >= 2",
     ],
   };
   writeFileSync(OUT_PATH, JSON.stringify(result, null, 2));

@@ -185,8 +185,9 @@ fulfillment. `derive_range_for_domain` keeps a short domain separator for indepe
 It is documented as MUST-be-fixed-before-fulfillment, because the contract can't enforce
 when a domain was chosen.
 
-**Deployment note:** the live Mainnet contract predates these changes. It still runs the old
-loop and accepts a derivation `context` (verified on-chain). A redeployment ships the fix.
+**Deployment note:** these changes are live on the current deployment (Mainnet
+`CAW6KECQ…UPRX`, Testnet `CBEDNSJ6…JTBR`). Only the legacy instance `CBTCC5QL…` ran the old
+loop and accepted a derivation `context`.
 
 ---
 
@@ -241,8 +242,9 @@ the oracle to spend gas on `fulfill()` for each one.
 **Remediation (Denial_of_Service.2.R.1):** The `fee_token` and `fee_amount` parameters
 in `__constructor` charge per-request fees via SAC token transfer into escrow. The fee is held
 in the VRF contract and released to the oracle only upon successful fulfillment, or
-refunded to the requester on timeout. Currently deployed with `fee_amount = 0`;
-this can be configured to make spam economically costly.
+refunded to the requester on timeout. The current Mainnet instance (`CAW6KECQ…UPRX`) charges
+0.2 XLM per request, which makes spam cost the attacker at least the measured fulfill cost.
+The legacy instance `CBTCC5QL…` ran with `fee_amount = 0`.
 
 ### Denial_of_Service.3 — Storage entries expire before oracle can fulfill
 

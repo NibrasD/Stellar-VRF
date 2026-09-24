@@ -34,7 +34,9 @@ if (!ORACLE_SECRET) {
 }
 const ORACLE_KP = Keypair.fromSecret(ORACLE_SECRET);
 const ORACLE_PUBLIC = ORACLE_KP.publicKey();
-const ORACLE_ED25519 = ORACLE_KP.rawPublicKey().toString("hex");
+// rawPublicKey() may be a Uint8Array, whose toString() ignores "hex" and
+// yields "60,124,…"; wrap it in a Buffer to get real hex.
+const ORACLE_ED25519 = Buffer.from(ORACLE_KP.rawPublicKey()).toString("hex");
 
 // Derive BLS public key from secret key
 const BLS_SK_HEX = (process.env.ORACLE_BLS_SECRET_KEY ?? "").trim().replace(/^0x/, "");

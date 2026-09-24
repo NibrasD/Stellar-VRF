@@ -275,10 +275,12 @@ console.log("Random number:", result);</pre>
       <h3>4. Client-side Derivation (Optional)</h3>
       <p>You can also derive a number from the beta output without any contract call:</p>
       <span class="code-label">JavaScript / TypeScript</span>
-      <pre>import { deriveRandomFromBeta } from "stellar-vrf-sdk";
+      <pre>import { deriveRangeFromBeta } from "stellar-vrf-sdk";
 
-// No network call needed — works offline
-const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
+// No network call needed — same result as the contract's
+// derive_random_in_range(requestId, 100) + 1
+const beta = await client.getBeta(requestId);          // 32 bytes
+const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
 
       <h3>SDK API Reference</h3>
       <p>
@@ -641,10 +643,13 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
         }
         if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
 
+        // Current contract signature: derive_random_in_range(request_id, max).
+        // The context was bound at request() time; there is no derivation-time
+        // context (a value chosen after the result is known could be ground).
+        if (rangeMax < rangeMin) throw new Error("max must be >= min");
         const span = rangeMax - rangeMin + 1n;
         const raw = await simulate("derive_random_in_range", [
           nativeToScVal(requestId, { type: "u64" }),
-          nativeToScVal(contextBytes, { type: "bytes" }),
           nativeToScVal(span, { type: "u64" }),
         ]);
         const result = BigInt(raw) + rangeMin;
@@ -659,7 +664,7 @@ const roll = deriveRandomFromBeta(betaHex, 1n, 100n);</pre>
           <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${esc(String(result))} ∈ [${esc(String(rangeMin))}, ${esc(String(rangeMax))}]</div></div>`;
         statusArea.innerHTML = `<div class="status success">✅ Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
       } catch (e) {
-        statusArea.innerHTML = `<div class="status error">â  ${esc(e.message)}</div>`;
+        statusArea.innerHTML = `<div class="status error">⚠️  ${esc(e.message)}</div>`;
       } finally {
         btn.disabled = false;
       }
