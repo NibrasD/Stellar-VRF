@@ -2,3 +2,9 @@
 # False-positive synthetic test key in commit aa95b1e
 aa95b1e74f83fe0e46aee0e954fd27a496a89249:sdk/rust/src/lib.rs:generic-api-key:1645
 sdk/rust/src/lib.rs:generic-api-key:1645
+
+# False-positive public XLM SAC contract address (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA)
+bcd16b96249562cd9d4d65a4bca645e72a9862c7:soroban-contract/deployed.json:generic-api-key:16
+bcd16b96249562cd9d4d65a4bca645e72a9862c7:oracle-worker/deployed.mainnet.json:generic-api-key:16
+soroban-contract/deployed.json:generic-api-key:16
+oracle-worker/deployed.mainnet.json:generic-api-key:16

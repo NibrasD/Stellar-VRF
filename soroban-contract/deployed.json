@@ -13,7 +13,7 @@
   "deployTxHash": "fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50",
   "configuredBy": "__constructor (atomic with deployment)",
   "feeAmountStroops": "2000000",
-  "feeToken": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+  "feeSacAddress": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
   "feeEconomics": {
     "FEE_AMOUNT": "2000000",
     "MAX_TOTAL_FEE": "6000000",
