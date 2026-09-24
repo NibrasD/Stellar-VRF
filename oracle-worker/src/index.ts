@@ -32,7 +32,7 @@ import {
   readRequester,
 } from "./listener.js";
 import { FeeGuard, feeGuardOptionsFromEnv, formatXlm, type Funding } from "./feeGuard.js";
-import { createSpendLedger } from "./spendLedger.js";
+import { createSpendLedger, createPaidExposureLedger } from "./spendLedger.js";
 import { SendAttemptTracker, sendAttemptOptionsFromEnv } from "./sendAttempts.js";
 import { Asset } from "@stellar/stellar-sdk";
 import { waitAndFetchBeacon, computeCurrentRound } from "./drand.js";
@@ -73,7 +73,7 @@ import {
 import { withRetry, withFulfillRetry, checkDrandLag } from "./retry.js";
 import { DRAND_PERIOD } from "./config.js";
 import { ListenerSupervisor } from "./supervisor.js";
-import type { rpc } from "@stellar/stellar-sdk";
+import { rpc } from "@stellar/stellar-sdk";
 import type { VrfRequestEvent } from "./listener.js";
 
 // Track in-flight requests to avoid double-processing
@@ -96,6 +96,8 @@ const feeGuard = new FeeGuard(
     readBalance: () => readOracleBalance(feeGuardServer),
     readRequester: (id) => readRequester(feeGuardServer, id),
     ledger: spendLedger,
+    // Same backend (Redis in HA), separate key: fees at risk on paid requests.
+    paidLedger: createPaidExposureLedger(),
     now: Date.now,
     onBalance: recordOracleBalance,
     onUnpaidSpend: recordUnpaidSpendWindow,
@@ -243,15 +245,27 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
       () =>
-        submitFulfillment(server, event.requestId, proof, isLeader, async (maxFee) => {
+        submitFulfillment(server, event.requestId, proof, isLeader, async (maxFee, sendId) => {
           // Per-request send cap first: it is free to check and never reserves
           // shared budget for a send that will be refused anyway.
           if (sendAttempts.isExhausted(event.requestId)) {
             return sendAttempts.tryReserve(event.requestId); // yields the refusal reason
           }
-          const gate = await feeGuard.authorizeSend(sendFunding, maxFee);
+          const gate = await feeGuard.authorizeSend(sendFunding, maxFee, sendId);
           if (!gate.ok) return gate;
-          return sendAttempts.tryReserve(event.requestId);
+          const cap = sendAttempts.tryReserve(event.requestId);
+          const reservation = gate.reservation;
+          if (!cap.ok) {
+            // Not sending: undo the fee reservation.
+            if (reservation) await feeGuard.settleSend(reservation, "not_included");
+            return cap;
+          }
+          return {
+            ok: true as const,
+            settle: reservation
+              ? (outcome, tx) => feeGuard.settleSend(reservation, outcome, tx)
+              : undefined,
+          };
         })
     );
     sendAttempts.clear(event.requestId);
@@ -305,6 +319,26 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
  * flight, and the contract rejects duplicates regardless.
  */
 async function reconcile(server: rpc.Server, isCurrent: () => boolean): Promise<void> {
+  // Settle fee reservations of sends whose outcome was unknown (RPC error or
+  // confirmation timeout): SUCCESS releases, FAILED keeps, NOT_FOUND after the
+  // tx's maxTime has passed releases (it can never be included).
+  if (feeGuard.pendingCount() > 0) {
+    try {
+      const n = await feeGuard.resolvePending(async (hash) => {
+        const r = await server.getTransaction(hash);
+        const status =
+          r.status === rpc.Api.GetTransactionStatus.SUCCESS
+            ? "SUCCESS"
+            : r.status === rpc.Api.GetTransactionStatus.FAILED
+              ? "FAILED"
+              : "NOT_FOUND";
+        return { status, latestLedgerCloseTimeMs: Number(r.latestLedgerCloseTime) * 1000 };
+      });
+      if (n > 0) log.info(`Fee guard: settled ${n} send(s) whose outcome was unknown.`);
+    } catch (err) {
+      log.warn(`Fee guard: could not resolve pending sends (${err instanceof Error ? err.message : err}).`);
+    }
+  }
   const pending = await findPendingRequests(server);
   for (const p of pending) {
     if (!isCurrent()) break;

@@ -36,15 +36,49 @@ export interface SpendLedger {
   /**
    * Atomically record `amount` if `spent + amount <= limit`.
    * Returns false (and records nothing) otherwise.
+   *
+   * `id` makes the reservation releasable: pass the same `(id, amount)` to
+   * `release()`. Without it the entry gets a random id and is permanent
+   * (until it leaves the rolling window).
    */
-  tryReserve(amount: bigint, nowMs: number, limit: bigint): Promise<boolean>;
+  tryReserve(amount: bigint, nowMs: number, limit: bigint, id?: string): Promise<boolean>;
+  /**
+   * Remove the reservation made with exactly this `(id, amount)`. Returns
+   * false if there is none (already released, or expired from the window).
+   */
+  release(id: string, amount: bigint, nowMs: number): Promise<boolean>;
   /** Human-readable scope, for the startup log. */
   describe(): string;
+}
+
+/** Reservation ids are embedded in Redis members; keep them boring. */
+const RESERVATION_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+function checkId(id: string): void {
+  if (!RESERVATION_ID_RE.test(id)) throw new Error(`invalid reservation id: ${JSON.stringify(id)}`);
+}
+
+/**
+ * The Redis sorted-set member for a reservation: amount FIRST, then the id.
+ * RESERVE_LUA sums the window with `string.match(m, '^(%d+):')`, so the amount
+ * must lead: `fulfill:<hash>:6000000` would silently read as nil and break the
+ * total. `release()` rebuilds this exact string to ZREM it.
+ */
+export function ledgerMember(amount: bigint, id: string): string {
+  return `${amount.toString()}:${id}`;
 }
 
 interface Entry {
   t: number;
   amount: string; // bigint as a decimal string (JSON-safe)
+  id?: string;
+}
+
+function removeEntry(entries: Entry[], id: string, amount: bigint): boolean {
+  const i = entries.findIndex((e) => e.id === id && e.amount === amount.toString());
+  if (i < 0) return false;
+  entries.splice(i, 1);
+  return true;
 }
 
 function prune(entries: Entry[], nowMs: number, windowMs: number): Entry[] {
@@ -65,10 +99,16 @@ export class MemorySpendLedger implements SpendLedger {
     return sum(this.entries);
   }
 
-  async tryReserve(amount: bigint, nowMs: number, limit: bigint): Promise<boolean> {
+  async tryReserve(amount: bigint, nowMs: number, limit: bigint, id?: string): Promise<boolean> {
+    if (id !== undefined) checkId(id);
     if ((await this.spent(nowMs)) + amount > limit) return false;
-    this.entries.push({ t: nowMs, amount: amount.toString() });
+    this.entries.push({ t: nowMs, amount: amount.toString(), id });
     return true;
+  }
+
+  async release(id: string, amount: bigint, nowMs: number): Promise<boolean> {
+    this.entries = prune(this.entries, nowMs, this.windowMs);
+    return removeEntry(this.entries, id, amount);
   }
 
   describe(): string {
@@ -107,10 +147,18 @@ export class FileSpendLedger implements SpendLedger {
     return sum(this.load(nowMs));
   }
 
-  async tryReserve(amount: bigint, nowMs: number, limit: bigint): Promise<boolean> {
+  async tryReserve(amount: bigint, nowMs: number, limit: bigint, id?: string): Promise<boolean> {
+    if (id !== undefined) checkId(id);
     const entries = this.load(nowMs);
     if (sum(entries) + amount > limit) return false;
-    entries.push({ t: nowMs, amount: amount.toString() });
+    entries.push({ t: nowMs, amount: amount.toString(), id });
+    this.save(entries);
+    return true;
+  }
+
+  async release(id: string, amount: bigint, nowMs: number): Promise<boolean> {
+    const entries = this.load(nowMs);
+    if (!removeEntry(entries, id, amount)) return false;
     this.save(entries);
     return true;
   }
@@ -154,7 +202,7 @@ export class RedisSpendLedger implements SpendLedger {
     this.client = new RedisClient(url, timeoutMs);
   }
 
-  private async run(amount: bigint, limit: bigint): Promise<number> {
+  private async run(amount: bigint, limit: bigint, id?: string): Promise<number> {
     const reply = await this.client.command([
       "EVAL",
       RESERVE_LUA,
@@ -163,7 +211,8 @@ export class RedisSpendLedger implements SpendLedger {
       String(this.windowMs),
       amount.toString(),
       limit.toString(),
-      `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`,
+      // Member = `${amount}:${suffix}` (see ledgerMember), built inside the script.
+      id ?? `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`,
     ]);
     if (typeof reply !== "number") throw new Error(`unexpected Redis reply: ${String(reply)}`);
     return reply;
@@ -173,9 +222,21 @@ export class RedisSpendLedger implements SpendLedger {
     return BigInt(await this.run(-1n, 0n));
   }
 
-  async tryReserve(amount: bigint, _nowMs: number, limit: bigint): Promise<boolean> {
+  async tryReserve(amount: bigint, _nowMs: number, limit: bigint, id?: string): Promise<boolean> {
     if (amount < 0n) throw new Error("amount must be >= 0");
-    return (await this.run(amount, limit)) >= 0;
+    if (id !== undefined) checkId(id);
+    return (await this.run(amount, limit, id)) >= 0;
+  }
+
+  /**
+   * ZREM of the exact member. A single Redis command is atomic, so no script
+   * is needed; O(log n), no scan of the window.
+   */
+  async release(id: string, amount: bigint): Promise<boolean> {
+    checkId(id);
+    const reply = await this.client.command(["ZREM", this.key, ledgerMember(amount, id)]);
+    if (typeof reply !== "number") throw new Error(`unexpected Redis reply: ${String(reply)}`);
+    return reply > 0;
   }
 
   describe(): string {
@@ -194,6 +255,24 @@ export function createSpendLedger(env: NodeJS.ProcessEnv = process.env): SpendLe
   }
   return new FileSpendLedger(
     env.FEE_GUARD_STATE_FILE || path.join(os.tmpdir(), "vrf-oracle-unpaid-spend.json")
+  );
+}
+
+/**
+ * Second ledger, same backend: fees at risk on PAID requests (the part the
+ * on-chain fee would reimburse if the fulfill succeeds). Kept apart from the
+ * unpaid budget so `UNPAID_BUDGET_XLM_PER_HOUR=0` (allowlist only) doesn't
+ * block paid requests, and paid traffic can't starve the unpaid budget.
+ */
+export function createPaidExposureLedger(env: NodeJS.ProcessEnv = process.env): SpendLedger {
+  if (env.REDIS_URL) {
+    return new RedisSpendLedger(
+      env.REDIS_URL,
+      env.FEE_GUARD_PAID_REDIS_KEY || "vrf-oracle:paid-exposure"
+    );
+  }
+  return new FileSpendLedger(
+    env.FEE_GUARD_PAID_STATE_FILE || path.join(os.tmpdir(), "vrf-oracle-paid-exposure.json")
   );
 }
 

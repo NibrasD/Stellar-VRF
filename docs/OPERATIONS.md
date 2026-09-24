@@ -126,6 +126,8 @@ The replica will:
 | `UNPAID_FULFILL_MAX_PER_HOUR` | No | — | *Legacy.* If set and `UNPAID_BUDGET_XLM_PER_HOUR` is not, budget = N × `FULFILL_COST_STROOPS` |
 | `UNPAID_REQUESTER_ALLOWLIST` | No | — | Comma-separated requester addresses always served |
 | `FEE_GUARD_REDIS_KEY` | No | `vrf-oracle:unpaid-spend` | Spend-ledger key (used when `REDIS_URL` is set) |
+| `PAID_FAILURE_BUDGET_XLM_PER_HOUR` | No | `10` | Max total **transaction max-fees at risk on paid requests** per rolling hour, all instances. Each paid send reserves its max fee; success or a pre-inclusion rejection releases it, a failed or unresolved send keeps it. Stops unbounded failing paid sends |
+| `FEE_GUARD_PAID_REDIS_KEY` / `FEE_GUARD_PAID_STATE_FILE` | No | `vrf-oracle:paid-exposure` / `$TMPDIR/vrf-oracle-paid-exposure.json` | Ledger for the above (separate from the unpaid budget) |
 | `FEE_GUARD_STATE_FILE` | No | `$TMPDIR/vrf-oracle-unpaid-spend.json` | Spend-ledger file (used when `REDIS_URL` is empty; single host only) |
 | `MAX_FULFILL_INSTRUCTIONS` | No | `90000000` | **Resource guard.** A `fulfill()` whose simulation exceeds this CPU count is not signed or sent. A callback request includes the consumer's `on_vrf()`. The refusal is terminal: the request is parked |
 | `MAX_FULFILL_RESOURCE_FEE_STROOPS` | No | `5000000` | Resource guard: max simulated `minResourceFee` |
@@ -245,6 +247,25 @@ parked request deliberately, restart the worker.
 native XLM SAC, and it fails closed if `FeeToken` can't be read. `mainnet_deploy.mjs` always
 deploys with the XLM SAC. Other SEP-41 fee tokens aren't supported in production: that would
 need a price source.
+
+**Paid requests are reserved too.** A paid request whose `FeeAmount` covers the max fee used
+to skip the ledgers. Then nothing bounded how many *failing* paid `fulfill()` sends the
+oracle could pay for. Now every paid send reserves its covered max fee in a separate
+paid-exposure ledger (`PAID_FAILURE_BUDGET_XLM_PER_HOUR`), keyed by the transaction hash
+(member `"<amount>:<hash>"`, amount first as the Lua sum expects). How the send ends
+decides what happens:
+
+| Outcome | Covered part | Unpaid shortfall | Source |
+|---|---|---|---|
+| Applied, success | released (escrow reimbursed it) | kept | `getTransaction` SUCCESS |
+| Rejected before inclusion (`tx_bad_seq`, `tx_insufficient_fee`, time bounds, bad auth, insufficient balance, `TRY_AGAIN_LATER`) | released | released | codes in `fulfillErrors.ts` (`isPreInclusionRejection`): no fee is charged |
+| Applied, failed | kept (full max fee, conservative) | kept | `getTransaction` FAILED |
+| Unlisted submission error | kept | kept | conservative |
+| No answer (RPC error, timeout) | kept until resolved | kept until resolved | reconciliation: SUCCESS releases, FAILED keeps, NOT_FOUND after the tx's `maxTime` releases |
+
+Unresolved reservations are tracked in memory. After a restart they simply stay counted
+until they leave the one-hour window. This is a risk bound, not accounting: a failed
+transaction counts its full max fee even if Stellar charged less.
 
 **Fee vs. maximum transaction fee.** A "paid" request is only fully reimbursed if
 `FeeAmount ≥` the transaction's max fee. At send time, the worker charges any shortfall

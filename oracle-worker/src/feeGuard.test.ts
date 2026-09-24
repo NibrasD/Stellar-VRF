@@ -23,7 +23,7 @@ import {
   type FeeGuardDeps,
   type FeeGuardOptions,
 } from "./feeGuard.js";
-import { MemorySpendLedger, FileSpendLedger, type SpendLedger } from "./spendLedger.js";
+import { MemorySpendLedger, FileSpendLedger, ledgerMember, type SpendLedger } from "./spendLedger.js";
 
 const XLM = 10_000_000n;
 const COST = 1_500_000n; // 0.15 XLM
@@ -43,12 +43,14 @@ function setup(
     readBalance: vi.fn(async () => 100n * XLM),
     readRequester: vi.fn(async (_id: bigint) => null as string | null),
     ledger: new MemorySpendLedger(),
+    paidLedger: new MemorySpendLedger(),
     now: () => clockRef.t,
     onBalance: vi.fn(),
     onUnpaidSpend: vi.fn(),
     ...deps,
   };
   const opts: FeeGuardOptions = {
+    paidFailureBudgetStroops: 100n * XLM,
     fulfillCostStroops: COST,
     minBalanceStroops: 5n * XLM,
     unpaidBudgetStroops: 3n * COST,
@@ -145,11 +147,16 @@ describe("FeeGuard — the budget is per deployment, not per process", () => {
     const broken: SpendLedger = {
       spent: async () => { throw new Error("redis down"); },
       tryReserve: async () => { throw new Error("redis down"); },
+      release: async () => { throw new Error("redis down"); },
       describe: () => "broken",
     };
     const { guard } = setup({}, { ledger: broken });
     expect((await guard.check(1n, MALLORY)).allow).toBe(false);
     expect(await guard.authorizeSend("budget", COST)).toMatchObject({ ok: false });
+    // Paid requests fail closed too when their ledger is down.
+    const paid = setup({}, { paidLedger: broken, readFeeAmount: vi.fn(async () => COST) });
+    expect((await paid.guard.check(1n, MALLORY)).allow).toBe(false);
+    expect(await paid.guard.authorizeSend("paid", COST, "p")).toMatchObject({ ok: false });
   });
 
   it("a corrupt ledger file fails closed instead of granting a full budget", async () => {
@@ -195,7 +202,9 @@ describe("FeeGuard — fee token", () => {
     );
     for (let i = 1n; i <= 20n; i++) {
       expect(await guard.check(i, MALLORY)).toMatchObject({ allow: true, funding: "paid" });
-      expect(await guard.authorizeSend("paid", COST)).toEqual({ ok: true });
+      const d = await guard.authorizeSend("paid", COST, `tx${i}`);
+      expect(d.ok).toBe(true);
+      if (d.ok && d.reservation) await guard.settleSend(d.reservation, "success");
     }
     expect(await ledger.spent(0)).toBe(0n);
     expect(deps.readFeeAmount).toHaveBeenCalledTimes(1); // immutable → cached
@@ -209,13 +218,17 @@ describe("FeeGuard — fee token", () => {
     );
     expect(await guard.check(1n, MALLORY)).toMatchObject({ allow: true, funding: "paid" });
     // Max fee 0.4 XLM, fee covers 0.15 XLM: 0.25 XLM is unreimbursed.
-    expect(await guard.authorizeSend("paid", 4_000_000n)).toEqual({ ok: true });
+    const a = await guard.authorizeSend("paid", 4_000_000n, "a");
+    expect(a).toMatchObject({ ok: true, reservation: { unpaid: 4_000_000n - COST, covered: COST } });
+    if (a.ok && a.reservation) await guard.settleSend(a.reservation, "success");
+    // Success releases only the covered part; the shortfall is a real loss.
     expect(await ledger.spent(0)).toBe(4_000_000n - COST);
-    // A max fee within the on-chain fee costs the budget nothing.
-    expect(await guard.authorizeSend("paid", COST)).toEqual({ ok: true });
+    // A max fee within the on-chain fee costs the unpaid budget nothing.
+    const b = await guard.authorizeSend("paid", COST, "b");
+    if (b.ok && b.reservation) await guard.settleSend(b.reservation, "success");
     expect(await ledger.spent(0)).toBe(4_000_000n - COST);
     // Shortfalls are capped by the same budget: 2.5M + 2.5M > 3M.
-    expect(await guard.authorizeSend("paid", 4_000_000n)).toMatchObject({ ok: false });
+    expect(await guard.authorizeSend("paid", 4_000_000n, "c")).toMatchObject({ ok: false });
   });
 
   it("a large FeeAmount in a NON-XLM token is NOT treated as paid", async () => {
@@ -242,6 +255,131 @@ describe("FeeGuard — fee token", () => {
   });
 });
 
+
+describe("FeeGuard — paid requests whose fee covers the max fee are no longer a bypass", () => {
+  // FeeAmount = maxFee = 6 XLM; paid-failure budget 12 XLM.
+  const SIX = 6n * XLM;
+  function paidSetup() {
+    const paidLedger = new MemorySpendLedger();
+    const ledger = new MemorySpendLedger();
+    const { guard } = setup(
+      { paidFailureBudgetStroops: 2n * SIX, unpaidBudgetStroops: 0n },
+      { ledger, paidLedger, readFeeAmount: vi.fn(async () => SIX) }
+    );
+    const send = async (id: string, outcome?: "success" | "not_included" | "failed" | "unknown") => {
+      const d = await guard.authorizeSend("paid", SIX, id);
+      if (d.ok && d.reservation && outcome) await guard.settleSend(d.reservation, outcome, { hash: id });
+      return d;
+    };
+    return { guard, paidLedger, ledger, send };
+  }
+
+  it("failed sends consume the budget: 6 + 6, then the third is refused", async () => {
+    const { paidLedger, ledger, send } = paidSetup();
+    expect((await send("t1", "failed")).ok).toBe(true);
+    expect(await paidLedger.spent(0)).toBe(SIX);
+    expect((await send("t2", "failed")).ok).toBe(true);
+    expect(await paidLedger.spent(0)).toBe(2n * SIX);
+    const third = await send("t3");
+    expect(third.ok).toBe(false);
+    expect(!third.ok && third.reason).toMatch(/PAID_FAILURE_BUDGET_XLM_PER_HOUR/);
+    expect(await ledger.spent(0)).toBe(0n); // the unpaid budget is untouched
+  });
+
+  it("a successful send is released, so the next one is allowed", async () => {
+    const { paidLedger, send } = paidSetup();
+    for (let i = 0; i < 10; i++) expect((await send(`ok${i}`, "success")).ok).toBe(true);
+    expect(await paidLedger.spent(0)).toBe(0n);
+  });
+
+  it("a pre-inclusion rejection (tx_bad_seq) is released, NOT counted as spent", async () => {
+    const { paidLedger, send } = paidSetup();
+    expect((await send("bad-seq-1", "not_included")).ok).toBe(true);
+    expect(await paidLedger.spent(0)).toBe(0n);
+    for (let i = 0; i < 5; i++) expect((await send(`bad-seq-r${i}`, "not_included")).ok).toBe(true);
+    expect(await paidLedger.spent(0)).toBe(0n); // transient RPC trouble never blocks paid requests
+    expect((await send("real", "success")).ok).toBe(true);
+  });
+
+  it("an unknown outcome stays reserved until resolved", async () => {
+    const { guard, paidLedger, send } = paidSetup();
+    await send("u-ok", "unknown");
+    await send("u-fail", "unknown");
+    expect(await paidLedger.spent(0)).toBe(2n * SIX);
+    expect((await send("blocked")).ok).toBe(false);
+    expect(guard.pendingCount()).toBe(2);
+
+    // Still NOT_FOUND inside its validity window: nothing changes.
+    const status: Record<string, "SUCCESS" | "FAILED" | "NOT_FOUND"> = { "u-ok": "NOT_FOUND", "u-fail": "FAILED" };
+    await guard.resolvePending(async (h) => ({ status: status[h], latestLedgerCloseTimeMs: 0 }));
+    expect(await paidLedger.spent(0)).toBe(2n * SIX); // FAILED stays spent
+    expect(guard.pendingCount()).toBe(1);
+    // Later found SUCCESS → released.
+    status["u-ok"] = "SUCCESS";
+    expect(await guard.resolvePending(async (h) => ({ status: status[h], latestLedgerCloseTimeMs: 0 }))).toBe(1);
+    expect(await paidLedger.spent(0)).toBe(SIX);
+    expect(guard.pendingCount()).toBe(0);
+  });
+
+  it("an unknown send that provably expired unseen is released", async () => {
+    const { guard, paidLedger } = paidSetup();
+    const d = await guard.authorizeSend("paid", SIX, "expired");
+    if (d.ok && d.reservation) {
+      await guard.settleSend(d.reservation, "unknown", { hash: "expired", validUntilMs: 1_000 });
+    }
+    await guard.resolvePending(async () => ({ status: "NOT_FOUND", latestLedgerCloseTimeMs: 999 }));
+    expect(await paidLedger.spent(0)).toBe(SIX); // not past maxTime yet
+    await guard.resolvePending(async () => ({ status: "NOT_FOUND", latestLedgerCloseTimeMs: 1_001 }));
+    expect(await paidLedger.spent(0)).toBe(0n);
+  });
+
+  it("admission defers paid requests while the failure budget is used up", async () => {
+    const { guard, send } = paidSetup();
+    await send("f1", "failed");
+    await send("f2", "failed");
+    const d = await guard.check(9n, MALLORY);
+    expect(d.allow).toBe(false);
+    expect(!d.allow && d.reason).toMatch(/failure budget/);
+  });
+
+  it("a refused paid-exposure reservation undoes the unpaid part (all or nothing)", async () => {
+    const ledger = new MemorySpendLedger();
+    const { guard } = setup(
+      { paidFailureBudgetStroops: 0n, unpaidBudgetStroops: 10n * XLM },
+      { ledger, readFeeAmount: vi.fn(async () => COST) }
+    );
+    expect((await guard.authorizeSend("paid", 4_000_000n, "x")).ok).toBe(false);
+    expect(await ledger.spent(0)).toBe(0n);
+  });
+});
+
+describe("SpendLedger reservations (release by exact id + amount)", () => {
+  it("member string puts the amount first, as RESERVE_LUA parses it", () => {
+    expect(ledgerMember(6_000_000n, "fulfill:abc")).toBe("6000000:fulfill:abc");
+    expect(/^(\d+):/.exec(ledgerMember(6_000_000n, "fulfill:abc"))?.[1]).toBe("6000000");
+  });
+
+  for (const [name, make] of [
+    ["memory", () => new MemorySpendLedger()],
+    ["file", () => new FileSpendLedger(path.join(os.tmpdir(), `vrf-ledger-${process.pid}-${Math.random()}.json`))],
+  ] as const) {
+    it(`${name}: release removes exactly one matching reservation`, async () => {
+      const l: SpendLedger = make();
+      expect(await l.tryReserve(5n, 0, 100n, "a")).toBe(true);
+      expect(await l.tryReserve(7n, 0, 100n, "b")).toBe(true);
+      expect(await l.tryReserve(3n, 0, 100n)).toBe(true); // permanent, no id
+      expect(await l.release("a", 6n, 0)).toBe(false); // wrong amount: no match
+      expect(await l.release("a", 5n, 0)).toBe(true);
+      expect(await l.release("a", 5n, 0)).toBe(false); // idempotent
+      expect(await l.spent(0)).toBe(10n);
+    });
+  }
+
+  it("rejects ids that could break the Redis member format", async () => {
+    const l = new MemorySpendLedger();
+    await expect(l.tryReserve(1n, 0, 10n, "bad id with spaces")).rejects.toThrow(/reservation id/);
+  });
+});
 
 describe("FeeGuard — balance floor", () => {
   it("refuses even paid requests when paying would cross the floor", async () => {

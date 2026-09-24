@@ -56,6 +56,21 @@ try {
   restarted.close();
   a.close();
   b.close();
+
+  // 4. Keyed reservations (paid-send exposure): reserve on one instance,
+  //    release by exact (id, amount) on another, totals stay correct.
+  const key3 = `${key}:paid`;
+  const p1 = new RedisSpendLedger(url, key3);
+  const p2 = new RedisSpendLedger(url, key3);
+  check(await p1.tryReserve(COST, 0, BUDGET, "fulfill:tx1"), "keyed reserve granted");
+  check(await p1.tryReserve(COST, 0, BUDGET, "fulfill:tx2"), "second keyed reserve granted");
+  check((await p2.spent()) === 2n * COST, "keyed reservations are summed (amount-first member)");
+  check((await p2.release("fulfill:tx1", COST + 1n)) === false, "release with the wrong amount is a no-op");
+  check((await p2.release("fulfill:tx1", COST)) === true, "release by (id, amount) from another instance");
+  check((await p2.release("fulfill:tx1", COST)) === false, "release is idempotent");
+  check((await p1.spent()) === COST, "released reservation no longer counts");
+  p1.close();
+  p2.close();
 } finally {
   primary.close();
   standby.close();

@@ -34,7 +34,24 @@ import {
   classifyFulfillError,
   failureError,
   isNonRetryable,
+  isPreInclusionRejection,
 } from "./fulfillErrors.js";
+import type { SendOutcome } from "./feeGuard.js";
+
+/** Identifies one send, so its fee reservation can be settled by outcome. */
+export interface SentTx {
+  hash: string;
+  /** Tx `maxTime` (ms): once a later ledger closes without it, it can never land. */
+  validUntilMs?: number;
+}
+
+/**
+ * Result of the pre-send gate. `settle` is called exactly once per sent
+ * transaction with how it ended (see feeGuard.SendOutcome).
+ */
+export type SendGate =
+  | { ok: true; settle?: (outcome: SendOutcome, tx: SentTx) => Promise<void> }
+  | { ok: false; reason: string };
 
 // Parsed once at startup so a bad value fails fast instead of on the first request.
 const RESOURCE_GUARD: ResourceGuardOptions = resourceGuardOptionsFromEnv();
@@ -60,9 +77,14 @@ export class FulfillAbortedError extends Error {
  *                    internal retries). Return false to abort — used to stop a
  *                    node that lost leadership mid-retry from submitting.
  * @param beforeSend - Called with the assembled transaction's maximum fee
- *                    (stroops) immediately before EVERY `sendTransaction()`.
- *                    Returning `{ ok: false }` aborts without sending. This is
- *                    where the fee guard reserves spend, so retries count too.
+ *                    (stroops) and a unique send id (the tx hash) immediately
+ *                    before EVERY `sendTransaction()`. Returning `{ ok: false }`
+ *                    aborts without sending. This is where the fee guard
+ *                    reserves spend, so retries count too. The returned
+ *                    `settle` is told how that send ended:
+ *                    `not_included` (sendTransaction ERROR / TRY_AGAIN_LATER:
+ *                    never entered a ledger, no fee), `success`, `failed`
+ *                    (applied, fee charged) or `unknown` (no answer).
  * @returns The transaction hash on success
  */
 export async function submitFulfillment(
@@ -70,8 +92,7 @@ export async function submitFulfillment(
   requestId: bigint,
   proof: VrfProofData,
   canSubmit: () => boolean = () => true,
-  beforeSend: (maxFeeStroops: bigint) => Promise<{ ok: true } | { ok: false; reason: string }> =
-    async () => ({ ok: true })
+  beforeSend: (maxFeeStroops: bigint, sendId: string) => Promise<SendGate> = async () => ({ ok: true })
 ): Promise<string> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     if (!canSubmit()) {
@@ -149,26 +170,64 @@ export async function submitFulfillment(
           `aborting fulfill(${requestId}) attempt ${attempt}: no longer allowed to submit (leadership lost)`
         );
       }
-      const gate = await beforeSend(BigInt(prepared.fee));
+      // The hash doesn't cover signatures, so it's known before signing and is
+      // a unique id for this send's fee reservation.
+      const tx0 = txIdentity(prepared, requestId, attempt);
+      const gate = await beforeSend(BigInt(prepared.fee), tx0.hash);
       if (!gate.ok) {
         throw new FulfillAbortedError(`aborting fulfill(${requestId}) attempt ${attempt}: ${gate.reason}`);
       }
+      const settle = gate.settle ?? (async () => {});
 
       prepared.sign(ORACLE_KEYPAIR);
 
-      const sent = await server.sendTransaction(prepared);
+      let sent: Awaited<ReturnType<rpc.Server["sendTransaction"]>>;
+      try {
+        sent = await server.sendTransaction(prepared);
+      } catch (err) {
+        // No answer: it may or may not have reached core.
+        await settle("unknown", tx0);
+        throw err;
+      }
+      const sentTx: SentTx = { ...tx0, hash: sent.hash || tx0.hash };
+      if (sent.status === "TRY_AGAIN_LATER") {
+        // Not queued by core: never entered a ledger, no fee.
+        await settle("not_included", sentTx);
+        throw new Error(`Send TRY_AGAIN_LATER for fulfill(${requestId}) (not queued)`);
+      }
       if (sent.status === "ERROR") {
+        // Rejected at submission. The reservation is released only for the
+        // known pre-inclusion codes in fulfillErrors.ts (tx_bad_seq,
+        // tx_insufficient_fee, time bounds, …): those never enter a ledger,
+        // so no fee was charged. Anything unlisted stays counted
+        // (conservative) until it leaves the one-hour window.
+        if (isPreInclusionRejection(sent.errorResult)) {
+          await settle("not_included", sentTx);
+        } else {
+          log.warn(`fulfill(${requestId}) rejected with an unlisted code; keeping its fee reservation`);
+          await settle("failed", sentTx);
+        }
         throw failureError("Send error", sent.errorResult);
       }
 
       // 5. Poll for confirmation
-      const result = await pollTransaction(server, sent.hash);
+      let outcome: SendOutcome = "unknown";
+      try {
+        const final = await pollTransaction(server, sentTx.hash);
+        if (final.applied === "failed") {
+          outcome = "failed"; // applied and failed: the fee was charged
+          throw failureError(`Transaction failed: ${sentTx.hash}`, final.resultXdr);
+        }
+        outcome = "success";
+      } finally {
+        await settle(outcome, sentTx);
+      }
 
       log.success(
-        `Request ${requestId} fulfilled! TX: ${sent.hash}`
+        `Request ${requestId} fulfilled! TX: ${sentTx.hash}`
       );
 
-      return sent.hash;
+      return sentTx.hash;
     } catch (err: unknown) {
       if (isNonRetryable(err)) throw err; // deliberate abort or deterministic failure
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -227,14 +286,30 @@ function buildProofScVal(proof: VrfProofData): xdr.ScVal {
   ]);
 }
 
+/** Hash and validity window of an assembled tx (test doubles may lack both). */
+function txIdentity(prepared: unknown, requestId: bigint, attempt: number): SentTx {
+  const p = prepared as { hash?: () => Uint8Array; timeBounds?: { maxTime?: string } };
+  let hash: string;
+  try {
+    hash = p.hash ? Buffer.from(p.hash()).toString("hex") : "";
+  } catch {
+    hash = "";
+  }
+  if (!hash) hash = `req${requestId}-a${attempt}-${Date.now()}`;
+  const maxTime = Number(p.timeBounds?.maxTime ?? 0);
+  return { hash, validUntilMs: maxTime > 0 ? maxTime * 1000 : undefined };
+}
+
 /**
- * Poll for transaction confirmation with timeout.
+ * Poll for transaction confirmation with timeout. Resolves once the tx is in
+ * a ledger (`success` or `failed`); throws only when there is no answer
+ * (timeout or RPC error), i.e. the outcome is unknown.
  */
 async function pollTransaction(
   server: rpc.Server,
   hash: string,
   maxWaitMs = 120_000
-): Promise<rpc.Api.GetSuccessfulTransactionResponse> {
+): Promise<{ applied: "success" } | { applied: "failed"; resultXdr: unknown }> {
   const start = Date.now();
   process.stdout.write("  Confirming");
 
@@ -244,14 +319,14 @@ async function pollTransaction(
 
     if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
       process.stdout.write(" ✔\n");
-      return status as rpc.Api.GetSuccessfulTransactionResponse;
+      return { applied: "success" };
     }
 
     if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
       process.stdout.write(" ✖\n");
       // Applied and failed (fee charged). The result code says whether a
       // retry could ever succeed, e.g. a trapping callback never will.
-      throw failureError(`Transaction failed: ${hash}`, (status as any).resultXdr);
+      return { applied: "failed", resultXdr: (status as any).resultXdr };
     }
 
     process.stdout.write(".");

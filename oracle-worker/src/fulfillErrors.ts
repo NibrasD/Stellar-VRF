@@ -71,6 +71,24 @@ const RETRYABLE_RESULT_CODES: ReadonlyArray<[RegExp, string]> = [
   [/tx_too_late|txTooLate|tx_too_early|txTooEarly/, "time_bounds"],
 ];
 
+/**
+ * Codes core returns for a transaction it REJECTED at submission, before it
+ * entered any ledger. No fee is charged for these, so the fee guard releases
+ * the send's reservation (see feeGuard.settleSend). They are the retryable
+ * codes above plus the pre-inclusion terminal ones (bad auth, balance).
+ */
+const PRE_INCLUSION_CODES: ReadonlyArray<RegExp> = [
+  ...RETRYABLE_RESULT_CODES.map(([re]) => re),
+  /tx_bad_auth|txBadAuth/,
+  /tx_insufficient_balance|txInsufficientBalance/,
+];
+
+/** True when `detail` is a known pre-inclusion rejection code (no fee charged). */
+export function isPreInclusionRejection(detail: unknown): boolean {
+  const text = describeResult(detail);
+  return PRE_INCLUSION_CODES.some((re) => re.test(text));
+}
+
 /** Stable string form of an XDR result object (or anything else). */
 export function describeResult(value: unknown): string {
   if (value === undefined || value === null) return "";

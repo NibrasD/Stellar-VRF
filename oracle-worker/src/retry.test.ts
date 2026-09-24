@@ -122,7 +122,8 @@ describe("submitFulfillment beforeSend gate (fee guard)", () => {
       submitFulfillment(server, 1n, PROOF, () => true, beforeSend)
     ).rejects.toBeInstanceOf(FulfillAbortedError);
     expect(beforeSend).toHaveBeenCalledTimes(1);
-    expect(beforeSend).toHaveBeenCalledWith(1_700_000n);
+    // Max fee, plus a unique send id used to key the fee reservation.
+    expect(beforeSend).toHaveBeenCalledWith(1_700_000n, expect.any(String));
     expect(server.sendTransaction).not.toHaveBeenCalled();
   });
 
@@ -136,6 +137,60 @@ describe("submitFulfillment beforeSend gate (fee guard)", () => {
     );
     expect(beforeSend).toHaveBeenCalledTimes(4); // MAX_RETRIES in the config mock
     expect(server.sendTransaction).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("submitFulfillment settles each send's fee reservation by outcome", () => {
+  function server(opts: { send?: any; tx?: any; sendThrows?: boolean }) {
+    return {
+      getAccount: vi.fn(async () => ({})),
+      simulateTransaction: vi.fn(async () => ({
+        _fee: "1500000",
+        minResourceFee: "1400000",
+        transactionData: { resources: { instructions: 58_000_000 } },
+      })),
+      sendTransaction: vi.fn(async () => {
+        if (opts.sendThrows) throw new Error("socket hang up");
+        return opts.send ?? { status: "PENDING", hash: "h" };
+      }),
+      getTransaction: vi.fn(async () => opts.tx ?? { status: "SUCCESS" }),
+    } as any;
+  }
+  async function run(s: any) {
+    const outcomes: string[] = [];
+    const gate = vi.fn(async () => ({
+      ok: true as const,
+      settle: async (o: string) => {
+        outcomes.push(o);
+      },
+    }));
+    const err = await submitFulfillment(s, 1n, PROOF, () => true, gate).catch((e) => e);
+    return { outcomes, err };
+  }
+
+  it("success → success", async () => {
+    expect((await run(server({}))).outcomes).toEqual(["success"]);
+  });
+
+  it("tx_bad_seq at submission → not_included on every attempt (released)", async () => {
+    const r = await run(server({ send: { status: "ERROR", errorResult: "txBadSeq" } }));
+    expect(r.outcomes).toEqual(["not_included", "not_included", "not_included", "not_included"]);
+  });
+
+  it("an unlisted submission error → failed (kept, conservative)", async () => {
+    const r = await run(server({ send: { status: "ERROR", errorResult: "txSomethingNew" } }));
+    expect(r.outcomes.every((o) => o === "failed")).toBe(true);
+  });
+
+  it("applied and failed on-chain → failed (kept)", async () => {
+    const r = await run(server({ tx: { status: "FAILED", resultXdr: "invokeHostFunctionTrapped" } }));
+    expect(r.outcomes).toEqual(["failed"]);
+    expect(r.err).toBeInstanceOf(FulfillTerminalError);
+  });
+
+  it("no answer from sendTransaction → unknown (kept until resolved)", async () => {
+    const r = await run(server({ sendThrows: true }));
+    expect(r.outcomes).toEqual(["unknown", "unknown", "unknown", "unknown"]);
   });
 });
 
