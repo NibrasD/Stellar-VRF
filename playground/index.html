@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stellar VRF — Randomness Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: #060b18; color: #e0e6f0; min-height: 100vh; }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
+      border-bottom: 1px solid rgba(96,165,250,0.15);
+      padding: 18px 40px; display: flex; align-items: center; gap: 20px;
+    }
+    .header h1 {
+      font-size: 1.3rem; font-weight: 700; letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #93c5fd 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .header p { color: #475569; font-size: 0.83rem; margin-top: 4px; }
+
+    /* ── Layout ── */
+    .container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
+
+    /* ── Network switcher (header) ── */
+    #btn-testnet, #btn-mainnet {
+      font-family: 'Inter', sans-serif !important;
+      font-weight: 500 !important;
+      transition: all 0.2s !important;
+      cursor: pointer;
+    }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; padding: 4px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; width: fit-content; }
+    .tab {
+      padding: 8px 18px; border-radius: 8px; cursor: pointer;
+      font-size: 0.82rem; font-weight: 500; font-family: 'Inter', sans-serif;
+      border: none; background: transparent; color: #475569;
+      transition: all 0.2s;
+    }
+    .tab:hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
+    .tab.active { background: linear-gradient(135deg, #1e40af, #2563eb); color: #fff; box-shadow: 0 2px 12px rgba(37,99,235,0.35); }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Cards ── */
+    .card {
+      background: linear-gradient(145deg, #111827 0%, #0d1a2e 100%);
+      border: 1px solid rgba(59,130,246,0.15);
+      border-radius: 16px; padding: 26px; margin-bottom: 20px;
+      position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(96,165,250,0.2), transparent);
+    }
+    .card h2 { color: #93c5fd; margin-bottom: 10px; font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+    .card p { color: #475569; font-size: 0.82rem; margin-bottom: 16px; line-height: 1.65; }
+
+    /* ── Info box ── */
+    .info-box {
+      background: rgba(30,58,95,0.3); border: 1px solid rgba(59,130,246,0.2);
+      border-radius: 10px; padding: 12px 16px;
+      color: #60a5fa; font-size: 0.8rem; margin-bottom: 16px; line-height: 1.6;
+    }
+
+    /* ── Form elements ── */
+    label { display: block; color: #64748b; font-size: 0.78rem; font-weight: 600; margin-bottom: 6px; margin-top: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
+    input, select, textarea {
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.2);
+      color: #e0e6f0; padding: 10px 14px; border-radius: 10px;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; width: 100%;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input:focus, select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+
+    /* ── Buttons ── */
+    button.primary {
+      background: linear-gradient(135deg, #1e40af, #2563eb);
+      color: #fff; border: none; padding: 11px 24px;
+      border-radius: 10px; cursor: pointer;
+      font-family: 'Inter', sans-serif; font-size: 0.88rem; font-weight: 600;
+      margin-top: 16px; transition: all 0.2s;
+      box-shadow: 0 4px 14px rgba(37,99,235,0.3);
+    }
+    button.primary:hover { background: linear-gradient(135deg, #2563eb, #3b82f6); box-shadow: 0 6px 20px rgba(37,99,235,0.45); transform: translateY(-1px); }
+    button.primary:disabled { background: #1f2937; color: #374151; cursor: not-allowed; box-shadow: none; transform: none; }
+
+    /* ── Output / Results ── */
+    .output {
+      background: rgba(0,0,0,0.25); border: 1px solid rgba(59,130,246,0.15);
+      border-radius: 10px; padding: 16px; margin-top: 16px; min-height: 72px;
+    }
+    .result-big {
+      font-size: 2.8rem; font-weight: 700; text-align: center; padding: 20px 0 8px;
+      background: linear-gradient(135deg, #86efac, #34d399);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      font-family: 'JetBrains Mono', monospace; letter-spacing: -2px;
+    }
+    .result-label { color: #374151; font-size: 0.72rem; text-align: center; margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+
+    /* ── Log ── */
+    .log {
+      background: rgba(0,0,0,0.4); border: 1px solid rgba(59,130,246,0.1);
+      border-radius: 10px; padding: 12px 16px; margin-top: 12px;
+      font-size: 0.76rem; max-height: 200px; overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .log::-webkit-scrollbar { width: 4px; }
+    .log::-webkit-scrollbar-track { background: transparent; }
+    .log::-webkit-scrollbar-thumb { background: rgba(96,165,250,0.2); border-radius: 99px; }
+    .log-line { padding: 2px 0; }
+    .log-line.success { color: #34d399; }
+    .log-line.info { color: #60a5fa; }
+    .log-line.warn { color: #fbbf24; }
+    .log-line.error { color: #f87171; }
+
+    /* ── Proof grid ── */
+    .proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .pf {
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.12);
+      border-radius: 10px; padding: 12px;
+    }
+    .pf .name { color: #60a5fa; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .pf .val { color: #34d399; font-size: 0.68rem; word-break: break-all; font-family: 'JetBrains Mono', monospace; }
+    .pf .desc { color: #374151; font-size: 0.65rem; margin-top: 4px; }
+
+    /* ── Spinner ── */
+    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(59,130,246,0.3); border-top-color: #60a5fa; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Links ── */
+    .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; transition: color 0.15s; }
+    .tx-link:hover { color: #93c5fd; text-decoration: underline; }
+
+    /* ── Site Navigation ── */
+    .site-nav {
+      background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
+      padding: 0 36px; display: flex; gap: 2px; align-items: center;
+    }
+    .nav-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 14px; font-size: 0.78rem; font-weight: 500;
+      color: #374151; text-decoration: none;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .nav-link:hover { color: #94a3b8; }
+    .nav-link.active { color: #60a5fa; border-bottom-color: #3b82f6; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div style="flex:1">
+      <h1>🔬 VRF Randomness Playground</h1>
+      <p id="header-desc">Submit real on-chain VRF requests and watch the oracle fulfill them live.</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="btn-testnet" onclick="switchNetwork('testnet')"
+        style="padding:7px 16px;border-radius:8px;border:1px solid #3b82f6;background:#1e40af;color:#fff;font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif">
+        Testnet
+      </button>
+      <button id="btn-mainnet" onclick="switchNetwork('mainnet')"
+        style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif">
+        Mainnet
+      </button>
+    </div>
+  </div>
+
+  <nav class="site-nav">
+    <a href="../dashboard/" class="nav-link">📊 Dashboard</a>
+    <a href="../playground/" class="nav-link active">🔬 Playground</a>
+    <a href="../example-dapp/" class="nav-link">📘 Integration Guide</a>
+  </nav>
+
+  <div class="container">
+
+    <div class="info-box" id="network-info-box">
+      ⚠️ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+      Need a funded testnet account?
+      <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>
+    </div>
+
+    <div class="card" style="margin-bottom:24px">
+      <h2 id="keypair-title">🔑 Testnet Keypair</h2>
+      <form onsubmit="return false;">
+        <label>Secret Key (S...)</label>
+        <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
+        <div id="keypair-hint" style="margin-top:6px">
+          <small style="color:#6b7280">
+            Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>
+          </small>
+        </div>
+        <button type="button" class="primary" onclick="initClient()">🔗 Connect</button>
+      </form>
+      <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('random')">🔢 Random Number</div>
+      <div class="tab" onclick="switchTab('proof')">🔍 Proof Explorer</div>
+      <div class="tab" onclick="switchTab('verify')">✅ Verify On-Chain</div>
+    </div>
+
+    <!-- RANDOM NUMBER GENERATOR -->
+    <div class="panel active" id="panel-random">
+      <div class="card">
+        <h2>🔢 Verifiable Random Number</h2>
+        <p>Generates a cryptographically verifiable random number on-chain using BLS12-381 VRF. Useful for fair selection, audit sampling, NFT trait assignment, or any use case requiring transparent, tamper-proof randomness.</p>
+        <label>From (inclusive)</label>
+        <input type="number" id="random-sides" value="1" min="1" />
+        <label>To (inclusive)</label>
+        <input type="number" id="random-max" value="1000" min="2" />
+        <label>Context / Purpose</label>
+        <input type="text" id="random-context" value="random-selection" placeholder="e.g. audit-sample, nft-trait, team-assignment" />
+        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🔢 Generate Random Number</button>
+        <div class="output" id="random-output" style="text-align:center;color:#374151">Connect your keypair above first</div>
+        <div class="log" id="random-log" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- PROOF EXPLORER -->
+    <div class="panel" id="panel-proof">
+      <div class="card">
+        <h2>🔍 Proof Explorer</h2>
+        <p>Enter a fulfilled request ID to inspect its full BLS-VRF proof. Data is fetched live from the Soroban RPC — no keypair required.</p>
+        <label>Request ID</label>
+        <input type="number" id="proof-id" placeholder="e.g. 1" min="1" />
+        <button class="primary" onclick="exploreProof()">🔍 Fetch Proof</button>
+        <div id="proof-result"></div>
+      </div>
+    </div>
+
+    <!-- VERIFY -->
+    <div class="panel" id="panel-verify">
+      <div class="card">
+        <h2>✅ Verify On-Chain</h2>
+        <p>Check whether a request has been fulfilled and its BLS12-381 pairing proof verified on-chain. The contract permanently stores the proof — no trust in the oracle required.</p>
+        <label>Request ID</label>
+        <input type="number" id="verify-id" placeholder="e.g. 1" />
+        <button class="primary" onclick="verifyOnChain()">✅ Check Fulfillment Status</button>
+        <div class="output" id="verify-output" style="text-align:center;color:#374151">Enter a request ID to check</div>
+      </div>
+      <div class="card">
+        <h2>🧮 Client-side Range Derivation</h2>
+        <p>Given a beta output (hex), derive a number in a range without any network call — useful for integrating the result locally.</p>
+        <label>Beta Output (hex, 64 chars)</label>
+        <input type="text" id="cs-beta" placeholder="7f3ea1b2…" maxlength="64" />
+        <label>Min</label>
+        <input type="number" id="cs-min" value="1" />
+        <label>Max</label>
+        <input type="number" id="cs-max" value="100" />
+        <button class="primary" onclick="deriveClientSide()">🧮 Derive</button>
+        <div class="output" id="cs-output" style="text-align:center;color:#374151">Enter beta output and range</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Stellar SDK is a UMD bundle: load via a classic <script> so it attaches
+       window.StellarSdk. (Dynamic import() of a UMD file returns an empty module
+       and breaks everything.) -->
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
+    <script>
+    function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+    // -- Constants ──────────────────────────────────────────────────────────────
+    const NETWORKS = {
+      testnet: {
+        contract: "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR",
+        soroban: "https://soroban-testnet.stellar.org",
+        explorer: "https://stellar.expert/explorer/testnet",
+        passphrase: "Test SDF Network ; September 2015",
+        friendbot: "https://friendbot.stellar.org",
+      },
+      mainnet: {
+        contract: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
+        soroban: "https://mainnet.sorobanrpc.com",
+        explorer: "https://stellar.expert/explorer/public",
+        passphrase: "Public Global Stellar Network ; September 2015",
+        friendbot: null,
+      },
+    };
+    let NETWORK = NETWORKS.testnet;
+    const CONTRACT   = () => NETWORK.contract;
+    const SOROBAN_RPC = () => NETWORK.soroban;
+    const EXPLORER   = () => NETWORK.explorer;
+
+    // ── Network Switcher ───────────────────────────────────────────────────────
+    window.switchNetwork = function(net) {
+      NETWORK = NETWORKS[net];
+      keypair = null;
+      server  = null;
+      document.getElementById("connect-status").textContent = "";
+      document.getElementById("secret-key").value = "";
+
+      const isMainnet = net === "mainnet";
+
+      // Update button styles
+      document.getElementById("btn-testnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMainnet?"#1e3a5f":"#3b82f6"};background:${isMainnet?"#111827":"#1e40af"};color:${isMainnet?"#94a3b8":"#fff"};font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif`;
+      document.getElementById("btn-mainnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMainnet?"#dc2626":"#1e3a5f"};background:${isMainnet?"#7f1d1d":"#111827"};color:${isMainnet?"#fca5a5":"#94a3b8"};font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif`;
+
+      // Update info box
+      document.getElementById("network-info-box").innerHTML = isMainnet
+        ? `🔴 <strong>Stellar Mainnet</strong> — Real XLM will be spent on transactions.
+           Your secret key signs locally and is <strong>never sent to any server</strong>.
+           Contract: <code style="color:#86efac;font-size:0.78rem">CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX</code>`
+        : `⚠️  Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+           Need a funded testnet account?
+           <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>`;
+
+      // Update keypair section
+      document.getElementById("keypair-title").textContent = isMainnet ? "🔑 Mainnet Keypair" : "🔑 Testnet Keypair";
+      document.getElementById("keypair-hint").innerHTML = isMainnet
+        ? `<small style="color:#fbbf24">⚠️ Use a dedicated oracle/app keypair with a small XLM balance. Never enter a wallet with large funds.</small>`
+        : `<small style="color:#6b7280">Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a></small>`;
+
+      // Disable action buttons until reconnected
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = true;
+    };
+
+    // ── Stellar SDK (UMD global loaded via <script> above) ─────────────────────
+    const SDK = window.StellarSdk;
+    const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative,
+            xdr, rpc, Networks } = SDK;
+    // Browsers have no global Buffer; the UMD bundle doesn't reliably export it
+    // either. We only need a tiny shim for .isBuffer (used in one hex helper);
+    // everywhere else we pass Uint8Array directly to nativeToScVal.
+    const Buffer = (SDK && SDK.Buffer) || globalThis.Buffer || { isBuffer: () => false };
+
+    let server = null;
+    let keypair = null;
+
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function addLog(logId, msg, type = "info", link = null) {
+      const el = document.getElementById(logId);
+      if (!el) return;
+      el.style.display = "block";
+      const line = document.createElement("div");
+      line.className = `log-line ${type}`;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      if (link) {
+        const a = document.createElement("a");
+        a.href = link.href;
+        a.textContent = link.label || "view ↗";
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.style.cssText = "color:#86efac;margin-left:6px;text-decoration:underline";
+        line.appendChild(document.createTextNode(" "));
+        line.appendChild(a);
+      }
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function clearLog(logId) {
+      const el = document.getElementById(logId);
+      if (el) { el.innerHTML = ""; el.style.display = "none"; }
+    }
+
+    // Safely extract a contract call's return value across protocol versions.
+    // The RPC-decoded getTransaction result exposes `returnValue` directly;
+    // calling resultMetaXdr.v3() throws "v3 not set" on newer (v4) meta.
+    function extractReturnValue(txResult) {
+      try {
+        if (txResult.returnValue) return scValToNative(txResult.returnValue);
+        const meta = txResult.resultMetaXdr;
+        const sw = meta?.switch?.().value;
+        const sm = sw === 3 ? meta.v3().sorobanMeta() : meta?.v4?.().sorobanMeta?.();
+        const rv = sm?.returnValue?.();
+        return rv ? scValToNative(rv) : null;
+      } catch (_) { return null; }
+    }
+
+    async function simulate(fnName, args) {
+      const account = await server.getAccount(keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: "1000000", networkPassphrase: NETWORK.passphrase,
+      }).addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT(), function: fnName, args,
+      })).setTimeout(30).build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+      return sim.result?.retval ? scValToNative(sim.result.retval) : null;
+    }
+
+    async function submitTx(fnName, args, logId) {
+      const account = await server.getAccount(keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: "2000000", networkPassphrase: NETWORK.passphrase,
+      }).addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT(), function: fnName, args,
+      })).setTimeout(120).build();
+
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+
+      const prepared = rpc.assembleTransaction(tx, sim).build();
+      prepared.sign(keypair);
+      const sent = await server.sendTransaction(prepared);
+      if (sent.status === "ERROR") throw new Error(JSON.stringify(sent.errorResult));
+
+      addLog(logId, `TX submitted: ${sent.hash}`, "info");
+
+      // Poll for confirmation
+      for (let i = 0; i < 60; i++) {
+        await sleep(2000);
+        const result = await server.getTransaction(sent.hash);
+        if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+          addLog(logId, `TX confirmed ✓`, "success", { href: `${EXPLORER()}/tx/${sent.hash}`, label: "view on stellar.expert ↗" });
+          return result;
+        }
+        if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+          throw new Error(`TX failed: ${sent.hash}`);
+        }
+        addLog(logId, `Confirming… (${i * 2}s)`, "info");
+      }
+      throw new Error("TX confirmation timeout");
+    }
+
+    // ── Connect ────────────────────────────────────────────────────────────────
+    window.initClient = async function() {
+      const secret = document.getElementById("secret-key").value.trim();
+      const status = document.getElementById("connect-status");
+      try {
+        keypair = Keypair.fromSecret(secret);
+        server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
+        const account = await server.getAccount(keypair.publicKey());
+        const isMainnet = NETWORK === NETWORKS.mainnet;
+        status.innerHTML = `✅ Connected to <strong>${isMainnet ? "🔴 Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${esc(keypair.publicKey().slice(0,20))}…</span>`;
+        // Enable buttons
+        const btn = document.getElementById("random-btn");
+        if (btn) btn.disabled = false;
+        document.getElementById("random-output").textContent = "Ready! Click Generate.";
+      } catch(e) {
+        status.innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
+      }
+    };
+
+    // ── Tab switch ─────────────────────────────────────────────────────────────
+    window.switchTab = function(name) {
+      const names = ["random","proof","verify"];
+      document.querySelectorAll(".tab").forEach((t, i) =>
+        t.classList.toggle("active", names[i] === name));
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      document.getElementById("panel-" + name).classList.add("active");
+    };
+
+    // ── Random Number Generator ────────────────────────────────────────────────
+    window.rollRandom = async function() {
+      if (!keypair) return;
+      const minVal = BigInt(document.getElementById("random-sides").value || 1);
+      const maxEl = document.getElementById("random-max");
+      const maxVal = BigInt(maxEl ? maxEl.value || 1000 : 1000);
+      const ctx = document.getElementById("random-context").value || "random-selection";
+      const btn = document.getElementById("random-btn");
+      const output = document.getElementById("random-output");
+      clearLog("random-log");
+      btn.disabled = true;
+      output.innerHTML = `<span class="spinner"></span> Submitting request to network…`;
+
+      try {
+        const contextBytes = new TextEncoder().encode(ctx);
+        addLog("random-log", `Submitting request(context="${ctx}") to VRF contract…`, "info");
+
+        // request()  (contextBytes is a Uint8Array — nativeToScVal accepts it directly)
+        const txResult = await submitTx("request", [
+          nativeToScVal(contextBytes, { type: "bytes" }),
+          nativeToScVal(keypair.publicKey(), { type: "address" }),
+        ], "random-log");
+
+        // Extract request ID from return value
+        const rv = extractReturnValue(txResult);
+        const requestId = rv != null ? BigInt(rv) : 1n;
+        addLog("random-log", `Request ID: ${requestId}`, "success");
+        output.innerHTML = `<span class="spinner"></span> Request #${esc(String(requestId))} submitted. Waiting for oracle…`;
+
+        // Poll is_fulfilled — show a single, updating "waiting" status rather
+        // than spamming raw boolean results.
+        addLog("random-log", "Waiting for oracle to generate the BLS-VRF proof…", "info");
+        let fulfilled = false;
+        for (let i = 0; i < 40; i++) {
+          await sleep(3000);
+          fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
+          if (fulfilled) break;
+          output.innerHTML = `<span class="spinner"></span> Request #${esc(String(requestId))} — waiting for oracle… (${(i + 1) * 3}s)`;
+        }
+
+        if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
+        addLog("random-log", `Oracle fulfilled request #${requestId} ✓`, "success");
+
+        // derive_random_in_range(request_id, max) → [0, max), exactly uniform.
+        // The context was bound at request() time; there is no
+        // derivation-time context (it could be ground after the result is
+        // known). We shift by minVal to map onto [minVal, maxVal].
+        if (maxVal < minVal) throw new Error("max must be >= min");
+        const span = maxVal - minVal + 1n;
+        const raw = await simulate("derive_random_in_range", [
+          nativeToScVal(requestId, { type: "u64" }),
+          nativeToScVal(span, { type: "u64" }),
+        ]);
+        const resultNum = Number(BigInt(raw) + minVal);
+        addLog("random-log", `derive_random_in_range → ${resultNum} ∈ [${minVal}, ${esc(String(maxVal))}]`, "success");
+
+        output.innerHTML = `
+          <div class="result-big">${esc(String(resultNum))}</div>
+          <div class="result-label">Range [${esc(String(minVal))} – ${esc(String(maxVal))}] — verified on Stellar</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${esc(String(requestId))} | Context: ${esc(ctx)}</div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">⚠️  ${esc(e.message)}</div>`;
+        addLog("random-log", `Error: ${esc(e.message)}`, "error");
+      } finally { btn.disabled = false; }
+    };
+
+    // ── Proof Explorer ─────────────────────────────────────────────────────────
+    window.exploreProof = async function() {
+      const id = BigInt(document.getElementById("proof-id").value || 1);
+      const result = document.getElementById("proof-result");
+      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${esc(String(id))} from Soroban RPC…</div>`;
+      try {
+        if (!server) {
+          server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
+          // Use a read-only account for simulation (friendbot-funded)
+          keypair = Keypair.random();
+          try { await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`); } catch {}
+        }
+        const proof = await simulate("get_proof", [nativeToScVal(id, { type: "u64" })]);
+        if (!proof) throw new Error("Request not found or not yet fulfilled");
+
+        const toHex = v => {
+          if (v instanceof Uint8Array || Buffer.isBuffer(v))
+            return Array.from(v).map(b => b.toString(16).padStart(2,"0")).join("");
+          if (Array.isArray(v))
+            return v.map(b => b.toString(16).padStart(2,"0")).join("");
+          return String(v);
+        };
+
+        result.innerHTML = `
+          <div class="proof-grid">
+            <div class="pf"><div class="name">Alpha Seed (32 bytes)</div>
+              <div class="val">${esc(toHex(proof.alpha_seed))}</div>
+              <div class="desc">sha256(request_id ‖ context ‖ drand_round ‖ sha256(drand_sig))</div></div>
+            <div class="pf"><div class="name">Beta Output (32 bytes)</div>
+              <div class="val">${esc(toHex(proof.beta_output))}</div>
+              <div class="desc">The verifiable random output: sha256(BETA_DOMAIN ‖ gamma)</div></div>
+            <div class="pf"><div class="name">Gamma Point G1 (96 bytes)</div>
+              <div class="val">${esc(toHex(proof.gamma_point).slice(0,40))}…</div>
+              <div class="desc">sk × H(alpha) — oracle's VRF output point</div></div>
+            <div class="pf"><div class="name">drand Round</div>
+              <div class="val">${esc(String(proof.drand_round))}</div>
+              <div class="desc">BLS12-381 quicknet beacon round used</div></div>
+            <div class="pf"><div class="name">Oracle Public Key (192 bytes)</div>
+              <div class="val">${esc(toHex(proof.public_key).slice(0,40))}…</div>
+              <div class="desc">G2 point — verifiable identity of oracle</div></div>
+            <div class="pf"><div class="name">drand Signature (96 bytes)</div>
+              <div class="val">${esc(toHex(proof.drand_signature).slice(0,40))}…</div>
+              <div class="desc">BLS signature from drand quicknet chain</div></div>
+          </div>
+          <div style="color:#86efac;font-size:0.78rem;margin-top:12px">
+            ✅ Pairing check e(γ, G2) == e(H(α), PK) verified on-chain by Soroban host
+          </div>`;
+      } catch(e) {
+        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">❌ ${esc(e.message)}</div>`;
+      }
+    };
+
+    // ── Verify (on-chain via is_fulfilled + get_proof) ─────────────────────────
+    window.verifyOnChain = async function() {
+      const id = BigInt(document.getElementById("verify-id").value || 1);
+      const output = document.getElementById("verify-output");
+      output.innerHTML = `<span class="spinner"></span> Checking request #${esc(String(id))}…`;
+      try {
+        if (!server) {
+          server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
+          keypair = Keypair.random();
+          try { await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`); } catch {}
+        }
+        const fulfilled = await simulate("is_fulfilled", [nativeToScVal(id, { type: "u64" })]);
+        if (!fulfilled) {
+          output.innerHTML = `<div style="color:#fbbf24">⏳ Request #${esc(String(id))} is not yet fulfilled</div>`;
+          return;
+        }
+        output.innerHTML = `<div style="color:#86efac;font-size:1rem">✅ Request #${esc(String(id))} is fulfilled</div>
+          <div style="color:#6b7280;font-size:0.78rem;margin-top:8px">
+            The BLS12-381 pairing check e(γ, G2) == e(H(α), PK) was verified on-chain at fulfillment time.
+            The proof is permanently stored in contract storage and can be retrieved with get_proof(${id}).
+          </div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${esc(e.message)}</div>`;
+      }
+    };
+
+    // ── Client-side derivation ─────────────────────────────────────────────────
+    window.deriveClientSide = function() {
+      const betaHex = document.getElementById("cs-beta").value.trim();
+      const min = BigInt(document.getElementById("cs-min").value || 1);
+      const max = BigInt(document.getElementById("cs-max").value || 100);
+      const output = document.getElementById("cs-output");
+      if (!betaHex || betaHex.length < 16) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ Enter at least 8 bytes (16 hex chars) of beta output</div>`;
+        return;
+      }
+      try {
+        if (max <= min) throw new Error("max must be > min");
+        const range = max - min + 1n;
+        const betaVal = BigInt("0x" + betaHex.slice(0, 16));
+        const result = min + (betaVal % range);
+        output.innerHTML = `<div class="result-big">${esc(result.toLocaleString())}</div>
+          <div class="result-label">Range: ${esc(String(min))} — ${esc(String(max))}</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">
+            Formula: min + (beta_prefix % range) = ${esc(String(min))} + (${esc(String(betaVal))} % ${esc(String(range))})
+          </div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${esc(e.message)}</div>`;
+      }
+    };
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Default to Mainnet on load. This is a production oracle, so the live
+    // contract is what visitors should see first. Calling switchNetwork() (rather
+    // than only setting NETWORK) keeps the button highlighting and the network
+    // warning banner in sync with the actually selected network.
+    switchNetwork("mainnet");
+  </script>
+</body>
+</html>
