@@ -183,8 +183,8 @@ refused before any fee is spent. Deterministic failures (contract panics, `trapp
 not from *cost*. A callback too expensive to fit the guard or the network limits means the
 request is **not fulfilled at all**, and only `timeout_refund()` remains. Keep `on_vrf()` small.
 
-**Deployed Mainnet contract:** still uses `invoke_contract` until redeployment. On that
-instance the resource guard, terminal classification and the send cap apply.
+**Live production contracts** (`CAW6KECQ…UPRX` / `CBEDNSJ6…JTBR`) use `try_invoke_contract`.
+The resource guard, terminal classification and the send cap all apply.
 
 ### Signature forgery
 
@@ -201,10 +201,11 @@ the expected value and compares. If they don't match, the transaction reverts.
 ### Timeout griefing
 
 A requester cannot call `timeout_refund()` early — the contract checks that the current drand round
-(drand numbering, see above) exceeds `required_round + TIMEOUT_ROUNDS`, i.e. the refund opens at
-`genesis + (required_round + TIMEOUT_ROUNDS) · period`, 20 periods (60 s on quicknet) after the
-bound beacon is emitted. The ledger timestamp is consensus-determined, so a single user can't
-manipulate it.
+(drand numbering, see above) **strictly exceeds** `required_round + TIMEOUT_ROUNDS` (i.e. the check
+is `current_round > required_round + TIMEOUT_ROUNDS`, not `>=`). The refund therefore opens at
+round `required_round + TIMEOUT_ROUNDS + 1`, i.e. **more than 20 subsequent drand rounds** (at least
+63 s on quicknet, where one period = 3 s) after the bound beacon is emitted. The ledger timestamp
+is consensus-determined, so a single user can't manipulate it.
 
 The refund is **not permissionless**: `timeout_refund()` requires the requester's
 authorization. An account requester calls it directly. A **contract** requester (every callback

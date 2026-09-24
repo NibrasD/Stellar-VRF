@@ -556,16 +556,43 @@ fn decode_u64_result(result: Option<String>, request_id: u64) -> Result<u64, Vrf
 
 impl VrfClient {
     /// Wait until a request is fulfilled, polling every 3 seconds.
+    ///
+    /// Each RPC call is given a 10-second per-call deadline via
+    /// `tokio::time::timeout`. Transient errors (RPC failures, timeouts) are
+    /// treated as retryable: they are logged and the loop continues. Only when
+    /// the outer `timeout_secs` deadline expires does this return `Err(Timeout)`.
     pub async fn wait_for_fulfillment(
         &self,
         request_id: u64,
         timeout_secs: u64,
     ) -> Result<(), VrfError> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
         while std::time::Instant::now() < deadline {
-            if self.is_fulfilled(request_id).await? {
-                return Ok(());
+            // Wrap the RPC call in a per-call timeout so a stalled connection
+            // cannot block the loop past the outer deadline.
+            match tokio::time::timeout(RPC_TIMEOUT, self.is_fulfilled(request_id)).await {
+                Ok(Ok(true)) => return Ok(()),
+                Ok(Ok(false)) => {
+                    // Not yet fulfilled — sleep and retry.
+                }
+                Ok(Err(err)) => {
+                    // Transient RPC/network error. Log and retry rather than
+                    // returning immediately, because the deadline is the correct
+                    // termination condition.
+                    eprintln!(
+                        "[stellar-vrf-sdk] wait_for_fulfillment: transient error for request {}: {}. Retrying…",
+                        request_id, err
+                    );
+                }
+                Err(_elapsed) => {
+                    // Per-call timeout fired. Log and retry.
+                    eprintln!(
+                        "[stellar-vrf-sdk] wait_for_fulfillment: RPC call timed out for request {} ({}s limit). Retrying…",
+                        request_id, RPC_TIMEOUT.as_secs()
+                    );
+                }
             }
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }

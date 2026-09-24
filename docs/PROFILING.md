@@ -12,7 +12,7 @@ This document records the exact, verified resource and fee measurements for the 
 ## 1. Stellar Mainnet Measurements
 
 ### A. Production Contract (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`)
-* **WASM Hash**: `81ffb2f216518a24555f84d1e2eec0d38b556b27d425b090df265355601d3209`
+* **WASM Hash**: `6a261a26976ca5a45c5bd23b545b0a83faec363b3de132a882cfbe1b4f19e556`
 * **Application Fee (`fee_amount`)**: `2,000,000 stroops (0.2 XLM)`
 * **Active Status**: Current Live Production Instance
 

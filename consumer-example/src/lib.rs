@@ -29,8 +29,6 @@
 #![no_std]
 #![allow(unknown_lints)]
 #![allow(deprecated)]
-#![allow(unnecessary_admin_parameter)]
-#![allow(missing_new_admin_auth)]
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
@@ -65,13 +63,15 @@ pub struct VrfSamplingContract;
 
 #[contractimpl]
 impl VrfSamplingContract {
-    /// Initialize with the trusted VRF contract address and admin.
-    /// Only the deployer (admin) should call this.
-    pub fn init(env: Env, admin: Address, vrf_contract: Address) {
+    /// Constructor called atomically by the Soroban host at deploy time.
+    ///
+    /// Because this is a `__constructor`, it runs in the same transaction as
+    /// `uploadContractWasm` / `createContractV2`.  No one else can race to call
+    /// it: the host guarantees it executes exactly once, with the deployer as the
+    /// transaction signer.  `admin` must be the same account that signs the
+    /// deploy transaction (`admin.require_auth()` enforces this).
+    pub fn __constructor(env: Env, admin: Address, vrf_contract: Address) {
         admin.require_auth();
-        if env.storage().instance().has(&ConsumerKey::VrfContract) {
-            panic!("already initialized");
-        }
         env.storage().instance().set(&ConsumerKey::Admin, &admin);
         env.storage()
             .instance()

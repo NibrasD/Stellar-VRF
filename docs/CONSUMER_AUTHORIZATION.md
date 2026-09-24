@@ -85,8 +85,11 @@ the requester. Nobody else can trigger it.
   a direct call from the consumer contract as authorized. So **your consumer contract has
   to expose its own refund entrypoint** that calls `timeout_refund(request_id)` on the VRF
   contract, with whatever access control you need (e.g. admin-only). Without one, a
-  timed-out fee stays escrowed in the VRF contract for good. Nobody else can recover it
-  for you.
+  timed-out fee stays escrowed in the VRF contract until `timeout_refund()` is called.
+  Nobody else can recover it for you. If the Soroban storage TTL expires before you
+  call `timeout_refund()`, the entry is **archived** (not deleted) and must be restored
+  via `restoreFootprint` before the refund can be claimed. Archived entries are never
+  permanently lost; they can always be restored for a fee.
 
 ```rust
 pub fn refund_sample(env: Env, caller: Address, request_id: u64) {

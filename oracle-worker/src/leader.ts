@@ -20,6 +20,8 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
+import { performance } from "perf_hooks";
 import { log } from "./utils.js";
 import { RedisLease } from "./redisLock.js";
 import { withFileMutex } from "./fileMutex.js";
@@ -40,7 +42,23 @@ interface LockFile {
   timestamp: number;
 }
 
+/**
+ * Human-readable identifier for this instance (for logging and the file lock).
+ * Can be customised via INSTANCE_ID env var.
+ */
 const INSTANCE_ID = process.env.INSTANCE_ID || `oracle-${process.pid}`;
+
+/**
+ * Per-boot cryptographically random token used as the Redis lock *value* (fencing token).
+ *
+ * This is separate from INSTANCE_ID (used for human-readable logging):
+ * - INSTANCE_ID is stable across restarts (e.g. "oracle-primary").
+ * - INSTANCE_TOKEN is unique per process lifetime.  A zombie process that
+ *   still holds a Redis key after restart can't masquerade as the new leader,
+ *   because the new process generates a fresh token that doesn't match the
+ *   value stored in Redis from the old boot.
+ */
+const INSTANCE_TOKEN = crypto.randomBytes(16).toString("hex");
 
 /**
  * Safety margin subtracted from the TTL when computing how long we may keep
@@ -65,24 +83,22 @@ let state: LeaderState = "unknown";
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Local deadline for our lease: `start of last successful renewal + TTL −
- * safety margin`. Measured from when the renewal was *sent*, so it can only
- * under-estimate how long Redis will keep the key.
+ * Local deadline for our lease, measured in `performance.now()` milliseconds
+ * (monotonic — unaffected by NTP or wall-clock adjustments).
  *
- * Without this, `state` is only corrected when a renewal *returns*. If Redis
- * (or the network) stalls, the renewal never returns, the key expires in
- * Redis, the standby takes over, and this process still reports "leader" —
- * a genuine split brain. With it, `isLeader()` turns false on its own once the
- * deadline passes, regardless of whether Redis ever answers.
+ * Set to `sentAt + TTL − safety` after each successful acquire/renew.
+ * `isLeader()` returns false once this passes, even if Redis never answers.
+ * Using a monotonic clock prevents a forward NTP jump from silently extending
+ * the lease, and a backward jump from prematurely expiring it.
  */
-let leaseValidUntil = 0;
-let cooldownUntil = 0;
+let leaseValidUntil = 0; // performance.now() value
+let cooldownUntil = 0;   // performance.now() value
 let loseLeadershipCb: (() => void) | null = null;
 
 // Distributed backend (only instantiated when REDIS_URL is present).
 const useRedis = REDIS_URL.length > 0;
 const redisLease: RedisLease | null = useRedis
-  ? new RedisLease({ url: REDIS_URL, key: REDIS_LOCK_KEY, instanceId: INSTANCE_ID, ttlMs: LOCK_TTL_MS })
+  ? new RedisLease({ url: REDIS_URL, key: REDIS_LOCK_KEY, instanceId: INSTANCE_TOKEN, ttlMs: LOCK_TTL_MS })
   : null;
 
 /**
@@ -91,7 +107,7 @@ const redisLease: RedisLease | null = useRedis
  * so a Redis outage never causes two leaders.
  */
 async function tryAcquire(): Promise<boolean> {
-  const sentAt = Date.now();
+  const sentAt = performance.now(); // monotonic — unaffected by NTP adjustments
   let ok: boolean;
   if (redisLease) {
     try {
@@ -259,7 +275,7 @@ function demote(reason: string): void {
  */
 export async function relinquishLeadership(reason: string): Promise<void> {
   if (state !== "leader") return;
-  cooldownUntil = Date.now() + RELINQUISH_COOLDOWN_MS;
+  cooldownUntil = performance.now() + RELINQUISH_COOLDOWN_MS;
   demote(`relinquished — ${reason}`);
   try {
     await release();
@@ -290,7 +306,7 @@ export function startLeaderElection(
     if (running) return;
     running = true;
     try {
-      if (Date.now() < cooldownUntil) {
+      if (performance.now() < cooldownUntil) {
         if (state !== "standby") demote("in post-relinquish cooldown");
         return;
       }
@@ -333,12 +349,13 @@ export function startLeaderElection(
 /**
  * True only while we hold the lease AND its local deadline has not passed.
  *
- * The deadline check is what makes this safe to call right before spending
- * money: it does not depend on the last renewal having *returned*.
+ * The deadline check uses the monotonic clock (`performance.now()`) so it is
+ * unaffected by wall-clock adjustments. It does not depend on the last renewal
+ * having *returned*, so it fires promptly on Redis/network stalls.
  */
 export function isLeader(): boolean {
   if (state !== "leader") return false;
-  if (Date.now() >= leaseValidUntil) {
+  if (performance.now() >= leaseValidUntil) {
     // Lease may already be gone in Redis. Demote now rather than waiting for
     // the next tick, so callbacks fire and the listener stops.
     demote("lease deadline passed without a confirmed renewal");
@@ -356,4 +373,9 @@ export function getLeaderState(): LeaderState {
 
 export function getInstanceId(): string {
   return INSTANCE_ID;
+}
+
+/** The per-boot fencing token stored in Redis as the lock value. */
+export function getInstanceToken(): string {
+  return INSTANCE_TOKEN;
 }

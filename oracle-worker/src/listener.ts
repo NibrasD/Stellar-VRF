@@ -86,13 +86,13 @@ export async function initListener(server: rpc.Server): Promise<void> {
  * NEWEST requests instead of guessing where the ID range ends.
  */
 export async function readRequestCounter(server: rpc.Server): Promise<bigint> {
-  // Counter is written by init(), so an initialised contract always has it.
+  // Counter is initialised by the contract's __constructor at deploy time.
   return (await readInstanceInteger(server, "Counter")) ?? 0n;
 }
 
 /**
  * Read the contract's per-request fee (`DataKey::FeeAmount`, instance storage).
- * Immutable after init(); `0` on the current Mainnet instance.
+ * Immutable after construction; `2,000,000` stroops (0.2 XLM) on the live Mainnet instance.
  */
 export async function readFeeAmount(server: rpc.Server): Promise<bigint> {
   return (await readInstanceInteger(server, "FeeAmount")) ?? 0n;

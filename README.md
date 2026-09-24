@@ -45,18 +45,14 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 ## Quick Start — JavaScript SDK
 
-Published on npm as
-[`stellar-vrf-sdk`](https://www.npmjs.com/package/stellar-vrf-sdk). Requires
-**Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
-
-```bash
-npm install stellar-vrf-sdk @stellar/stellar-sdk
-```
-
-> ⚠ **Use SDK 2.0.0 with the current contract.** The published 1.0.x packages send a
-> `context` argument to `derive_random_in_range` that the current contract (`CAW6KECQ…UPRX`)
-> no longer accepts. Until 2.0.0 is on npm/crates.io, build the SDK from `sdk/js` / `sdk/rust`.
-> See [docs/SDK_RELEASE.md](docs/SDK_RELEASE.md).
+> ⚠ **SDK 2.0.0 is not yet published to npm.** The current registry version
+> (`stellar-vrf-sdk@1.0.1`) is **incompatible** with the live contract because it
+> still passes a removed `context` argument to `derive_random_in_range`.
+> **Build from source** until 2.0.0 is published:
+> ```bash
+> cd sdk/js && npm install && npm run build
+> ```
+> See [docs/SDK_RELEASE.md](docs/SDK_RELEASE.md) for the publish checklist.
 
 ```typescript
 import { VrfClient, Networks } from "stellar-vrf-sdk";
@@ -188,7 +184,10 @@ Please read these before integrating on Mainnet. Details are in [`docs/THREAT_MO
 
 ## Performance
 
-`fulfill()` **without a callback** measured at **58,073,400 CPU instructions** (fee=0) and **58,342,003 CPU instructions** (nonzero-fee) on Stellar Mainnet. That is 22.2% headroom under the 75M target and 85.4% under the 400M protocol limit. See [`docs/PROFILING.md`](docs/PROFILING.md).
+`fulfill()` **without a callback** consumed **56,040,632 CPU instructions** on live Stellar Mainnet (TX [`e0cc4b60…`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b)).
+The Soroban VM allocates a larger *envelope limit* for that transaction (`58,342,003` instructions), which is the upper bound the validator reserves — not what was actually consumed.
+That is 25% headroom under the 75M project target and 86% under the 400M network protocol limit.
+See [`docs/PROFILING.md`](docs/PROFILING.md) for the full breakdown.
 
 **Scope of the 75M figure:** it covers the **VRF core** only (drand signature check, BLS-VRF verification, Ed25519, storage, fee transfer), and a unit test enforces it. A callback request adds whatever the consumer's `on_vrf()` costs, which the contract can't bound. The worker's resource guard (`MAX_FULFILL_INSTRUCTIONS`, default 90M) is the operational cap for that case.
 

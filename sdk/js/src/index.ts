@@ -105,14 +105,26 @@ export class VrfClient {
    */
   async request(context: Uint8Array, options?: VrfRequestOptions): Promise<bigint> {
     const requester = this.config.keypair.publicKey();
-    const fnName = options?.callbackContract ? "request_with_callback" : "request";
+
+    // Validate: callbackContract and callbackFn must both be provided, or both absent.
+    const hasContract = !!options?.callbackContract;
+    const hasFn = !!options?.callbackFn;
+    if (hasContract !== hasFn) {
+      throw new Error(
+        `VrfRequestOptions: "callbackContract" and "callbackFn" must be provided together. ` +
+          `Got callbackContract=${JSON.stringify(options?.callbackContract)}, ` +
+          `callbackFn=${JSON.stringify(options?.callbackFn)}.`
+      );
+    }
+
+    const fnName = hasContract ? "request_with_callback" : "request";
 
     const args: xdr.ScVal[] = [
       nativeToScVal(context instanceof Uint8Array ? context : new Uint8Array(context), { type: "bytes" }),
       new Address(requester).toScVal(),
     ];
 
-    if (options?.callbackContract && options?.callbackFn) {
+    if (hasContract && options?.callbackContract && options?.callbackFn) {
       args.push(new Address(options.callbackContract).toScVal());
       args.push(xdr.ScVal.scvSymbol(options.callbackFn));
     }
@@ -222,6 +234,11 @@ export class VrfClient {
 
   /**
    * Wait until a request is fulfilled, polling every intervalMs.
+   *
+   * Returns a VrfProof if the proof is still in storage, or a synthetic proof
+   * containing only `betaOutput` and `requestId` if `cleanup_proof()` was
+   * called (proof removed from storage, but `beta` is kept).  Throws if the
+   * request is not fulfilled within `timeoutMs`.
    */
   async waitForFulfillment(
     requestId: bigint,
@@ -233,6 +250,27 @@ export class VrfClient {
       if (await this.isFulfilled(requestId)) {
         const proof = await this.getProof(requestId);
         if (proof) return proof;
+        // getProof() returns null when cleanup_proof() has been called.
+        // The full proof is gone but beta is kept; fall back to getBeta().
+        try {
+          const beta = await this.getBeta(requestId);
+          // Return a minimal proof indicating fulfilled-but-cleaned state.
+          return {
+            requestId,
+            alphaSeed: new Uint8Array(32),
+            gammaPoint: new Uint8Array(96),
+            betaOutput: beta,
+            publicKey: new Uint8Array(192),
+            drandRound: 0n,
+            drandSignature: new Uint8Array(96),
+          };
+        } catch {
+          // beta is gone too (Soroban TTL expired); report as not-found.
+          throw new Error(
+            `VRF request ${requestId} was fulfilled but all storage entries have expired. ` +
+              `Read the result from the fulfill event or re-extend TTL before it expires.`
+          );
+        }
       }
       await sleep(intervalMs);
     }
