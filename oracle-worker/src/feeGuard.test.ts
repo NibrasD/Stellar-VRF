@@ -201,6 +201,23 @@ describe("FeeGuard — fee token", () => {
     expect(deps.readFeeAmount).toHaveBeenCalledTimes(1); // immutable → cached
   });
 
+  it("a paid request whose max tx fee exceeds the on-chain fee charges only the shortfall", async () => {
+    const ledger = new MemorySpendLedger();
+    const { guard } = setup(
+      { unpaidBudgetStroops: 2n * COST },
+      { ledger, readFeeAmount: vi.fn(async () => COST) }
+    );
+    expect(await guard.check(1n, MALLORY)).toMatchObject({ allow: true, funding: "paid" });
+    // Max fee 0.4 XLM, fee covers 0.15 XLM: 0.25 XLM is unreimbursed.
+    expect(await guard.authorizeSend("paid", 4_000_000n)).toEqual({ ok: true });
+    expect(await ledger.spent(0)).toBe(4_000_000n - COST);
+    // A max fee within the on-chain fee costs the budget nothing.
+    expect(await guard.authorizeSend("paid", COST)).toEqual({ ok: true });
+    expect(await ledger.spent(0)).toBe(4_000_000n - COST);
+    // Shortfalls are capped by the same budget: 2.5M + 2.5M > 3M.
+    expect(await guard.authorizeSend("paid", 4_000_000n)).toMatchObject({ ok: false });
+  });
+
   it("a large FeeAmount in a NON-XLM token is NOT treated as paid", async () => {
     const { guard } = setup(
       { unpaidBudgetStroops: 0n },

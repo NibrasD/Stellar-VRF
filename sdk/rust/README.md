@@ -94,6 +94,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+> ⚠ **Domains must be committed before fulfillment.** `derive_range_for_domain` /
+> `derive_range_for_domain_from_beta` work after the result is public, so a domain chosen
+> afterwards can be ground (try `A`, `B`, `C`, keep the best). If the value must be fair,
+> the domain has to be a constant or a value stored before `request()`.
+
 ### Waiting for fulfillment
 
 ```rust

@@ -236,9 +236,30 @@ parked request deliberately, restart the worker.
 - Log `aborting fulfill(N) attempt K: sending would exceed the unpaid budget …` means the
   budget ran out between admission and send, for example because a retry needed another fee.
   The request stays pending, and reconciliation retries it when budget frees up.
-- On a deployment whose fee covers the cost, rule 2 applies to every request and the cap never
-  triggers. `mainnet_deploy.mjs` requires `FEE_AMOUNT_STROOPS` and refuses values below
-  `1500000` unless explicitly overridden.
+- On a deployment whose fee covers the cost, rule 2 applies to every request. `mainnet_deploy.mjs`
+  requires `FEE_AMOUNT_STROOPS` and refuses values below `1500000` unless explicitly overridden.
+
+**Production fee token = native XLM only.** The contract accepts any token address as
+`fee_token`, but the worker's economics are defined in XLM. On Mainnet or with
+`NODE_ENV=production`, the worker **refuses to start** if the contract's `FeeToken` isn't the
+native XLM SAC, and it fails closed if `FeeToken` can't be read. `mainnet_deploy.mjs` always
+deploys with the XLM SAC. Other SEP-41 fee tokens aren't supported in production: that would
+need a price source.
+
+**Fee vs. maximum transaction fee.** A "paid" request is only fully reimbursed if
+`FeeAmount ≥` the transaction's max fee. At send time, the worker charges any shortfall
+(`maxFee − FeeAmount`) to the unpaid budget, so a fee below the cap can't cause unbounded
+loss. A deliberate deployment should still set:
+
+```
+FEE_AMOUNT (on-chain, immutable)  >=  MAX_FULFILL_TX_FEE_STROOPS (worker)
+```
+
+`mainnet_deploy.mjs` refuses otherwise (override: `ALLOW_FEE_BELOW_TX_CAP=yes-shortfall-charged-to-unpaid-budget`).
+It records the evidence in `deployed.mainnet.json` → `feeEconomics`:
+`FEE_AMOUNT`, `MAX_TOTAL_FEE` (= `MAX_FULFILL_TX_FEE_STROOPS`), `MAX_RESOURCE_FEE`,
+`MAX_FULFILL_INSTRUCTIONS`, `feeCoversMaxTxFee`. Run the worker with the same cap values you
+deployed with.
 
 ### Listener crash / relinquish behaviour
 

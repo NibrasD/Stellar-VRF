@@ -73,6 +73,12 @@ jobs:
         working-directory: soroban-contract
         run: cargo test --lib rotate_keys -- --nocapture
 
+      - name: cargo fmt --check (contract, fuzz targets, consumer example)
+        run: |
+          (cd soroban-contract && cargo fmt --check)
+          (cd soroban-contract/fuzz && cargo fmt --check)
+          (cd consumer-example && cargo fmt --check)
+
       - name: cargo clippy (all targets, including tests)
         working-directory: soroban-contract
         run: cargo clippy --all-targets -- -D warnings
@@ -80,6 +86,38 @@ jobs:
       - name: Fuzz targets compile
         working-directory: soroban-contract/fuzz
         run: cargo check --bins
+
+  fuzz-smoke:
+    name: Fuzz smoke run (bounded, 10k runs per target)
+    runs-on: ubuntu-latest
+    # A bounded run, not a fuzzing campaign: it proves every target executes
+    # thousands of randomized inputs without a crash on each change. The
+    # per-target log is uploaded as evidence.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install nightly Rust (cargo-fuzz needs -Z sanitizer)
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: nightly-2026-09-01
+      - name: Install cargo-fuzz
+        run: cargo +nightly-2026-09-01 install cargo-fuzz --version 0.13.2 --locked
+      - name: Run every target for 10,000 inputs
+        working-directory: soroban-contract
+        run: |
+          mkdir -p fuzz-evidence
+          for t in $(cargo +nightly-2026-09-01 fuzz list); do
+            echo "=== $t ===" | tee -a fuzz-evidence/summary.txt
+            cargo +nightly-2026-09-01 fuzz run "$t" -- -runs=10000 -seed=1 2>&1 \
+              | tee "fuzz-evidence/$t.log" | grep -E '^(Done|#10000)' | tee -a fuzz-evidence/summary.txt
+            grep -q '^Done 10000 runs' "fuzz-evidence/$t.log" \
+              || { echo "$t did not complete 10000 runs"; exit 1; }
+          done
+      - name: Upload fuzz evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-smoke-evidence
+          path: soroban-contract/fuzz-evidence/
 
       - name: Release WASM build (pinned toolchain) + SHA256
         working-directory: soroban-contract
@@ -95,6 +133,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.95.0
+          components: clippy, rustfmt
+      - name: cargo fmt --check
+        working-directory: sdk/rust
+        run: cargo fmt --check
+      - name: cargo clippy
+        working-directory: sdk/rust
+        run: cargo clippy --all-targets -- -D warnings
       - name: cargo test
         working-directory: sdk/rust
         run: cargo test

@@ -65,6 +65,41 @@ a few sends (`MAX_SENDS_PER_REQUEST`), and you'd have to use `timeout_refund()`.
 > This behaviour ships with the next contract deployment. The currently deployed Mainnet
 > instance still reverts `fulfill()` when a callback panics.
 
+**What is isolated and what is not:**
+
+| Callback behaviour | Effect |
+|---|---|
+| Ordinary failure (panic, error, trap, missing `on_vrf`) | **Isolated.** `fulfill()` commits and emits `cb_failed` |
+| Expensive callback (over `MAX_FULFILL_INSTRUCTIONS` / fee caps in simulation) | **Guarded before sending.** The worker refuses to submit, and the request is parked |
+| Exhausting the transaction's CPU/memory budget | **Not isolated.** Soroban meters the whole call tree under one budget, so the whole `fulfill()` fails. This is a residual limitation, not something the contract can fix |
+
+## Refunds for contract requesters
+
+`timeout_refund(request_id)` calls `requester.require_auth()`, and the fee goes back to
+the requester. Nobody else can trigger it.
+
+- **Account (G…) requester:** the account calls `timeout_refund` directly.
+- **Contract (C…) requester** (every callback consumer, because `requester` must equal
+  `callback_contract`): only that contract can authorize the refund. The VRF contract sees
+  a direct call from the consumer contract as authorized. So **your consumer contract has
+  to expose its own refund entrypoint** that calls `timeout_refund(request_id)` on the VRF
+  contract, with whatever access control you need (e.g. admin-only). Without one, a
+  timed-out fee stays escrowed in the VRF contract for good. Nobody else can recover it
+  for you.
+
+```rust
+pub fn refund_sample(env: Env, caller: Address, request_id: u64) {
+    caller.require_auth();
+    // ... check caller is your admin ...
+    let vrf: Address = env.storage().instance().get(&ConsumerKey::VrfContract).unwrap();
+    env.invoke_contract::<()>(&vrf, &Symbol::new(&env, "timeout_refund"),
+        soroban_sdk::vec![&env, request_id.into_val(&env)]);
+    // The escrowed fee is now back in this contract's balance.
+}
+```
+
+See `refund_sample` in [`consumer-example/src/lib.rs`](../consumer-example/src/lib.rs).
+
 ## Making callbacks idempotent
 
 Your callback should be safe to call more than once for the same `request_id`. The simplest

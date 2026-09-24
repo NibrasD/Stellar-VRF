@@ -141,6 +141,33 @@ if (FEE_AMOUNT < MIN_SELF_FUNDING_FEE && process.env.ALLOW_UNFUNDED_FEE !== "yes
   );
   process.exit(1);
 }
+// ── Fee vs. the worker's spend caps (deployment evidence) ─────────────────────
+// The requester fee must cover the most the worker will ever pay for one
+// fulfill() (MAX_FULFILL_TX_FEE_STROOPS), otherwise every "paid" request can
+// still lose money. The worker charges any shortfall to its unpaid budget, but
+// a deliberate deployment should not rely on that. Same defaults as
+// oracle-worker/src/resourceGuard.ts.
+const intEnv = (k, d) => {
+  const v = process.env[k] ?? d;
+  if (!/^\d+$/.test(v)) { console.error(`ERROR: ${k} must be an integer, got "${v}"`); process.exit(1); }
+  return BigInt(v);
+};
+const WORKER_CAPS = {
+  MAX_FULFILL_TX_FEE_STROOPS: intEnv("MAX_FULFILL_TX_FEE_STROOPS", "6000000"),
+  MAX_FULFILL_RESOURCE_FEE_STROOPS: intEnv("MAX_FULFILL_RESOURCE_FEE_STROOPS", "5000000"),
+  MAX_FULFILL_INSTRUCTIONS: intEnv("MAX_FULFILL_INSTRUCTIONS", "90000000"),
+};
+if (FEE_AMOUNT < WORKER_CAPS.MAX_FULFILL_TX_FEE_STROOPS && process.env.ALLOW_FEE_BELOW_TX_CAP !== "yes-shortfall-charged-to-unpaid-budget") {
+  console.error(
+    `ERROR: FEE_AMOUNT_STROOPS=${FEE_AMOUNT} is below MAX_FULFILL_TX_FEE_STROOPS=${WORKER_CAPS.MAX_FULFILL_TX_FEE_STROOPS}.\n` +
+      "       A fulfill() the worker is allowed to send could cost more than the requester paid.\n" +
+      "       Either raise FEE_AMOUNT_STROOPS, lower MAX_FULFILL_TX_FEE_STROOPS in the worker env\n" +
+      "       (and pass the same value here), or set\n" +
+      "       ALLOW_FEE_BELOW_TX_CAP=yes-shortfall-charged-to-unpaid-budget to accept that the\n" +
+      "       worker charges the difference to UNPAID_BUDGET_XLM_PER_HOUR."
+  );
+  process.exit(1);
+}
 const WASM_PATH = path.resolve(__dirname, "../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.optimized.wasm");
 
 // ── Preflight: show exactly what will be deployed, and from where ──────────
@@ -152,6 +179,8 @@ console.log(`  Oracle account     : ${ORACLE_PUBLIC}   [${src(process.env.ORACLE
 console.log(`  Oracle BLS pk      : ${ORACLE_BLS_PK.slice(0, 32)}…   [derived from ORACLE_BLS_SECRET_KEY, ${src("ORACLE_BLS_SECRET_KEY")}]${PINNED_BLS_PK ? " (matches pinned ORACLE_BLS_PK)" : ""}`);
 console.log(`  Fee token          : ${XLM_SAC} (native XLM SAC)`);
 console.log(`  Fee amount         : ${FEE_AMOUNT} stroops   [${src("FEE_AMOUNT_STROOPS")}]${FEE_AMOUNT < MIN_SELF_FUNDING_FEE ? "  ⚠ UNFUNDED (override set)" : ""}`);
+console.log(`  Worker caps        : max tx fee ${WORKER_CAPS.MAX_FULFILL_TX_FEE_STROOPS}, max resource fee ${WORKER_CAPS.MAX_FULFILL_RESOURCE_FEE_STROOPS} stroops, max ${WORKER_CAPS.MAX_FULFILL_INSTRUCTIONS} instructions`);
+console.log(`  Fee covers max tx  : ${FEE_AMOUNT >= WORKER_CAPS.MAX_FULFILL_TX_FEE_STROOPS ? "yes" : "NO (override set; shortfall charged to unpaid budget)"}`);
 console.log(`  WASM               : ${WASM_PATH}`);
 if (DRY_RUN) {
   console.log("\nDRY_RUN set: nothing was sent. Re-run without DRY_RUN to deploy.");
@@ -333,6 +362,16 @@ const deployedRecord = {
   deployTxHash: deploySent.hash,
   configuredBy: "__constructor (atomic with deployment)",
   feeAmountStroops: FEE_AMOUNT.toString(),
+  feeToken: XLM_SAC,
+  // Evidence that the economics are intentional: the fee vs. the worker caps
+  // in force at deployment time.
+  feeEconomics: {
+    FEE_AMOUNT: FEE_AMOUNT.toString(),
+    MAX_TOTAL_FEE: WORKER_CAPS.MAX_FULFILL_TX_FEE_STROOPS.toString(),
+    MAX_RESOURCE_FEE: WORKER_CAPS.MAX_FULFILL_RESOURCE_FEE_STROOPS.toString(),
+    MAX_FULFILL_INSTRUCTIONS: WORKER_CAPS.MAX_FULFILL_INSTRUCTIONS.toString(),
+    feeCoversMaxTxFee: FEE_AMOUNT >= WORKER_CAPS.MAX_FULFILL_TX_FEE_STROOPS,
+  },
   securityFeatures: [
     "require_auth() — only oracle address can call fulfill()",
     "requester == callback_contract — prevents confused-deputy callback attacks",

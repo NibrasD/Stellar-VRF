@@ -1,9 +1,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol};
-use soroban_vrf_oracle::{BlsVrfProof, VRFOracleContract, VRFOracleContractClient};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol,
+};
 use soroban_vrf_oracle::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
+use soroban_vrf_oracle::{BlsVrfProof, VRFOracleContract, VRFOracleContractClient};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 4 {
@@ -64,7 +66,11 @@ fuzz_target!(|data: &[u8]| {
                 let ctx = Bytes::from_slice(&env, &ctx_buf);
 
                 let id = client.request(&ctx, &requester);
-                assert_eq!(id, (requests.len() as u64) + 1, "Sequential ID invariant violated");
+                assert_eq!(
+                    id,
+                    (requests.len() as u64) + 1,
+                    "Sequential ID invariant violated"
+                );
                 requests.push(id);
             }
             1 => {
@@ -76,8 +82,17 @@ fuzz_target!(|data: &[u8]| {
                 let ctx = Bytes::from_slice(&env, &ctx_buf);
 
                 // Note: callback_contract must match requester
-                let id = client.request_with_callback(&ctx, &callback_contract, &callback_contract, &callback_fn);
-                assert_eq!(id, (requests.len() as u64) + 1, "Sequential ID invariant violated");
+                let id = client.request_with_callback(
+                    &ctx,
+                    &callback_contract,
+                    &callback_contract,
+                    &callback_fn,
+                );
+                assert_eq!(
+                    id,
+                    (requests.len() as u64) + 1,
+                    "Sequential ID invariant violated"
+                );
                 requests.push(id);
             }
             2 => {
@@ -99,7 +114,10 @@ fuzz_target!(|data: &[u8]| {
                     let res = client.try_fulfill(&target_id, &dummy_proof, &dummy_sig);
 
                     if initially_refunded || initially_fulfilled {
-                        assert!(res.is_err(), "Duplicate fulfill or fulfill-after-refund allowed!");
+                        assert!(
+                            res.is_err(),
+                            "Duplicate fulfill or fulfill-after-refund allowed!"
+                        );
                     }
                 }
             }
@@ -113,7 +131,10 @@ fuzz_target!(|data: &[u8]| {
                     let res = client.try_timeout_refund(&target_id);
 
                     if initially_fulfilled || initially_refunded {
-                        assert!(res.is_err(), "Refund on fulfilled or duplicate refund allowed!");
+                        assert!(
+                            res.is_err(),
+                            "Refund on fulfilled or duplicate refund allowed!"
+                        );
                     }
                 }
             }

@@ -2,8 +2,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
-use soroban_vrf_oracle::{VRFOracleContract, VRFOracleContractClient};
 use soroban_vrf_oracle::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
+use soroban_vrf_oracle::{VRFOracleContract, VRFOracleContractClient};
 
 fuzz_target!(|data: &[u8]| {
     let env = Env::default();

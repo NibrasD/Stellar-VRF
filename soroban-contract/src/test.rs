@@ -3,7 +3,9 @@
 extern crate alloc;
 use alloc::format;
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol,
+};
 
 use crate::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3, TEST_G2_TIMES_5};
 use crate::{VRFOracleContract, VRFOracleContractClient};
@@ -145,7 +147,12 @@ fn test_request_with_callback_stores_callback() {
     let callback_fn = Symbol::new(&env, "on_vrf");
     let context = Bytes::from_slice(&env, b"callback_context");
 
-    let id = client.request_with_callback(&context, &callback_contract, &callback_contract, &callback_fn);
+    let id = client.request_with_callback(
+        &context,
+        &callback_contract,
+        &callback_contract,
+        &callback_fn,
+    );
     let cb = client.callback_of(&id);
 
     assert!(cb.is_some());
@@ -266,7 +273,9 @@ fn test_fulfill_duplicate_rejected() {
     // Manually force-set fulfilled = true to simulate a completed request.
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
     });
 
     // Attempt to fulfill again — must panic.
@@ -370,7 +379,9 @@ fn test_timeout_refund_after_fulfilled_rejected() {
     // Force-set fulfilled.
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
     });
 
     client.timeout_refund(&id);
@@ -388,7 +399,9 @@ fn test_timeout_refund_double_rejected() {
     // Force-set refunded.
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Refunded(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Refunded(id), &true);
     });
 
     client.timeout_refund(&id);
@@ -419,7 +432,9 @@ fn test_cleanup_proof_unauthorized_rejected() {
     // Force-set fulfilled.
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
     });
 
     client.cleanup_proof(&id, &attacker);
@@ -437,14 +452,19 @@ fn test_cleanup_proof_retains_fulfilled_flag() {
     // Force-set fulfilled.
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
     });
 
     // Oracle performs cleanup.
     client.cleanup_proof(&id, &oracle_addr);
 
     // Fulfilled flag must still be true.
-    assert!(client.is_fulfilled(&id), "Fulfilled flag must survive cleanup_proof");
+    assert!(
+        client.is_fulfilled(&id),
+        "Fulfilled flag must survive cleanup_proof"
+    );
 }
 
 // ── Tranche 2: Key rotation tests ─────────────────────────────────────────────
@@ -462,6 +482,48 @@ fn test_rotate_oracle_keys() {
 
     assert_eq!(client.oracle_pk(), new_pk);
     assert_eq!(client.oracle_address(), new_addr);
+}
+
+/// Both the current AND the new oracle must authorize a rotation, so a typo in
+/// `new_oracle_address` can't install an oracle that is unable to fulfill.
+#[test]
+fn test_rotate_oracle_keys_requires_new_oracle_auth() {
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk) = setup();
+    let new_addr = Address::generate(&env);
+    client.rotate_oracle_keys(
+        &BytesN::from_array(&env, &TEST_G2_TIMES_5),
+        &new_addr,
+        &BytesN::from_array(&env, &[0xBB; 32]),
+    );
+    let signers: alloc::vec::Vec<Address> = env.auths().into_iter().map(|(a, _)| a).collect();
+    assert!(
+        signers.contains(&oracle_addr),
+        "current oracle must authorize"
+    );
+    assert!(signers.contains(&new_addr), "new oracle must authorize");
+}
+
+/// Without the new oracle's signature the rotation is rejected.
+#[test]
+#[should_panic]
+fn test_rotate_oracle_keys_rejects_missing_new_oracle_auth() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+    let (env, client, oracle_addr, _pk, _ed, _drand_pk) = setup();
+    let new_addr = Address::generate(&env);
+    let new_pk = BytesN::from_array(&env, &TEST_G2_TIMES_5);
+    let new_ed = BytesN::from_array(&env, &[0xBB; 32]);
+    // Only the CURRENT oracle signs.
+    env.mock_auths(&[MockAuth {
+        address: &oracle_addr,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "rotate_oracle_keys",
+            args: (new_pk.clone(), new_addr.clone(), new_ed.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.rotate_oracle_keys(&new_pk, &new_addr, &new_ed);
 }
 
 /// rotate_drand_pk() must update the drand public key.
@@ -491,11 +553,14 @@ fn test_derive_random_in_range_bounds() {
 
         use crate::DataKey;
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-            // Seed the retained 32-byte beta used by derive_random_in_range.
             env.storage()
                 .persistent()
-                .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[i as u8 * 31; 32]));
+                .set(&DataKey::Fulfilled(id), &true);
+            // Seed the retained 32-byte beta used by derive_random_in_range.
+            env.storage().persistent().set(
+                &DataKey::Beta(id),
+                &BytesN::from_array(&env, &[i as u8 * 31; 32]),
+            );
         });
         let max: u64 = 100;
         let result = client.derive_random_in_range(&id, &max);
@@ -574,7 +639,7 @@ fn test_oracle_downtime_timeout_refund_succeeds() {
 /// from inside its `on_vrf()` callback. If CEI is enforced, the re-entrant call
 /// must panic with "already fulfilled" because `Fulfilled(id)` is set BEFORE the callback.
 mod malicious_consumer {
-    use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec, Val, Symbol, IntoVal};
+    use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, IntoVal, Symbol, Val, Vec};
 
     #[contract]
     pub struct MaliciousConsumer;
@@ -583,13 +648,17 @@ mod malicious_consumer {
     impl MaliciousConsumer {
         /// Store the VRF contract address for re-entrant attack.
         pub fn init(env: Env, vrf_contract: Address) {
-            env.storage().instance().set(&soroban_sdk::symbol_short!("vrf"), &vrf_contract);
+            env.storage()
+                .instance()
+                .set(&soroban_sdk::symbol_short!("vrf"), &vrf_contract);
         }
 
         /// Callback invoked by VRF contract.  This function maliciously
         /// attempts to call `fulfill()` on the VRF contract again.
         pub fn on_vrf(env: Env, request_id: u64, _beta: BytesN<32>, _alpha: BytesN<32>) {
-            let vrf_contract: Address = env.storage().instance()
+            let vrf_contract: Address = env
+                .storage()
+                .instance()
                 .get(&soroban_sdk::symbol_short!("vrf"))
                 .unwrap();
 
@@ -609,11 +678,7 @@ mod malicious_consumer {
             args.push_back(request_id.into_val(&env));
             args.push_back(dummy_proof.into_val(&env));
             args.push_back(dummy_sig.into_val(&env));
-            env.invoke_contract::<Val>(
-                &vrf_contract,
-                &Symbol::new(&env, "fulfill"),
-                args,
-            );
+            env.invoke_contract::<Val>(&vrf_contract, &Symbol::new(&env, "fulfill"), args);
         }
     }
 }
@@ -642,8 +707,7 @@ fn test_reentancy_guard_blocks_during_callback() {
 
     // Deploy MaliciousConsumer contract
     let malicious_id = env.register(malicious_consumer::MaliciousConsumer, ());
-    let malicious_client =
-        malicious_consumer::MaliciousConsumerClient::new(&env, &malicious_id);
+    let malicious_client = malicious_consumer::MaliciousConsumerClient::new(&env, &malicious_id);
 
     // Configure
     let oracle_addr = Address::generate(&env);
@@ -686,8 +750,12 @@ fn test_reentancy_guard_blocks_during_callback() {
     // In real fulfill(), these are set BEFORE invoke_callback_if_configured().
     use crate::DataKey;
     env.as_contract(&vrf_id, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(&DataKey::Fulfilling(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilling(id), &true);
     });
 
     // ── Trigger the callback (Interactions phase) ────────────────────────────
@@ -715,10 +783,13 @@ fn test_reentancy_guard_blocks_during_callback() {
     // No proof was written by the re-entrant fulfill(); state is as set above.
     env.as_contract(&vrf_id, || {
         assert!(!env.storage().persistent().has(&DataKey::Proof(id)));
-        assert!(env.storage().persistent().get::<_, bool>(&DataKey::Fulfilled(id)).unwrap());
+        assert!(env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Fulfilled(id))
+            .unwrap());
     });
 }
-
 
 // ── derive_random_in_range: range + bias behaviour ───────────────────────────
 
@@ -749,13 +820,21 @@ fn test_derive_random_in_range_worst_case_modulus_no_bias_fallback() {
 
         use crate::DataKey;
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
             env.storage()
                 .persistent()
-                .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[i.wrapping_mul(97).wrapping_add(7); 32]));
+                .set(&DataKey::Fulfilled(id), &true);
+            env.storage().persistent().set(
+                &DataKey::Beta(id),
+                &BytesN::from_array(&env, &[i.wrapping_mul(97).wrapping_add(7); 32]),
+            );
         });
         let result = client.derive_random_in_range(&id, &max);
-        assert!(result < max, "result {} out of range for max {}", result, max);
+        assert!(
+            result < max,
+            "result {} out of range for max {}",
+            result,
+            max
+        );
     }
 }
 
@@ -771,7 +850,9 @@ fn test_derive_random_in_range_is_deterministic() {
 
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
         env.storage()
             .persistent()
             .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[42u8; 32]));
@@ -802,13 +883,22 @@ fn test_derive_random_in_range_worst_case_sampling() {
 
         use crate::DataKey;
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
             env.storage()
                 .persistent()
-                .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[(i as u8).wrapping_mul(53); 32]));
+                .set(&DataKey::Fulfilled(id), &true);
+            env.storage().persistent().set(
+                &DataKey::Beta(id),
+                &BytesN::from_array(&env, &[(i as u8).wrapping_mul(53); 32]),
+            );
         });
         let result = client.derive_random_in_range(&id, max);
-        assert!(result < *max, "derive_random_in_range({}) returned {} >= {}", i, result, max);
+        assert!(
+            result < *max,
+            "derive_random_in_range({}) returned {} >= {}",
+            i,
+            result,
+            max
+        );
     }
 }
 
@@ -849,7 +939,7 @@ fn test_fulfill_invalid_ed25519_signature() {
 #[test]
 #[should_panic(expected = "drand signature verification failed")]
 fn test_fulfill_invalid_drand_bls_signature() {
-    use ed25519_dalek::{SigningKey, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
     use rand::rngs::OsRng;
 
     let env = Env::default();
@@ -860,7 +950,6 @@ fn test_fulfill_invalid_drand_bls_signature() {
     let verifying_key = signing_key.verifying_key();
     let ed25519_pk_bytes: [u8; 32] = verifying_key.to_bytes();
 
-
     let oracle_addr = Address::generate(&env);
     let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
     let oracle_ed25519 = BytesN::from_array(&env, &ed25519_pk_bytes);
@@ -868,14 +957,13 @@ fn test_fulfill_invalid_drand_bls_signature() {
     // Bls12381G1Affine::from_bytes doesn't panic on point decoding.
     // The G1 generator (compressed, uncompressed 96 bytes) for BLS12-381:
     let g1_gen_bytes: [u8; 96] = [
-        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c,
-        0x4f, 0xa9, 0xac, 0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05,
-        0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b, 0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f,
-        0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb, 0x22, 0xc6, 0xbb,
-        0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
-        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6,
-        0x00, 0xdb, 0x18, 0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44,
-        0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa, 0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
+        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c, 0x4f, 0xa9, 0xac,
+        0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05, 0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b,
+        0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f, 0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb,
+        0x22, 0xc6, 0xbb, 0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
+        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6, 0x00, 0xdb, 0x18,
+        0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44, 0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa,
+        0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
     ];
     // drand_pk must be a VALID G2 subgroup point (the constructor rejects
     // anything else, including the generator itself). 3·G2 is valid, but the
@@ -1091,7 +1179,10 @@ fn test_timeout_refund_with_nonzero_fee() {
         contract_balance_after, 0,
         "contract should have zero balance after refund"
     );
-    assert!(client.is_refunded(&id), "request must be marked as refunded");
+    assert!(
+        client.is_refunded(&id),
+        "request must be marked as refunded"
+    );
     assert!(!client.is_fulfilled(&id), "request must NOT be fulfilled");
 }
 
@@ -1193,7 +1284,9 @@ fn test_property_fulfilling_guard_blocks_concurrent_fulfill() {
     // Simulate callback in-flight by setting Fulfilling = true
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilling(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilling(id), &true);
     });
 
     let dummy_proof = crate::BlsVrfProof {
@@ -1221,7 +1314,9 @@ fn test_property_fulfill_after_timeout_refund_rejected() {
     // Force-mark request as refunded
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Refunded(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Refunded(id), &true);
     });
 
     let dummy_proof = crate::BlsVrfProof {
@@ -1352,7 +1447,9 @@ fn test_property_derive_random_in_range_boundary_max_one() {
 
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
         env.storage()
             .persistent()
             .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[0x34; 32]));
@@ -1372,7 +1469,9 @@ fn test_property_derive_random_in_range_fuzz_various_ranges() {
 
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
         env.storage()
             .persistent()
             .set(&DataKey::Beta(id), &BytesN::from_array(&env, &[0x55; 32]));
@@ -1381,7 +1480,12 @@ fn test_property_derive_random_in_range_fuzz_various_ranges() {
     let test_ranges: [u64; 8] = [1, 2, 3, 10, 100, 1_000, 1_000_000, u64::MAX];
     for range in test_ranges {
         let res = client.derive_random_in_range(&id, &range);
-        assert!(res < range, "derive_random_in_range result {} must be < {}", res, range);
+        assert!(
+            res < range,
+            "derive_random_in_range result {} must be < {}",
+            res,
+            range
+        );
     }
 }
 
@@ -1473,7 +1577,7 @@ fn test_rotate_keys_new_oracle_passes_key_check_for_pending_request() {
         alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
         gamma_point: BytesN::from_array(&env, &[0u8; 96]),
         beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: new_pk, // NEW key — must pass the key check
+        public_key: new_pk,              // NEW key — must pass the key check
         drand_round: required_round + 7, // deliberately wrong round
         drand_signature: BytesN::from_array(&env, &[0u8; 96]),
     };
@@ -1569,8 +1673,16 @@ fn test_rotate_keys_new_oracle_successfully_fulfills_pending_request() {
 
     // 4. Verify post-conditions
     assert!(client.is_fulfilled(&id), "request must be fulfilled");
-    assert_eq!(client.get_proof(&id).beta_output, BytesN::from_array(&env, &PROOF_BETA), "randomness output must match");
-    assert_eq!(client.get_beta(&id), BytesN::from_array(&env, &PROOF_BETA), "beta stored separately");
+    assert_eq!(
+        client.get_proof(&id).beta_output,
+        BytesN::from_array(&env, &PROOF_BETA),
+        "randomness output must match"
+    );
+    assert_eq!(
+        client.get_beta(&id),
+        BytesN::from_array(&env, &PROOF_BETA),
+        "beta stored separately"
+    );
 }
 
 // ── Fix 3: Budget measurement tests ───────────────────────────────────────────
@@ -1606,9 +1718,15 @@ fn test_budget_sac_transfer_cpu_instructions() {
     std::println!("========================================");
 
     // The transfer should cost a measurable but bounded amount of CPU
-    assert!(transfer_cpu > 0, "SAC transfer must consume some CPU instructions");
+    assert!(
+        transfer_cpu > 0,
+        "SAC transfer must consume some CPU instructions"
+    );
     // SAC transfers are typically in the 1M-5M range
-    assert!(transfer_cpu < 20_000_000, "SAC transfer CPU cost unexpectedly high");
+    assert!(
+        transfer_cpu < 20_000_000,
+        "SAC transfer CPU cost unexpectedly high"
+    );
 }
 
 /// Measure CPU instructions for G1 point negation in isolation.
@@ -1623,14 +1741,13 @@ fn test_budget_g1_negation_cpu_instructions() {
 
     // Use the standard G1 generator point
     let g1_bytes: [u8; 96] = [
-        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c,
-        0x4f, 0xa9, 0xac, 0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05,
-        0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b, 0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f,
-        0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb, 0x22, 0xc6, 0xbb,
-        0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
-        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6,
-        0x00, 0xdb, 0x18, 0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44,
-        0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa, 0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
+        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c, 0x4f, 0xa9, 0xac,
+        0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05, 0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b,
+        0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f, 0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb,
+        0x22, 0xc6, 0xbb, 0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
+        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6, 0x00, 0xdb, 0x18,
+        0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44, 0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa,
+        0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
     ];
     let g1 = Bls12381G1Affine::from_bytes(BytesN::from_array(&env, &g1_bytes));
 
@@ -1650,8 +1767,11 @@ fn test_budget_g1_negation_cpu_instructions() {
     std::println!("========================================");
 
     // G1 negation is a single Fp field subtraction — should be <5000 instructions
-    assert!(neg_cpu < 5_000,
-        "G1 negation cost {} instructions, expected <5000", neg_cpu);
+    assert!(
+        neg_cpu < 5_000,
+        "G1 negation cost {} instructions, expected <5000",
+        neg_cpu
+    );
 }
 
 /// Combined budget measurement: compute total nonzero-fee fulfill() CPU cost
@@ -1668,42 +1788,42 @@ fn test_budget_combined_nonzero_fee_fulfill_estimate() {
 
     // ── Component 1: Dual BLS pairing ──
     let g1_bytes: [u8; 96] = [
-        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c,
-        0x4f, 0xa9, 0xac, 0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05,
-        0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b, 0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f,
-        0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb, 0x22, 0xc6, 0xbb,
-        0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
-        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6,
-        0x00, 0xdb, 0x18, 0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44,
-        0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa, 0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
+        0x17, 0xf1, 0xd3, 0xa7, 0x31, 0x97, 0xd7, 0x94, 0x26, 0x95, 0x63, 0x8c, 0x4f, 0xa9, 0xac,
+        0x0f, 0xc3, 0x68, 0x8c, 0x4f, 0x97, 0x74, 0xb9, 0x05, 0xa1, 0x4e, 0x3a, 0x3f, 0x17, 0x1b,
+        0xac, 0x58, 0x6c, 0x55, 0xe8, 0x3f, 0xf9, 0x7a, 0x1a, 0xef, 0xfb, 0x3a, 0xf0, 0x0a, 0xdb,
+        0x22, 0xc6, 0xbb, 0x08, 0xb3, 0xf4, 0x81, 0xe3, 0xaa, 0xa0, 0xf1, 0xa0, 0x9e, 0x30, 0xed,
+        0x74, 0x1d, 0x8a, 0xe4, 0xfc, 0xf5, 0xe0, 0x95, 0xd5, 0xd0, 0x0a, 0xf6, 0x00, 0xdb, 0x18,
+        0xcb, 0x2c, 0x04, 0xb3, 0xed, 0xd0, 0x3c, 0xc7, 0x44, 0xa2, 0x88, 0x8a, 0xe4, 0x0c, 0xaa,
+        0x23, 0x29, 0x46, 0xc5, 0xe7, 0xe1,
     ];
     let g2_bytes: [u8; 192] = [
-        0x13, 0xe0, 0x2b, 0x60, 0x52, 0x71, 0x9f, 0x60, 0x7d, 0xac, 0xd3, 0xa0,
-        0x88, 0x27, 0x4f, 0x65, 0x59, 0x6b, 0xd0, 0xd0, 0x99, 0x20, 0xb6, 0x1a,
-        0xb5, 0xda, 0x61, 0xbb, 0xdc, 0x7f, 0x50, 0x49, 0x33, 0x4c, 0xf1, 0x12,
-        0x13, 0x94, 0x5d, 0x57, 0xe5, 0xac, 0x7d, 0x05, 0x5d, 0x04, 0x2b, 0x7e,
-        0x02, 0x4a, 0xa2, 0xb2, 0xf0, 0x8f, 0x0a, 0x91, 0x26, 0x08, 0x05, 0x27,
-        0x2d, 0xc5, 0x10, 0x51, 0xc6, 0xe4, 0x7a, 0xd4, 0xfa, 0x40, 0x3b, 0x02,
-        0xb4, 0x51, 0x0b, 0x64, 0x7a, 0xe3, 0xd1, 0x77, 0x0b, 0xac, 0x03, 0x26,
-        0xa8, 0x05, 0xbb, 0xef, 0xd4, 0x80, 0x56, 0xc8, 0xc1, 0x21, 0xbd, 0xb8,
-        0x06, 0x06, 0xc4, 0xa0, 0x2e, 0xa7, 0x34, 0xcc, 0x32, 0xac, 0xd2, 0xb0,
-        0x2b, 0xc2, 0x8b, 0x99, 0xcb, 0x3e, 0x28, 0x7e, 0x85, 0xa7, 0x63, 0xaf,
-        0x26, 0x74, 0x92, 0xab, 0x57, 0x2e, 0x99, 0xab, 0x3f, 0x37, 0x0d, 0x27,
-        0x5c, 0xec, 0x1d, 0xa1, 0xaa, 0xa9, 0x07, 0x5f, 0xf0, 0x5f, 0x79, 0xbe,
-        0x0c, 0xe5, 0xd5, 0x27, 0x72, 0x7d, 0x6e, 0x11, 0x8c, 0xc9, 0xcd, 0xc6,
-        0xda, 0x2e, 0x35, 0x1a, 0xad, 0xfd, 0x9b, 0xaa, 0x8c, 0xbd, 0xd3, 0xa7,
-        0x6d, 0x42, 0x9a, 0x69, 0x51, 0x60, 0xd1, 0x2c, 0x92, 0x3a, 0xc9, 0xcc,
+        0x13, 0xe0, 0x2b, 0x60, 0x52, 0x71, 0x9f, 0x60, 0x7d, 0xac, 0xd3, 0xa0, 0x88, 0x27, 0x4f,
+        0x65, 0x59, 0x6b, 0xd0, 0xd0, 0x99, 0x20, 0xb6, 0x1a, 0xb5, 0xda, 0x61, 0xbb, 0xdc, 0x7f,
+        0x50, 0x49, 0x33, 0x4c, 0xf1, 0x12, 0x13, 0x94, 0x5d, 0x57, 0xe5, 0xac, 0x7d, 0x05, 0x5d,
+        0x04, 0x2b, 0x7e, 0x02, 0x4a, 0xa2, 0xb2, 0xf0, 0x8f, 0x0a, 0x91, 0x26, 0x08, 0x05, 0x27,
+        0x2d, 0xc5, 0x10, 0x51, 0xc6, 0xe4, 0x7a, 0xd4, 0xfa, 0x40, 0x3b, 0x02, 0xb4, 0x51, 0x0b,
+        0x64, 0x7a, 0xe3, 0xd1, 0x77, 0x0b, 0xac, 0x03, 0x26, 0xa8, 0x05, 0xbb, 0xef, 0xd4, 0x80,
+        0x56, 0xc8, 0xc1, 0x21, 0xbd, 0xb8, 0x06, 0x06, 0xc4, 0xa0, 0x2e, 0xa7, 0x34, 0xcc, 0x32,
+        0xac, 0xd2, 0xb0, 0x2b, 0xc2, 0x8b, 0x99, 0xcb, 0x3e, 0x28, 0x7e, 0x85, 0xa7, 0x63, 0xaf,
+        0x26, 0x74, 0x92, 0xab, 0x57, 0x2e, 0x99, 0xab, 0x3f, 0x37, 0x0d, 0x27, 0x5c, 0xec, 0x1d,
+        0xa1, 0xaa, 0xa9, 0x07, 0x5f, 0xf0, 0x5f, 0x79, 0xbe, 0x0c, 0xe5, 0xd5, 0x27, 0x72, 0x7d,
+        0x6e, 0x11, 0x8c, 0xc9, 0xcd, 0xc6, 0xda, 0x2e, 0x35, 0x1a, 0xad, 0xfd, 0x9b, 0xaa, 0x8c,
+        0xbd, 0xd3, 0xa7, 0x6d, 0x42, 0x9a, 0x69, 0x51, 0x60, 0xd1, 0x2c, 0x92, 0x3a, 0xc9, 0xcc,
         0x3b, 0xac, 0xa2, 0x89, 0xe1, 0x93, 0x54, 0x86, 0x08, 0xb8, 0x28, 0x01,
     ];
     let g1 = Bls12381G1Affine::from_bytes(BytesN::from_array(&env, &g1_bytes));
     let g2 = Bls12381G2Affine::from_bytes(BytesN::from_array(&env, &g2_bytes));
     let mut vp1 = soroban_sdk::Vec::new(&env);
-    vp1.push_back(g1.clone()); vp1.push_back(g1.clone());
+    vp1.push_back(g1.clone());
+    vp1.push_back(g1.clone());
     let mut vp2 = soroban_sdk::Vec::new(&env);
-    vp2.push_back(g2.clone()); vp2.push_back(g2.clone());
+    vp2.push_back(g2.clone());
+    vp2.push_back(g2.clone());
 
     env.cost_estimate().budget().reset_unlimited();
-    env.crypto().bls12_381().pairing_check(vp1.clone(), vp2.clone());
+    env.crypto()
+        .bls12_381()
+        .pairing_check(vp1.clone(), vp2.clone());
     env.crypto().bls12_381().pairing_check(vp1, vp2);
     let pairing_cpu = env.cost_estimate().budget().cpu_instruction_cost();
 
@@ -1745,32 +1865,69 @@ fn test_budget_combined_nonzero_fee_fulfill_estimate() {
     let storage_cpu: u64 = 1_500_000;
 
     // ── Total ──
-    let total_nonzero_fee = pairing_cpu + neg_cpu + transfer_cpu
-        + ed25519_cpu + hash_g1_cpu + storage_cpu;
+    let total_nonzero_fee =
+        pairing_cpu + neg_cpu + transfer_cpu + ed25519_cpu + hash_g1_cpu + storage_cpu;
 
     std::println!("╔══════════════════════════════════════════════════════════╗");
     std::println!("║  COMPOSITE NONZERO-FEE FULFILL() CPU ESTIMATE           ║");
     std::println!("╠══════════════════════════════════════════════════════════╣");
-    std::println!("║  BLS pairing × 2:       {:>12} instructions       ║", pairing_cpu);
-    std::println!("║  G1 negation × 2:       {:>12} instructions       ║", neg_cpu);
-    std::println!("║  SAC transfer (fee):    {:>12} instructions       ║", transfer_cpu);
-    std::println!("║  Ed25519 verify:        {:>12} instructions (est) ║", ed25519_cpu);
-    std::println!("║  hash_to_g1 × 2:        {:>12} instructions       ║", hash_g1_cpu);
-    std::println!("║  Storage R/W + TTL:     {:>12} instructions (est) ║", storage_cpu);
+    std::println!(
+        "║  BLS pairing × 2:       {:>12} instructions       ║",
+        pairing_cpu
+    );
+    std::println!(
+        "║  G1 negation × 2:       {:>12} instructions       ║",
+        neg_cpu
+    );
+    std::println!(
+        "║  SAC transfer (fee):    {:>12} instructions       ║",
+        transfer_cpu
+    );
+    std::println!(
+        "║  Ed25519 verify:        {:>12} instructions (est) ║",
+        ed25519_cpu
+    );
+    std::println!(
+        "║  hash_to_g1 × 2:        {:>12} instructions       ║",
+        hash_g1_cpu
+    );
+    std::println!(
+        "║  Storage R/W + TTL:     {:>12} instructions (est) ║",
+        storage_cpu
+    );
     std::println!("╠══════════════════════════════════════════════════════════╣");
-    std::println!("║  TOTAL (composite est): {:>12} instructions       ║", total_nonzero_fee);
-    std::println!("║  Mainnet Protocol Limit: {:>11} instructions       ║", 400_000_000u64);
-    std::println!("║  Project / SCF Target:  {:>12} instructions       ║", 75_000_000u64);
-    std::println!("║  Headroom under target: {:>11.1}%                    ║",
-        (1.0 - total_nonzero_fee as f64 / 75_000_000.0) * 100.0);
-    std::println!("║  Headroom under 400M:   {:>11.1}%                    ║",
-        (1.0 - total_nonzero_fee as f64 / 400_000_000.0) * 100.0);
+    std::println!(
+        "║  TOTAL (composite est): {:>12} instructions       ║",
+        total_nonzero_fee
+    );
+    std::println!(
+        "║  Mainnet Protocol Limit: {:>11} instructions       ║",
+        400_000_000u64
+    );
+    std::println!(
+        "║  Project / SCF Target:  {:>12} instructions       ║",
+        75_000_000u64
+    );
+    std::println!(
+        "║  Headroom under target: {:>11.1}%                    ║",
+        (1.0 - total_nonzero_fee as f64 / 75_000_000.0) * 100.0
+    );
+    std::println!(
+        "║  Headroom under 400M:   {:>11.1}%                    ║",
+        (1.0 - total_nonzero_fee as f64 / 400_000_000.0) * 100.0
+    );
     std::println!("╚══════════════════════════════════════════════════════════╝");
 
-    assert!(total_nonzero_fee < 400_000_000,
-        "Nonzero-fee fulfill() exceeds Soroban 400M protocol limit: {}", total_nonzero_fee);
-    assert!(total_nonzero_fee < 75_000_000,
-        "Nonzero-fee fulfill() exceeds SCF 75M target: {}", total_nonzero_fee);
+    assert!(
+        total_nonzero_fee < 400_000_000,
+        "Nonzero-fee fulfill() exceeds Soroban 400M protocol limit: {}",
+        total_nonzero_fee
+    );
+    assert!(
+        total_nonzero_fee < 75_000_000,
+        "Nonzero-fee fulfill() exceeds SCF 75M target: {}",
+        total_nonzero_fee
+    );
 }
 
 /// Proves cross-request replay protection:
@@ -1787,7 +1944,7 @@ fn test_budget_combined_nonzero_fee_fulfill_estimate() {
 #[test]
 #[should_panic(expected = "failed ED25519 verification")]
 fn test_cross_request_replay_rejected() {
-    use ed25519_dalek::{SigningKey, Signer};
+    use ed25519_dalek::{Signer, SigningKey};
     use rand::rngs::OsRng;
 
     let env = Env::default();
@@ -1797,7 +1954,6 @@ fn test_cross_request_replay_rejected() {
     let signing_key = SigningKey::generate(&mut OsRng);
     let verifying_key = signing_key.verifying_key();
     let ed25519_pk_bytes: [u8; 32] = verifying_key.to_bytes();
-
 
     let oracle_addr = Address::generate(&env);
     let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
@@ -1911,7 +2067,9 @@ fn test_future_round_boundary_enforcement() {
         assert!(
             required_round > current_round,
             "Violation at timestamp {}: required_round ({}) must be > current_round ({})",
-            ts, required_round, current_round
+            ts,
+            required_round,
+            current_round
         );
 
         assert!(
@@ -1971,7 +2129,10 @@ fn test_drand_round_vectors_quicknet() {
     assert_eq!(crate::compute_current_round(1_000 + 3, 1_000, 2), 2);
     assert_eq!(crate::compute_current_round(1_000 + 4, 1_000, 2), 3);
     // Degenerate period never divides by zero.
-    assert_eq!(crate::compute_current_round(QN_GENESIS + 10, QN_GENESIS, 0), 0);
+    assert_eq!(
+        crate::compute_current_round(QN_GENESIS + 10, QN_GENESIS, 0),
+        0
+    );
 }
 
 /// The round a request is bound to must be emitted strictly after the request
@@ -2075,7 +2236,6 @@ fn test_timeout_refund_allowed_first_second_after_boundary() {
     assert!(client.is_refunded(&id));
 }
 
-
 // ── Callback-griefing isolation (audit round 4, finding #1) ──────────────────
 
 mod griefing_consumer {
@@ -2090,12 +2250,17 @@ mod griefing_consumer {
         /// reverted the entire `fulfill()` transaction, so the oracle paid network
         /// fees on every retry and never got the escrowed request fee.
         pub fn on_vrf(env: Env, _request_id: u64, _beta: BytesN<32>, _alpha: BytesN<32>) {
-            env.storage().instance().set(&symbol_short!("touched"), &true);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("touched"), &true);
             panic!("griefing consumer: refusing randomness");
         }
 
         pub fn touched(env: Env) -> bool {
-            env.storage().instance().get(&symbol_short!("touched")).unwrap_or(false)
+            env.storage()
+                .instance()
+                .get(&symbol_short!("touched"))
+                .unwrap_or(false)
         }
     }
 }
@@ -2200,7 +2365,15 @@ fn setup_fixture_callback_request(
         drand_signature: BytesN::from_array(env, &PROOF_DRAND_SIG),
     };
     let signature = BytesN::from_array(env, &PROOF_ED25519_SIG);
-    (client, vrf_id, token, oracle_addr, proof, signature, fee_amount)
+    (
+        client,
+        vrf_id,
+        token,
+        oracle_addr,
+        proof,
+        signature,
+        fee_amount,
+    )
 }
 
 /// A consumer whose `on_vrf()` panics can no longer revert `fulfill()`:
@@ -2221,19 +2394,40 @@ fn test_panicking_callback_does_not_revert_fulfill() {
 
     client.fulfill(&1u64, &proof, &signature);
 
-    assert!(has_contract_event(&env, &vrf_id, "cb_failed"), "cb_failed event emitted");
-    assert!(has_contract_event(&env, &vrf_id, "fulfill"), "fulfill event still emitted");
-    assert!(client.is_fulfilled(&1u64), "request fulfilled despite callback panic");
-    assert_eq!(client.get_proof(&1u64).beta_output, BytesN::from_array(&env, &PROOF_BETA));
+    assert!(
+        has_contract_event(&env, &vrf_id, "cb_failed"),
+        "cb_failed event emitted"
+    );
+    assert!(
+        has_contract_event(&env, &vrf_id, "fulfill"),
+        "fulfill event still emitted"
+    );
+    assert!(
+        client.is_fulfilled(&1u64),
+        "request fulfilled despite callback panic"
+    );
+    assert_eq!(
+        client.get_proof(&1u64).beta_output,
+        BytesN::from_array(&env, &PROOF_BETA)
+    );
     assert_eq!(token.balance(&oracle_addr), fee, "oracle fee released");
     assert_eq!(token.balance(&vrf_id), 0, "escrow drained");
-    assert!(!consumer_client.touched(), "failed callback's own writes are rolled back");
+    assert!(
+        !consumer_client.touched(),
+        "failed callback's own writes are rolled back"
+    );
 
     // Re-entrancy guard is cleared; replay is still rejected by the Fulfilled check.
     env.as_contract(&vrf_id, || {
-        assert!(!env.storage().persistent().has(&crate::DataKey::Fulfilling(1u64)));
+        assert!(!env
+            .storage()
+            .persistent()
+            .has(&crate::DataKey::Fulfilling(1u64)));
     });
-    assert!(client.try_fulfill(&1u64, &proof, &signature).is_err(), "replay rejected");
+    assert!(
+        client.try_fulfill(&1u64, &proof, &signature).is_err(),
+        "replay rejected"
+    );
 }
 
 /// A well-behaved consumer still receives the callback and no `cb_failed`
@@ -2253,7 +2447,10 @@ fn test_honest_callback_receives_output_without_failure_event() {
     assert!(!has_contract_event(&env, &vrf_id, "cb_failed"));
     assert!(has_contract_event(&env, &vrf_id, "fulfill"));
     assert!(client.is_fulfilled(&1u64));
-    assert_eq!(consumer_client.beta(), Some(BytesN::from_array(&env, &PROOF_BETA)));
+    assert_eq!(
+        consumer_client.beta(),
+        Some(BytesN::from_array(&env, &PROOF_BETA))
+    );
     assert_eq!(token.balance(&oracle_addr), fee);
 }
 
@@ -2292,7 +2489,9 @@ fn event_data_xdr(env: &Env, contract: &Address, topic: &str) -> alloc::vec::Vec
         .rev()
         .find_map(|e| match &e.body {
             ContractEventBody::V0(v0) => match v0.topics.first() {
-                Some(ScVal::Symbol(s)) if s.0.as_slice() == topic.as_bytes() => Some(v0.data.clone()),
+                Some(ScVal::Symbol(s)) if s.0.as_slice() == topic.as_bytes() => {
+                    Some(v0.data.clone())
+                }
                 _ => None,
             },
         })
@@ -2305,7 +2504,10 @@ fn test_request_event_wire_format_matches_sdk_vector() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_with_chain(&env, QN_GENESIS, QN_PERIOD);
-    let requester = Address::from_str(&env, "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M");
+    let requester = Address::from_str(
+        &env,
+        "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M",
+    );
     env.ledger().set_timestamp(qn_time_of_round(32_427_718));
     let id = client.request(&Bytes::from_slice(&env, b"wire"), &requester);
     // Read the event before any other invocation: the test env keeps only the
@@ -2323,7 +2525,10 @@ fn test_fulfill_event_wire_format_matches_sdk_vector() {
     let (client, vrf_id, _token, _oracle, proof, signature, _fee) =
         setup_fixture_callback_request(&env, &consumer);
     client.fulfill(&1u64, &proof, &signature);
-    assert_eq!(event_data_xdr(&env, &vrf_id, "fulfill"), hex_bytes(EVT_FULFILL_XDR_HEX));
+    assert_eq!(
+        event_data_xdr(&env, &vrf_id, "fulfill"),
+        hex_bytes(EVT_FULFILL_XDR_HEX)
+    );
 }
 
 // -- Shared quicknet fixture (valid proof for request #1, round 32427720) --
@@ -2333,26 +2538,67 @@ const FIX_ROUND_OFFSET: u32 = 2;
 const FIX_TARGET_ROUND: u64 = 32_427_720;
 const FIX_CONTEXT: &[u8] = b"Nonzero-fee Mainnet CPU Profiling 2026";
 const FIX_DRAND_PK: [u8; 192] = [
-        0x03, 0xcf, 0x0f, 0x28, 0x96, 0xad, 0xee, 0x7e, 0xb8, 0xb5, 0xf0, 0x1f, 0xca, 0xd3, 0x91, 0x22,
-        0x12, 0xc4, 0x37, 0xe0, 0x07, 0x3e, 0x91, 0x1f, 0xb9, 0x00, 0x22, 0xd3, 0xe7, 0x60, 0x18, 0x3c,
-        0x8c, 0x4b, 0x45, 0x0b, 0x6a, 0x0a, 0x6c, 0x3a, 0xc6, 0xa5, 0x77, 0x6a, 0x2d, 0x10, 0x64, 0x51,
-        0x0d, 0x1f, 0xec, 0x75, 0x8c, 0x92, 0x1c, 0xc2, 0x2b, 0x0e, 0x17, 0xe6, 0x3a, 0xaf, 0x4b, 0xcb,
-        0x5e, 0xd6, 0x63, 0x04, 0xde, 0x9c, 0xf8, 0x09, 0xbd, 0x27, 0x4c, 0xa7, 0x3b, 0xab, 0x4a, 0xf5,
-        0xa6, 0xe9, 0xc7, 0x6a, 0x4b, 0xc0, 0x9e, 0x76, 0xea, 0xe8, 0x99, 0x1e, 0xf5, 0xec, 0xe4, 0x5a,
-        0x01, 0xa7, 0x14, 0xf2, 0xed, 0xb7, 0x41, 0x19, 0xa2, 0xf2, 0xb0, 0xd5, 0xa7, 0xc7, 0x5b, 0xa9,
-        0x02, 0xd1, 0x63, 0x70, 0x0a, 0x61, 0xbc, 0x22, 0x4e, 0xde, 0xdd, 0x8e, 0x63, 0xae, 0xf7, 0xbe,
-        0x1a, 0xaf, 0x8e, 0x93, 0xd7, 0xa9, 0x71, 0x8b, 0x04, 0x7c, 0xcd, 0xdb, 0x3e, 0xb5, 0xd6, 0x8b,
-        0x0e, 0x5d, 0xb2, 0xb6, 0xbf, 0xbb, 0x01, 0xc8, 0x67, 0x74, 0x9c, 0xad, 0xff, 0xca, 0x88, 0xb3,
-        0x6c, 0x24, 0xf3, 0x01, 0x2b, 0xa0, 0x9f, 0xc4, 0xd3, 0x02, 0x2c, 0x5c, 0x37, 0xdc, 0xe0, 0xf9,
-        0x77, 0xd3, 0xad, 0xb5, 0xd1, 0x83, 0xc7, 0x47, 0x7c, 0x44, 0x2b, 0x1f, 0x04, 0x51, 0x52, 0x73,
+    0x03, 0xcf, 0x0f, 0x28, 0x96, 0xad, 0xee, 0x7e, 0xb8, 0xb5, 0xf0, 0x1f, 0xca, 0xd3, 0x91, 0x22,
+    0x12, 0xc4, 0x37, 0xe0, 0x07, 0x3e, 0x91, 0x1f, 0xb9, 0x00, 0x22, 0xd3, 0xe7, 0x60, 0x18, 0x3c,
+    0x8c, 0x4b, 0x45, 0x0b, 0x6a, 0x0a, 0x6c, 0x3a, 0xc6, 0xa5, 0x77, 0x6a, 0x2d, 0x10, 0x64, 0x51,
+    0x0d, 0x1f, 0xec, 0x75, 0x8c, 0x92, 0x1c, 0xc2, 0x2b, 0x0e, 0x17, 0xe6, 0x3a, 0xaf, 0x4b, 0xcb,
+    0x5e, 0xd6, 0x63, 0x04, 0xde, 0x9c, 0xf8, 0x09, 0xbd, 0x27, 0x4c, 0xa7, 0x3b, 0xab, 0x4a, 0xf5,
+    0xa6, 0xe9, 0xc7, 0x6a, 0x4b, 0xc0, 0x9e, 0x76, 0xea, 0xe8, 0x99, 0x1e, 0xf5, 0xec, 0xe4, 0x5a,
+    0x01, 0xa7, 0x14, 0xf2, 0xed, 0xb7, 0x41, 0x19, 0xa2, 0xf2, 0xb0, 0xd5, 0xa7, 0xc7, 0x5b, 0xa9,
+    0x02, 0xd1, 0x63, 0x70, 0x0a, 0x61, 0xbc, 0x22, 0x4e, 0xde, 0xdd, 0x8e, 0x63, 0xae, 0xf7, 0xbe,
+    0x1a, 0xaf, 0x8e, 0x93, 0xd7, 0xa9, 0x71, 0x8b, 0x04, 0x7c, 0xcd, 0xdb, 0x3e, 0xb5, 0xd6, 0x8b,
+    0x0e, 0x5d, 0xb2, 0xb6, 0xbf, 0xbb, 0x01, 0xc8, 0x67, 0x74, 0x9c, 0xad, 0xff, 0xca, 0x88, 0xb3,
+    0x6c, 0x24, 0xf3, 0x01, 0x2b, 0xa0, 0x9f, 0xc4, 0xd3, 0x02, 0x2c, 0x5c, 0x37, 0xdc, 0xe0, 0xf9,
+    0x77, 0xd3, 0xad, 0xb5, 0xd1, 0x83, 0xc7, 0x47, 0x7c, 0x44, 0x2b, 0x1f, 0x04, 0x51, 0x52, 0x73,
 ];
-const PROOF_ALPHA: [u8; 32] = [0x58, 0x34, 0xb6, 0x43, 0xd1, 0x19, 0x9c, 0x0b, 0xe5, 0x61, 0x09, 0x97, 0xe5, 0x29, 0x77, 0x08, 0x22, 0x24, 0xde, 0x28, 0xbb, 0x28, 0x5d, 0x23, 0x84, 0x46, 0x13, 0x61, 0xb4, 0x10, 0xc6, 0x22];
-const PROOF_GAMMA: [u8; 96] = [0x17, 0x9c, 0xb0, 0xc3, 0x90, 0xd0, 0x79, 0x7e, 0x1d, 0x23, 0x54, 0xd2, 0xb8, 0xdc, 0xc5, 0x3d, 0x9d, 0xad, 0xab, 0x50, 0xd1, 0x15, 0xaf, 0x06, 0xa0, 0xf8, 0xdb, 0xa0, 0xc0, 0x0e, 0xe2, 0x4a, 0x0e, 0xc2, 0xa0, 0x93, 0xda, 0x21, 0x52, 0xb2, 0xa1, 0x95, 0x6d, 0x40, 0xfe, 0x42, 0xbe, 0x80, 0x05, 0xab, 0x4c, 0x58, 0x56, 0xe8, 0x8b, 0x20, 0x8a, 0xfd, 0x8a, 0x74, 0x3f, 0x8e, 0xff, 0xc0, 0x19, 0xba, 0x09, 0x7b, 0x3f, 0xdb, 0x46, 0x8c, 0x1f, 0x89, 0xc4, 0x2b, 0x86, 0xec, 0x89, 0x9c, 0x9e, 0xc3, 0x9d, 0x63, 0x8c, 0xec, 0x8b, 0xf8, 0xe2, 0x8b, 0x10, 0x01, 0x42, 0xf9, 0x47, 0x66];
-const PROOF_BETA: [u8; 32] = [0x98, 0xc6, 0x12, 0xab, 0xed, 0x13, 0x16, 0x31, 0x47, 0x23, 0x9f, 0x43, 0x23, 0xd4, 0x97, 0x3c, 0xb6, 0x8d, 0xf7, 0x30, 0x25, 0x64, 0xfc, 0x79, 0x1e, 0x17, 0xc1, 0xaa, 0xe9, 0x5a, 0x6c, 0x9d];
-const PROOF_DRAND_SIG: [u8; 96] = [0x04, 0xd8, 0x55, 0xb2, 0xde, 0x9c, 0x5c, 0x21, 0xee, 0x03, 0x90, 0xb2, 0xb9, 0x18, 0x02, 0x96, 0xa9, 0x19, 0xa1, 0xaf, 0x43, 0x51, 0xca, 0xc6, 0xfd, 0x20, 0x00, 0x7b, 0xa1, 0xc6, 0x10, 0xe0, 0x1e, 0x5b, 0xd0, 0xeb, 0x7d, 0xc5, 0x6a, 0x79, 0x3c, 0x60, 0x2d, 0x79, 0x42, 0xbc, 0x0b, 0x3d, 0x15, 0x76, 0x22, 0x83, 0xeb, 0x6a, 0x04, 0x5c, 0x59, 0xc0, 0xb7, 0x88, 0xae, 0x34, 0xea, 0xfc, 0xdd, 0x6d, 0xd0, 0x87, 0x7a, 0xa5, 0x24, 0xf1, 0x8c, 0xab, 0x25, 0x84, 0x4d, 0xf9, 0x7b, 0x09, 0xb0, 0x66, 0x0c, 0x2a, 0x92, 0xca, 0x2a, 0x28, 0x83, 0x0a, 0x94, 0x81, 0x96, 0xbb, 0xeb, 0x92];
-const PROOF_ORACLE_PK: [u8; 192] = [0x0e, 0xb7, 0xe2, 0xdd, 0xf2, 0x81, 0xbd, 0x96, 0xd8, 0x19, 0x88, 0xe1, 0xed, 0x03, 0x18, 0xc7, 0xd4, 0x81, 0xf4, 0x79, 0x04, 0x8a, 0xf7, 0xab, 0x03, 0x85, 0x57, 0x50, 0x8c, 0x6a, 0x04, 0x68, 0xec, 0x17, 0x4a, 0x22, 0x7e, 0x93, 0xde, 0xed, 0x4a, 0xa9, 0xd4, 0x8f, 0x22, 0xe0, 0x07, 0x54, 0x16, 0x4a, 0xc0, 0x2f, 0xa3, 0x93, 0x7a, 0x68, 0xd4, 0x16, 0x2d, 0x01, 0x59, 0x58, 0x13, 0x94, 0x18, 0x85, 0x3e, 0x47, 0x05, 0xc8, 0x43, 0x30, 0x56, 0x86, 0xd8, 0x01, 0x7c, 0x7d, 0x5a, 0x8c, 0xc6, 0x15, 0x79, 0x97, 0x3f, 0x9d, 0xdc, 0x5b, 0x5d, 0x1d, 0x58, 0x30, 0x7e, 0xc5, 0x55, 0x66, 0x0f, 0x71, 0xeb, 0x42, 0x29, 0x73, 0x19, 0xaa, 0x7e, 0x2b, 0x8b, 0x45, 0xad, 0x45, 0xfb, 0xa9, 0x33, 0xdd, 0x5e, 0x9b, 0x24, 0x53, 0xf8, 0x07, 0x55, 0xb3, 0x75, 0xf2, 0x6f, 0x9a, 0x87, 0xc5, 0xef, 0x3f, 0x8e, 0x11, 0xc6, 0x71, 0x11, 0x03, 0x78, 0x9d, 0x9c, 0xc4, 0x46, 0x41, 0xe1, 0x11, 0x00, 0x38, 0x27, 0x2b, 0x39, 0xaa, 0xfb, 0x99, 0x7f, 0x3e, 0xb0, 0x7e, 0xf4, 0x94, 0x36, 0x0e, 0xfe, 0xb3, 0x4f, 0x4e, 0x1c, 0x2b, 0xdd, 0x93, 0x76, 0x36, 0xba, 0xcb, 0x5d, 0x01, 0x9a, 0xae, 0xe6, 0xff, 0x75, 0xf4, 0xc1, 0x6b, 0x3b, 0xd2, 0x81, 0x4e, 0x13, 0x11, 0xf6, 0xc3, 0x38, 0x3d];
-const PROOF_ED25519_SIG: [u8; 64] = [0xd7, 0x5e, 0x64, 0x96, 0xd3, 0x24, 0x61, 0xe4, 0xc0, 0x8a, 0x22, 0xce, 0x29, 0xb4, 0x4b, 0xfe, 0x37, 0x45, 0x44, 0x28, 0xf7, 0x28, 0x17, 0xeb, 0xbe, 0x9e, 0xf0, 0xcd, 0xfa, 0x1a, 0x3d, 0x4d, 0x65, 0xcc, 0x4a, 0xa8, 0x0d, 0x90, 0x88, 0x75, 0x5f, 0x52, 0x00, 0x2c, 0x8d, 0x28, 0x0e, 0x24, 0xdd, 0xff, 0x80, 0x65, 0xf3, 0xe8, 0x9b, 0xc7, 0x43, 0x13, 0x76, 0xb2, 0x3f, 0xd3, 0x19, 0x0a];
-const ORACLE_ED25519_PK: [u8; 32] = [0x3c, 0x7c, 0x02, 0xb6, 0x7d, 0x5d, 0x50, 0xf2, 0xe9, 0x39, 0xa9, 0x99, 0x0c, 0xf1, 0xae, 0x1c, 0xa5, 0xbe, 0x9c, 0x48, 0x0f, 0x87, 0xdf, 0x31, 0x92, 0x6c, 0xed, 0x3d, 0x9c, 0x3c, 0x84, 0xd5];
+const PROOF_ALPHA: [u8; 32] = [
+    0x58, 0x34, 0xb6, 0x43, 0xd1, 0x19, 0x9c, 0x0b, 0xe5, 0x61, 0x09, 0x97, 0xe5, 0x29, 0x77, 0x08,
+    0x22, 0x24, 0xde, 0x28, 0xbb, 0x28, 0x5d, 0x23, 0x84, 0x46, 0x13, 0x61, 0xb4, 0x10, 0xc6, 0x22,
+];
+const PROOF_GAMMA: [u8; 96] = [
+    0x17, 0x9c, 0xb0, 0xc3, 0x90, 0xd0, 0x79, 0x7e, 0x1d, 0x23, 0x54, 0xd2, 0xb8, 0xdc, 0xc5, 0x3d,
+    0x9d, 0xad, 0xab, 0x50, 0xd1, 0x15, 0xaf, 0x06, 0xa0, 0xf8, 0xdb, 0xa0, 0xc0, 0x0e, 0xe2, 0x4a,
+    0x0e, 0xc2, 0xa0, 0x93, 0xda, 0x21, 0x52, 0xb2, 0xa1, 0x95, 0x6d, 0x40, 0xfe, 0x42, 0xbe, 0x80,
+    0x05, 0xab, 0x4c, 0x58, 0x56, 0xe8, 0x8b, 0x20, 0x8a, 0xfd, 0x8a, 0x74, 0x3f, 0x8e, 0xff, 0xc0,
+    0x19, 0xba, 0x09, 0x7b, 0x3f, 0xdb, 0x46, 0x8c, 0x1f, 0x89, 0xc4, 0x2b, 0x86, 0xec, 0x89, 0x9c,
+    0x9e, 0xc3, 0x9d, 0x63, 0x8c, 0xec, 0x8b, 0xf8, 0xe2, 0x8b, 0x10, 0x01, 0x42, 0xf9, 0x47, 0x66,
+];
+const PROOF_BETA: [u8; 32] = [
+    0x98, 0xc6, 0x12, 0xab, 0xed, 0x13, 0x16, 0x31, 0x47, 0x23, 0x9f, 0x43, 0x23, 0xd4, 0x97, 0x3c,
+    0xb6, 0x8d, 0xf7, 0x30, 0x25, 0x64, 0xfc, 0x79, 0x1e, 0x17, 0xc1, 0xaa, 0xe9, 0x5a, 0x6c, 0x9d,
+];
+const PROOF_DRAND_SIG: [u8; 96] = [
+    0x04, 0xd8, 0x55, 0xb2, 0xde, 0x9c, 0x5c, 0x21, 0xee, 0x03, 0x90, 0xb2, 0xb9, 0x18, 0x02, 0x96,
+    0xa9, 0x19, 0xa1, 0xaf, 0x43, 0x51, 0xca, 0xc6, 0xfd, 0x20, 0x00, 0x7b, 0xa1, 0xc6, 0x10, 0xe0,
+    0x1e, 0x5b, 0xd0, 0xeb, 0x7d, 0xc5, 0x6a, 0x79, 0x3c, 0x60, 0x2d, 0x79, 0x42, 0xbc, 0x0b, 0x3d,
+    0x15, 0x76, 0x22, 0x83, 0xeb, 0x6a, 0x04, 0x5c, 0x59, 0xc0, 0xb7, 0x88, 0xae, 0x34, 0xea, 0xfc,
+    0xdd, 0x6d, 0xd0, 0x87, 0x7a, 0xa5, 0x24, 0xf1, 0x8c, 0xab, 0x25, 0x84, 0x4d, 0xf9, 0x7b, 0x09,
+    0xb0, 0x66, 0x0c, 0x2a, 0x92, 0xca, 0x2a, 0x28, 0x83, 0x0a, 0x94, 0x81, 0x96, 0xbb, 0xeb, 0x92,
+];
+const PROOF_ORACLE_PK: [u8; 192] = [
+    0x0e, 0xb7, 0xe2, 0xdd, 0xf2, 0x81, 0xbd, 0x96, 0xd8, 0x19, 0x88, 0xe1, 0xed, 0x03, 0x18, 0xc7,
+    0xd4, 0x81, 0xf4, 0x79, 0x04, 0x8a, 0xf7, 0xab, 0x03, 0x85, 0x57, 0x50, 0x8c, 0x6a, 0x04, 0x68,
+    0xec, 0x17, 0x4a, 0x22, 0x7e, 0x93, 0xde, 0xed, 0x4a, 0xa9, 0xd4, 0x8f, 0x22, 0xe0, 0x07, 0x54,
+    0x16, 0x4a, 0xc0, 0x2f, 0xa3, 0x93, 0x7a, 0x68, 0xd4, 0x16, 0x2d, 0x01, 0x59, 0x58, 0x13, 0x94,
+    0x18, 0x85, 0x3e, 0x47, 0x05, 0xc8, 0x43, 0x30, 0x56, 0x86, 0xd8, 0x01, 0x7c, 0x7d, 0x5a, 0x8c,
+    0xc6, 0x15, 0x79, 0x97, 0x3f, 0x9d, 0xdc, 0x5b, 0x5d, 0x1d, 0x58, 0x30, 0x7e, 0xc5, 0x55, 0x66,
+    0x0f, 0x71, 0xeb, 0x42, 0x29, 0x73, 0x19, 0xaa, 0x7e, 0x2b, 0x8b, 0x45, 0xad, 0x45, 0xfb, 0xa9,
+    0x33, 0xdd, 0x5e, 0x9b, 0x24, 0x53, 0xf8, 0x07, 0x55, 0xb3, 0x75, 0xf2, 0x6f, 0x9a, 0x87, 0xc5,
+    0xef, 0x3f, 0x8e, 0x11, 0xc6, 0x71, 0x11, 0x03, 0x78, 0x9d, 0x9c, 0xc4, 0x46, 0x41, 0xe1, 0x11,
+    0x00, 0x38, 0x27, 0x2b, 0x39, 0xaa, 0xfb, 0x99, 0x7f, 0x3e, 0xb0, 0x7e, 0xf4, 0x94, 0x36, 0x0e,
+    0xfe, 0xb3, 0x4f, 0x4e, 0x1c, 0x2b, 0xdd, 0x93, 0x76, 0x36, 0xba, 0xcb, 0x5d, 0x01, 0x9a, 0xae,
+    0xe6, 0xff, 0x75, 0xf4, 0xc1, 0x6b, 0x3b, 0xd2, 0x81, 0x4e, 0x13, 0x11, 0xf6, 0xc3, 0x38, 0x3d,
+];
+const PROOF_ED25519_SIG: [u8; 64] = [
+    0xd7, 0x5e, 0x64, 0x96, 0xd3, 0x24, 0x61, 0xe4, 0xc0, 0x8a, 0x22, 0xce, 0x29, 0xb4, 0x4b, 0xfe,
+    0x37, 0x45, 0x44, 0x28, 0xf7, 0x28, 0x17, 0xeb, 0xbe, 0x9e, 0xf0, 0xcd, 0xfa, 0x1a, 0x3d, 0x4d,
+    0x65, 0xcc, 0x4a, 0xa8, 0x0d, 0x90, 0x88, 0x75, 0x5f, 0x52, 0x00, 0x2c, 0x8d, 0x28, 0x0e, 0x24,
+    0xdd, 0xff, 0x80, 0x65, 0xf3, 0xe8, 0x9b, 0xc7, 0x43, 0x13, 0x76, 0xb2, 0x3f, 0xd3, 0x19, 0x0a,
+];
+const ORACLE_ED25519_PK: [u8; 32] = [
+    0x3c, 0x7c, 0x02, 0xb6, 0x7d, 0x5d, 0x50, 0xf2, 0xe9, 0x39, 0xa9, 0x99, 0x0c, 0xf1, 0xae, 0x1c,
+    0xa5, 0xbe, 0x9c, 0x48, 0x0f, 0x87, 0xdf, 0x31, 0x92, 0x6c, 0xed, 0x3d, 0x9c, 0x3c, 0x84, 0xd5,
+];
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Audit round 5
@@ -2362,7 +2608,9 @@ const ORACLE_ED25519_PK: [u8; 32] = [0x3c, 0x7c, 0x02, 0xb6, 0x7d, 0x5d, 0x50, 0
 fn seed_beta(env: &Env, client: &VRFOracleContractClient<'static>, id: u64, beta: [u8; 32]) {
     use crate::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
         env.storage()
             .persistent()
             .set(&DataKey::Beta(id), &BytesN::from_array(env, &beta));
@@ -2387,7 +2635,10 @@ fn hash_from_halves(c1: u128, c2: u128) -> [u8; 32] {
 fn test_reduce_uniform_uses_first_candidate_when_accepted() {
     let max = 1_000_003u64;
     let h = hash_from_halves(123_456_789, 42);
-    assert_eq!(crate::reduce_uniform(&h, max), (123_456_789u128 % max as u128) as u64);
+    assert_eq!(
+        crate::reduce_uniform(&h, max),
+        (123_456_789u128 % max as u128) as u64
+    );
 }
 
 #[test]
@@ -2408,7 +2659,11 @@ fn test_reduce_uniform_limit_boundary() {
     let h = hash_from_halves(last_accepted, 0);
     assert_eq!(crate::reduce_uniform(&h, max), (last_accepted % 3) as u64);
     let h = hash_from_halves(u128::MAX, 5);
-    assert_eq!(crate::reduce_uniform(&h, max), 2, "limit rejected, second half used");
+    assert_eq!(
+        crate::reduce_uniform(&h, max),
+        2,
+        "limit rejected, second half used"
+    );
 }
 
 #[test]
@@ -2425,7 +2680,10 @@ fn test_reduce_uniform_power_of_two_never_rejects() {
         let max = 1u64 << shift;
         assert_eq!(pow128_mod(max), 0);
         let h = hash_from_halves(u128::MAX, u128::MAX);
-        assert_eq!(crate::reduce_uniform(&h, max), (u128::MAX % max as u128) as u64);
+        assert_eq!(
+            crate::reduce_uniform(&h, max),
+            (u128::MAX % max as u128) as u64
+        );
     }
 }
 
@@ -2441,7 +2699,11 @@ fn test_reduce_uniform_model_is_exactly_uniform() {
         for c in 0..limit {
             counts[(c % max) as usize] += 1;
         }
-        assert!(counts.iter().all(|&n| n == counts[0]), "bias for max={}", max);
+        assert!(
+            counts.iter().all(|&n| n == counts[0]),
+            "bias for max={}",
+            max
+        );
         assert_eq!(limit % max, 0);
     }
     // And the full-width limit is a whole number of cycles.
@@ -2457,7 +2719,20 @@ fn test_derive_random_in_range_many_moduli_in_range() {
     let requester = Address::generate(&env);
     let id = client.request(&Bytes::from_slice(&env, b"moduli"), &requester);
     seed_beta(&env, &client, id, [0x5Au8; 32]);
-    for max in [1u64, 2, 3, 5, 6, 7, 10, 100, 1 << 32, (1 << 63) + 1, u64::MAX - 1, u64::MAX] {
+    for max in [
+        1u64,
+        2,
+        3,
+        5,
+        6,
+        7,
+        10,
+        100,
+        1 << 32,
+        (1 << 63) + 1,
+        u64::MAX - 1,
+        u64::MAX,
+    ] {
         let v = client.derive_random_in_range(&id, &max);
         assert!(v < max, "{} >= {}", v, max);
     }
@@ -2468,8 +2743,11 @@ fn test_derive_random_in_range_many_moduli_in_range() {
 /// and were computed independently with Node's crypto module.
 pub(crate) const VEC_REQUEST_ID: u64 = 7;
 pub(crate) const VEC_U64: u64 = 17_155_214_937_666_214_782;
-pub(crate) const VEC_RANGE: [(u64, u64); 3] =
-    [(6, 4), (1_000_000, 889_164), (u64::MAX, 11_798_261_183_955_500_607)];
+pub(crate) const VEC_RANGE: [(u64, u64); 3] = [
+    (6, 4),
+    (1_000_000, 889_164),
+    (u64::MAX, 11_798_261_183_955_500_607),
+];
 pub(crate) const VEC_DOMAIN_CARD1_1000: u64 = 595;
 
 #[test]
@@ -2487,7 +2765,12 @@ fn test_derive_vectors_shared_with_sdks() {
     seed_beta(&env, &client, id, beta);
     assert_eq!(client.derive_random(&id), VEC_U64);
     for (max, want) in VEC_RANGE {
-        assert_eq!(client.derive_random_in_range(&id, &max), want, "max={}", max);
+        assert_eq!(
+            client.derive_random_in_range(&id, &max),
+            want,
+            "max={}",
+            max
+        );
     }
     let d = client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-1"), &1000u64);
     assert_eq!(d, VEC_DOMAIN_CARD1_1000);
@@ -2501,7 +2784,10 @@ fn test_derive_is_deterministic_without_context() {
     let requester = Address::generate(&env);
     let id = client.request(&Bytes::from_slice(&env, b"no-grind"), &requester);
     seed_beta(&env, &client, id, [0x77u8; 32]);
-    assert_eq!(client.derive_random_in_range(&id, &1000u64), client.derive_random_in_range(&id, &1000u64));
+    assert_eq!(
+        client.derive_random_in_range(&id, &1000u64),
+        client.derive_random_in_range(&id, &1000u64)
+    );
     assert_eq!(client.derive_random(&id), client.derive_random(&id));
 }
 
@@ -2519,7 +2805,10 @@ fn test_derive_range_for_domain_separates_draws() {
     assert_ne!(d1, d2);
     assert_ne!(d1, plain);
     assert_ne!(empty, plain, "empty domain still separated by tag");
-    assert_eq!(d1, client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-1"), &max));
+    assert_eq!(
+        d1,
+        client.derive_range_for_domain(&id, &Bytes::from_slice(&env, b"card-1"), &max)
+    );
 }
 
 #[test]
@@ -2598,7 +2887,10 @@ fn test_cleanup_proof_keeps_beta_and_derivations() {
     assert_eq!(client.get_beta(&1u64), beta, "beta retained");
     assert_eq!(client.derive_random(&1u64), r_u64);
     assert_eq!(client.derive_random_in_range(&1u64, &1000u64), r_range);
-    assert_eq!(client.derive_range_for_domain(&1u64, &Bytes::from_slice(&env, b"d"), &1000u64), r_dom);
+    assert_eq!(
+        client.derive_range_for_domain(&1u64, &Bytes::from_slice(&env, b"d"), &1000u64),
+        r_dom
+    );
 }
 
 // ── #8: atomic constructor, no public init ───────────────────────────────────
@@ -2617,7 +2909,11 @@ fn test_no_public_init_entrypoint() {
         args,
     );
     assert!(res.is_err(), "init() must not exist");
-    assert_eq!(client.oracle_address(), oracle_addr, "configuration unchanged");
+    assert_eq!(
+        client.oracle_address(),
+        oracle_addr,
+        "configuration unchanged"
+    );
 }
 
 /// Registration without constructor args is rejected.
@@ -2685,7 +2981,12 @@ fn test_constructor_rejects_infinity_drand_pk() {
 fn test_constructor_rejects_generator_as_oracle_pk() {
     let env = Env::default();
     env.mock_all_auths();
-    try_construct(&env, crate::BLS12_381_G2_GENERATOR, TEST_G2_TIMES_3, [0x11; 32]);
+    try_construct(
+        &env,
+        crate::BLS12_381_G2_GENERATOR,
+        TEST_G2_TIMES_3,
+        [0x11; 32],
+    );
 }
 
 #[test]
@@ -2693,7 +2994,12 @@ fn test_constructor_rejects_generator_as_oracle_pk() {
 fn test_constructor_rejects_generator_as_drand_pk() {
     let env = Env::default();
     env.mock_all_auths();
-    try_construct(&env, TEST_G2_TIMES_2, crate::BLS12_381_G2_GENERATOR, [0x11; 32]);
+    try_construct(
+        &env,
+        TEST_G2_TIMES_2,
+        crate::BLS12_381_G2_GENERATOR,
+        [0x11; 32],
+    );
 }
 
 /// Bytes that are not a valid encoding are rejected by the host.
@@ -2747,7 +3053,11 @@ fn test_rotate_oracle_keys_rejects_infinity() {
 #[should_panic(expected = "oracle pk must differ from drand pk")]
 fn test_rotate_oracle_keys_rejects_drand_pk_reuse() {
     let (env, client, _addr, _pk, _ed, drand_pk) = setup();
-    client.rotate_oracle_keys(&drand_pk, &Address::generate(&env), &BytesN::from_array(&env, &[0xBB; 32]));
+    client.rotate_oracle_keys(
+        &drand_pk,
+        &Address::generate(&env),
+        &BytesN::from_array(&env, &[0xBB; 32]),
+    );
 }
 
 #[test]
@@ -2789,7 +3099,13 @@ fn test_canonical_generator_and_test_keys_are_valid() {
     use soroban_sdk::crypto::bls12_381::Bls12381G2Affine;
     let env = Env::default();
     let bls = env.crypto().bls12_381();
-    for k in [crate::BLS12_381_G2_GENERATOR, FIX_DRAND_PK, TEST_G2_TIMES_2, TEST_G2_TIMES_3, TEST_G2_TIMES_5] {
+    for k in [
+        crate::BLS12_381_G2_GENERATOR,
+        FIX_DRAND_PK,
+        TEST_G2_TIMES_2,
+        TEST_G2_TIMES_3,
+        TEST_G2_TIMES_5,
+    ] {
         let p = Bls12381G2Affine::from_bytes(BytesN::from_array(&env, &k));
         assert!(bls.g2_is_in_subgroup(&p));
     }

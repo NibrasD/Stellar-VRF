@@ -61,10 +61,9 @@ describe("simulatedResourcesOf", () => {
 });
 
 describe("resourceGuardOptionsFromEnv", () => {
-  it("has safe defaults below the 100M network limit", () => {
+  it("has conservative project defaults (90M, well below the 400M Mainnet tx limit)", () => {
     const o = resourceGuardOptionsFromEnv({});
     expect(o.maxInstructions).toBe(90_000_000);
-    expect(o.maxInstructions).toBeLessThan(100_000_000);
     expect(o.maxResourceFeeStroops).toBe(5_000_000n);
     expect(o.maxTxFeeStroops).toBe(6_000_000n);
   });

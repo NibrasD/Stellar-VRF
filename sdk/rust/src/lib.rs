@@ -536,7 +536,9 @@ fn decode_beta_result(result: Option<String>, request_id: u64) -> Result<[u8; 32
         ScVal::Bytes(b) => b
             .try_into()
             .map_err(|b: Vec<u8>| VrfError::Rpc(format!("expected 32-byte beta, got {}", b.len()))),
-        other => Err(VrfError::Rpc(format!("expected BytesN<32> ScVal, got {other:?}"))),
+        other => Err(VrfError::Rpc(format!(
+            "expected BytesN<32> ScVal, got {other:?}"
+        ))),
     }
 }
 
@@ -556,8 +558,7 @@ impl VrfClient {
         request_id: u64,
         timeout_secs: u64,
     ) -> Result<(), VrfError> {
-        let deadline =
-            std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
         while std::time::Instant::now() < deadline {
             if self.is_fulfilled(request_id).await? {
@@ -844,7 +845,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
 
     let input = input.trim_end_matches('=');
     let mut out = Vec::new();
-    let bytes: Vec<u8> = input.bytes().filter(|b| *b != b'\n' && *b != b'\r').collect();
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|b| *b != b'\n' && *b != b'\r')
+        .collect();
 
     // Bit accumulator: 6 bits per base64 symbol, emit a byte per 8 buffered bits.
     let mut buffer: u32 = 0;
@@ -882,12 +886,12 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, VrfError> {
 fn build_simulation_envelope(contract: &[u8; 32], fn_name: &str, args: &[Vec<u8>]) -> Vec<u8> {
     let mut b = Vec::with_capacity(160 + args.iter().map(Vec::len).sum::<usize>());
     put_u32(&mut b, 2); // EnvelopeType::ENVELOPE_TYPE_TX
-    // Transaction.sourceAccount: MuxedAccount KEY_TYPE_ED25519 + 32-byte key.
+                        // Transaction.sourceAccount: MuxedAccount KEY_TYPE_ED25519 + 32-byte key.
     put_u32(&mut b, 0);
     b.extend_from_slice(&[0u8; 32]);
     put_u32(&mut b, 100); // fee (stroops); simulation ignores it
     b.extend_from_slice(&1u64.to_be_bytes()); // seqNum
-    // cond: PRECOND_TIME with TimeBounds { min: 0, max: 0 } (no bounds).
+                                              // cond: PRECOND_TIME with TimeBounds { min: 0, max: 0 } (no bounds).
     put_u32(&mut b, 1);
     b.extend_from_slice(&[0u8; 16]);
     put_u32(&mut b, 0); // memo: MEMO_NONE
@@ -895,7 +899,7 @@ fn build_simulation_envelope(contract: &[u8; 32], fn_name: &str, args: &[Vec<u8>
     put_u32(&mut b, 0); // Operation.sourceAccount: absent
     put_u32(&mut b, 24); // OperationType::INVOKE_HOST_FUNCTION
     put_u32(&mut b, 0); // HostFunctionType::INVOKE_CONTRACT
-    // InvokeContractArgs { contractAddress, functionName, args }
+                        // InvokeContractArgs { contractAddress, functionName, args }
     put_u32(&mut b, 1); // ScAddressType::CONTRACT
     b.extend_from_slice(contract);
     put_var_opaque(&mut b, fn_name.as_bytes());
@@ -1081,7 +1085,9 @@ pub fn to_hex(bytes: &[u8]) -> String {
 fn event_value_b64(evt: &EventEntry) -> Result<&str, VrfError> {
     match &evt.value {
         Some(serde_json::Value::String(s)) => Ok(s),
-        other => Err(VrfError::Rpc(format!("event has no base64 value: {other:?}"))),
+        other => Err(VrfError::Rpc(format!(
+            "event has no base64 value: {other:?}"
+        ))),
     }
 }
 
@@ -1098,7 +1104,9 @@ fn parse_request_event_value(value_b64: &str) -> Result<(u64, String, u64), VrfE
     let val = decode_scval_b64(value_b64)?;
     match &val {
         ScVal::Vec(items) => match items.as_slice() {
-            [ScVal::U64(id), ScVal::Address(who), ScVal::U64(round)] => Ok((*id, who.clone(), *round)),
+            [ScVal::U64(id), ScVal::Address(who), ScVal::U64(round)] => {
+                Ok((*id, who.clone(), *round))
+            }
             [ScVal::U64(id), ScVal::Address(who)] => Ok((*id, who.clone(), 0)),
             _ => Err(bad(&val)),
         },
@@ -1146,7 +1154,10 @@ mod tests {
         let beta = vec_beta();
         assert_eq!(derive_u64_from_beta(&beta, 7), 17_155_214_937_666_214_782);
         assert_eq!(derive_range_from_beta(&beta, 7, 6).unwrap(), 4);
-        assert_eq!(derive_range_from_beta(&beta, 7, 1_000_000).unwrap(), 889_164);
+        assert_eq!(
+            derive_range_from_beta(&beta, 7, 1_000_000).unwrap(),
+            889_164
+        );
         assert_eq!(
             derive_range_from_beta(&beta, 7, u64::MAX).unwrap(),
             11_798_261_183_955_500_607
@@ -1167,15 +1178,24 @@ mod tests {
     #[test]
     fn test_reduce_uniform_matches_contract_rules() {
         // First candidate accepted.
-        assert_eq!(reduce_uniform(&halves(123_456_789, 42), 1_000_003).unwrap(), 123_456_789 % 1_000_003);
+        assert_eq!(
+            reduce_uniform(&halves(123_456_789, 42), 1_000_003).unwrap(),
+            123_456_789 % 1_000_003
+        );
         // max = 3: 2^128 mod 3 = 1, so u128::MAX is the single rejected value.
-        assert_eq!(reduce_uniform(&halves(u128::MAX - 1, 0), 3).unwrap(), ((u128::MAX - 1) % 3) as u64);
+        assert_eq!(
+            reduce_uniform(&halves(u128::MAX - 1, 0), 3).unwrap(),
+            ((u128::MAX - 1) % 3) as u64
+        );
         assert_eq!(reduce_uniform(&halves(u128::MAX, 5), 3).unwrap(), 2);
         // Both rejected: explicit error, no biased fallback.
         let err = reduce_uniform(&halves(u128::MAX, u128::MAX), (1 << 63) + 1).unwrap_err();
         assert!(err.to_string().contains("both candidates rejected"));
         // Powers of two never reject.
-        assert_eq!(reduce_uniform(&halves(u128::MAX, u128::MAX), 1 << 32).unwrap(), u32::MAX as u64);
+        assert_eq!(
+            reduce_uniform(&halves(u128::MAX, u128::MAX), 1 << 32).unwrap(),
+            u32::MAX as u64
+        );
         assert!(reduce_uniform(&halves(0, 0), 0).is_err());
     }
 
@@ -1196,7 +1216,10 @@ mod tests {
 
     #[test]
     fn test_network_urls() {
-        assert_eq!(Network::Testnet.rpc_url(), "https://soroban-testnet.stellar.org");
+        assert_eq!(
+            Network::Testnet.rpc_url(),
+            "https://soroban-testnet.stellar.org"
+        );
         assert_eq!(Network::Mainnet.rpc_url(), "https://soroban.stellar.org");
         assert_eq!(
             Network::Testnet.passphrase(),
@@ -1207,9 +1230,8 @@ mod tests {
     #[test]
     fn test_derive_random_from_beta() {
         let beta = vec![
-            0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8,
+            0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
         ];
         let result = derive_random_from_beta(&beta, 1, 100).unwrap();
         assert!((1..=100).contains(&result));
@@ -1257,14 +1279,26 @@ mod tests {
     /// "decoding Int128Parts: unexpected EOF" and no events were ever returned.
     #[test]
     fn test_encode_scval_symbol_matches_stellar_sdk() {
-        assert_eq!(to_base64(&encode_scval_symbol("request")), "AAAADwAAAAdyZXF1ZXN0AA==");
-        assert_eq!(to_base64(&encode_scval_symbol("fulfill")), "AAAADwAAAAdmdWxmaWxsAA==");
-        assert_eq!(encode_scval_symbol("test"), unhex("0000000f0000000474657374"));
+        assert_eq!(
+            to_base64(&encode_scval_symbol("request")),
+            "AAAADwAAAAdyZXF1ZXN0AA=="
+        );
+        assert_eq!(
+            to_base64(&encode_scval_symbol("fulfill")),
+            "AAAADwAAAAdmdWxmaWxsAA=="
+        );
+        assert_eq!(
+            encode_scval_symbol("test"),
+            unhex("0000000f0000000474657374")
+        );
     }
 
     #[test]
     fn test_encode_scval_bytes_matches_stellar_sdk() {
-        assert_eq!(encode_scval_bytes(&[0xab]), unhex("0000000d00000001ab000000"));
+        assert_eq!(
+            encode_scval_bytes(&[0xab]),
+            unhex("0000000d00000001ab000000")
+        );
         assert_eq!(encode_scval_bytes(b""), unhex("0000000d00000000"));
     }
 
@@ -1276,7 +1310,8 @@ mod tests {
     #[test]
     fn test_simulation_envelope_matches_stellar_sdk() {
         let contract =
-            strkey_decode_contract("CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU").unwrap();
+            strkey_decode_contract("CBTCC5QL5T3JSLEZO4PH6LSJYEQF6GEFDCAO67OXI4DTM5NXMK6TSUHU")
+                .unwrap();
         let env = build_simulation_envelope(&contract, "is_fulfilled", &[encode_scval_u64(1)]);
         assert_eq!(
             to_base64(&env),
@@ -1285,7 +1320,11 @@ mod tests {
         let env = build_simulation_envelope(
             &contract,
             "derive_range_for_domain",
-            &[encode_scval_u64(7), encode_scval_bytes(b"card-1"), encode_scval_u64(1000)],
+            &[
+                encode_scval_u64(7),
+                encode_scval_bytes(b"card-1"),
+                encode_scval_u64(1000),
+            ],
         );
         assert_eq!(
             to_base64(&env),
@@ -1317,7 +1356,10 @@ mod tests {
         );
         let (id, beta) = parse_fulfill_event_value(&to_base64(&ful)).unwrap();
         assert_eq!(id, 1);
-        assert_eq!(to_hex(&beta), "98c612abed13163147239f4323d4973cb68df7302564fc791e17c1aae95a6c9d");
+        assert_eq!(
+            to_hex(&beta),
+            "98c612abed13163147239f4323d4973cb68df7302564fc791e17c1aae95a6c9d"
+        );
     }
 
     /// Real `getEvents` values from Mainnet (CBTCC5QL…SUHU, ledgers 64559682 /
@@ -1329,7 +1371,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(id, 3);
-        assert_eq!(who, "GCMZZ53RKG75NPYBD6ACEQVVVBKKVJRDS5AJOY3WZG5O2TVO5XYVR4DY");
+        assert_eq!(
+            who,
+            "GCMZZ53RKG75NPYBD6ACEQVVVBKKVJRDS5AJOY3WZG5O2TVO5XYVR4DY"
+        );
         assert_eq!(round, 32_426_942);
 
         let (id, beta) = parse_fulfill_event_value(
@@ -1337,7 +1382,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(id, 3);
-        assert_eq!(to_hex(&beta), "436aca06e740b667aba910e774f301d922080ba4eb6e353722ea8825e68d6790");
+        assert_eq!(
+            to_hex(&beta),
+            "436aca06e740b667aba910e774f301d922080ba4eb6e353722ea8825e68d6790"
+        );
     }
 
     #[test]
@@ -1348,14 +1396,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!((id, round), (7, 32_427_722));
-        assert_eq!(who, "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR");
+        assert_eq!(
+            who,
+            "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR"
+        );
         // Early deployments: (id, requester) without the round.
         let (id, who, round) = parse_request_event_value(
             "AAAAEAAAAAEAAAACAAAABQAAAAAAAAAFAAAAEgAAAAAAAAAAERERERERERERERERERERERERERERERERERERERERERE=",
         )
         .unwrap();
         assert_eq!((id, round), (5, 0));
-        assert_eq!(who, "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M");
+        assert_eq!(
+            who,
+            "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M"
+        );
     }
 
     /// Wrong shapes are errors. Earlier releases returned `(0, "", 0)`, which
@@ -1375,7 +1429,8 @@ mod tests {
             "AAAAEAAAAAEAAAACAAAABQAAAAAAAAAFAAAAEgAAAAAAAAAAERERERERERERERERERERERERERERERERERERERERERE=";
         assert!(parse_fulfill_event_value(legacy_req).is_err());
         // Beta must be exactly 32 bytes.
-        let short_beta = unhex("0000001000000001000000020000000500000000000000010000000d00000001ab000000");
+        let short_beta =
+            unhex("0000001000000001000000020000000500000000000000010000000d00000001ab000000");
         assert!(parse_fulfill_event_value(&to_base64(&short_beta)).is_err());
     }
 
@@ -1388,7 +1443,10 @@ mod tests {
         assert!(decode_scval_b64(&to_base64(&full)).is_ok());
         // Every truncation fails cleanly (no panic, no default value).
         for n in 0..full.len() {
-            assert!(decode_scval_b64(&to_base64(&full[..n])).is_err(), "prefix {n}");
+            assert!(
+                decode_scval_b64(&to_base64(&full[..n])).is_err(),
+                "prefix {n}"
+            );
         }
         // Trailing bytes.
         let mut extra = full.clone();
@@ -1411,7 +1469,10 @@ mod tests {
         deep.extend_from_slice(&unhex("00000001"));
         assert!(decode_scval_b64(&to_base64(&deep)).is_err());
         // An absent optional vec decodes to empty.
-        assert_eq!(decode_scval_b64(&to_base64(&unhex("0000001000000000"))).unwrap(), ScVal::Vec(vec![]));
+        assert_eq!(
+            decode_scval_b64(&to_base64(&unhex("0000001000000000"))).unwrap(),
+            ScVal::Vec(vec![])
+        );
     }
 
     /// Simulation return values, as the RPC returns them in `results[0].xdr`.
@@ -1427,13 +1488,21 @@ mod tests {
         assert!(u64_val.contains("AAAAAQ"));
         assert!(decode_bool_result(Some(u64_val)).is_err());
 
-        assert_eq!(decode_u64_result(Some(to_base64(&encode_scval_u64(889_164))), 7).unwrap(), 889_164);
-        assert!(matches!(decode_u64_result(None, 7), Err(VrfError::NotFulfilled(7))));
+        assert_eq!(
+            decode_u64_result(Some(to_base64(&encode_scval_u64(889_164))), 7).unwrap(),
+            889_164
+        );
+        assert!(matches!(
+            decode_u64_result(None, 7),
+            Err(VrfError::NotFulfilled(7))
+        ));
         assert!(decode_u64_result(Some("AAAAAAAAAAE=".into()), 7).is_err());
 
         let beta: Vec<u8> = (0u8..32).collect();
         assert_eq!(
-            decode_beta_result(Some(to_base64(&encode_scval_bytes(&beta))), 1).unwrap().to_vec(),
+            decode_beta_result(Some(to_base64(&encode_scval_bytes(&beta))), 1)
+                .unwrap()
+                .to_vec(),
             beta
         );
         assert!(decode_beta_result(Some(to_base64(&encode_scval_bytes(&beta[..31]))), 1).is_err());
@@ -1474,7 +1543,9 @@ mod tests {
         assert!(encoded.starts_with('G'), "account StrKey must start with G");
         assert_eq!(encoded.len(), 56, "StrKey addresses are 56 characters");
         assert!(
-            encoded.chars().all(|c| c.is_ascii_uppercase() || ('2'..='7').contains(&c)),
+            encoded
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || ('2'..='7').contains(&c)),
             "must use the RFC4648 base32 alphabet, got {encoded}"
         );
 
@@ -1488,7 +1559,10 @@ mod tests {
     fn test_strkey_contract_round_trip() {
         let hash: [u8; 32] = [7u8; 32];
         let encoded = strkey_encode_contract(&hash);
-        assert!(encoded.starts_with('C'), "contract StrKey must start with C");
+        assert!(
+            encoded.starts_with('C'),
+            "contract StrKey must start with C"
+        );
         assert_eq!(encoded.len(), 56);
         let back = strkey_decode_contract(&encoded).expect("must decode");
         assert_eq!(back, hash);
@@ -1506,7 +1580,12 @@ mod tests {
     fn test_derive_random_from_beta_range_and_determinism() {
         let beta = [0xABu8; 32];
 
-        for (min, max) in [(1u64, 6u64), (1, 100), (0, u64::MAX / 2), (5, 5 + (1 << 62))] {
+        for (min, max) in [
+            (1u64, 6u64),
+            (1, 100),
+            (0, u64::MAX / 2),
+            (5, 5 + (1 << 62)),
+        ] {
             let a = derive_random_from_beta(&beta, min, max).unwrap();
             let b = derive_random_from_beta(&beta, min, max).unwrap();
             assert_eq!(a, b, "must be deterministic");
@@ -1531,7 +1610,11 @@ mod tests {
 
         // Near-full ranges at either edge stay in bounds.
         let beta = [0xABu8; 32];
-        for (min, max) in [(1u64, u64::MAX), (0, u64::MAX - 1), (u64::MAX - 1, u64::MAX)] {
+        for (min, max) in [
+            (1u64, u64::MAX),
+            (0, u64::MAX - 1),
+            (u64::MAX - 1, u64::MAX),
+        ] {
             let v = derive_random_from_beta(&beta, min, max).unwrap();
             assert!(v >= min && v <= max, "{v} outside [{min}, {max}]");
         }
@@ -1553,15 +1636,13 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let client = VrfClient::new(VrfClientConfig {
-            contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE"
-                .into(),
+            contract_id: "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE".into(),
             network: Network::Testnet,
             // NOTE: Not a real key. This is a syntactic placeholder that fails
             // StrKey checksum validation, so it cannot control any Stellar
             // account on any network. Verified: `Keypair.fromSecret()` rejects
             // it with "invalid checksum". Never put a real secret here.
-            secret_key: ""
-                .into(),
+            secret_key: "".into(),
         });
         // Client creation should not fail
         assert_eq!(
@@ -1573,9 +1654,8 @@ mod tests {
     #[test]
     fn test_strkey_decode_contract() {
         // Valid contract ID should decode to 32 bytes
-        let result = strkey_decode_contract(
-            "CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE",
-        );
+        let result =
+            strkey_decode_contract("CCOX44NFMB3G4TDOLG5EKCXBP3EZ5PCEC3SQNMWP24WG6BA6HCSU2CBE");
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 32);
     }

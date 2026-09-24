@@ -109,7 +109,11 @@ the rotation (see `test_rotate_keys_new_oracle_successfully_fulfills_pending_req
 **Remediation (Tampering.3.R.1), current contract (partial):**
 `rotate_oracle_keys()` / `rotate_drand_pk()` require `current_oracle.require_auth()`, so an
 attacker needs the oracle *Stellar* secret, not just the BLS key. Compromise of an old key
-after rotation is harmless. Nothing on-chain stops the current key holder, though. The
+after rotation is harmless. `rotate_oracle_keys()` also requires `new_oracle_address.require_auth()`
+in the same transaction (audit round 8). That is reliability hardening: a mistyped or
+uncontrolled new address can no longer take over the oracle role and strand pending requests
+(`test_rotate_oracle_keys_rejects_missing_new_oracle_auth`). It doesn't limit what the
+legitimate holder can do. Nothing on-chain stops the current key holder. The
 mitigations are operational:
 - protect the oracle account with multisig or a hardware signer;
 - alert on every `rotate_ok` / `rotate_dk` event;

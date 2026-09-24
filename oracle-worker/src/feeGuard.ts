@@ -224,12 +224,25 @@ export class FeeGuard {
     if (balance - maxFeeStroops < this.opts.minBalanceStroops) {
       return { ok: false, reason: floorReason(balance, maxFeeStroops, this.opts.minBalanceStroops) };
     }
-    if (funding !== "budget") return { ok: true };
+    if (funding === "allowlisted") return { ok: true };
+
+    // What the oracle is NOT reimbursed for. A "paid" request covers up to the
+    // on-chain fee; any part of the transaction's max fee above it is a real
+    // loss, so it's charged to the unpaid budget like any other unpaid spend.
+    // Without this, FeeAmount = 0.15 XLM with a 0.6 XLM max fee would lose up
+    // to 0.45 XLM per request, unbounded.
+    let unpaid = maxFeeStroops;
+    if (funding === "paid") {
+      const fee = await this.getFeeInfo();
+      const covered = fee && fee.token === this.opts.nativeTokenId ? fee.amount : 0n;
+      unpaid = maxFeeStroops > covered ? maxFeeStroops - covered : 0n;
+      if (unpaid === 0n) return { ok: true };
+    }
 
     const now = this.deps.now();
     let reserved: boolean;
     try {
-      reserved = await this.deps.ledger.tryReserve(maxFeeStroops, now, this.opts.unpaidBudgetStroops);
+      reserved = await this.deps.ledger.tryReserve(unpaid, now, this.opts.unpaidBudgetStroops);
     } catch (err) {
       return { ok: false, reason: `could not update the unpaid spend ledger (${errMsg(err)}); failing closed` };
     }
@@ -238,7 +251,7 @@ export class FeeGuard {
         ok: false,
         reason:
           `sending would exceed the unpaid budget of ${formatXlm(this.opts.unpaidBudgetStroops)}/hour ` +
-          `(tx max fee ${formatXlm(maxFeeStroops)})`,
+          `(tx max fee ${formatXlm(maxFeeStroops)}, unreimbursed ${formatXlm(unpaid)})`,
       };
     }
     try {

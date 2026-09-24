@@ -93,10 +93,13 @@ contexts and keep the output they liked (grinding). It has been removed. Put
 application data into `request(context)` instead: that value is committed
 before the drand round is public.
 
-> ⚠ **`derive_range_for_domain`: the domain must be fixed before fulfillment.**
-> Use constants in your code (`b"card-1"`, `b"card-2"`) or values stored before
-> `request()`. Never forward a user-chosen value there. The contract can't
-> tell when a domain was chosen.
+> ⚠ **`derive_range_for_domain`: the domain must be committed before fulfillment
+> if the result is meant to be fair.** The function stays callable after `beta`
+> is public. Whoever picks the domain at that point can try `A`, `B`, `C`, …
+> and keep the result they like. That is grinding over the same randomness, and
+> the VRF can't prevent it. Use constants in your code (`b"card-1"`, `b"card-2"`)
+> or values your contract stored **before** `request()`. Never forward a
+> user-chosen value there. The contract can't tell when a domain was chosen.
 
 The SDKs reproduce all of these offline from `beta`
 (`deriveRangeFromBeta` / `derive_range_from_beta`, …), byte-for-byte, using

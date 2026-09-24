@@ -207,7 +207,10 @@ docker compose -f docker-compose.ha.yml up -d oracle-primary
 npm run keygen
 # Save new ORACLE_BLS_SECRET_KEY and note the new public key
 
-# Step 2: Call rotate_oracle_keys() — signed by CURRENT oracle
+# Step 2: Call rotate_oracle_keys(). It must be signed by the CURRENT oracle
+# AND by <NEW_ORACLE_ADDRESS> (both auth entries, same transaction). This
+# proves the new account is controlled; a typo can't strand pending requests.
+# If the address is unchanged (key-only rotation), one signature is enough.
 stellar contract invoke \
   --id <CONTRACT_ID> \
   --source-account current-oracle \

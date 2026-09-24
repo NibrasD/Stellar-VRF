@@ -37,7 +37,7 @@ import { SendAttemptTracker, sendAttemptOptionsFromEnv } from "./sendAttempts.js
 import { Asset } from "@stellar/stellar-sdk";
 import { waitAndFetchBeacon, computeCurrentRound } from "./drand.js";
 import { FulfillTerminalError } from "./fulfillErrors.js";
-import { verifyChainConfig, chainConfigSkipPolicyError } from "./configCheck.js";
+import { verifyChainConfig, chainConfigSkipPolicyError, feeTokenPolicyError } from "./configCheck.js";
 import { readChainConfig } from "./listener.js";
 import {
   DRAND_GENESIS_TIME,
@@ -412,6 +412,25 @@ async function main(): Promise<void> {
   // Report the economic posture up front so operators see it in the first log lines.
   const { fulfillCostStroops, minBalanceStroops, unpaidBudgetStroops, allowlist } = feeGuardOptions;
   log.info(`Fee guard spend ledger: ${spendLedger.describe()}`);
+  let feeToken: string | null = null;
+  try {
+    feeToken = await withRetry("read_fee_token", () => readFeeToken(feeGuardServer));
+  } catch (err) {
+    log.warn(`Could not read contract FeeToken (${err instanceof Error ? err.message : err}).`);
+  }
+  if (feeToken === null && (NETWORK_PASSPHRASE === Networks.PUBLIC || process.env.NODE_ENV === "production")) {
+    throw new Error("Could not read the contract's FeeToken; refusing to start in production (fail closed).");
+  }
+  if (feeToken !== null) {
+    const feePolicy = feeTokenPolicyError(
+      feeToken,
+      NATIVE_TOKEN_ID,
+      NETWORK_PASSPHRASE,
+      process.env.NODE_ENV,
+      Networks.PUBLIC
+    );
+    if (feePolicy) throw new Error(feePolicy);
+  }
   try {
     const [fee, token] = await Promise.all([readFeeAmount(feeGuardServer), readFeeToken(feeGuardServer)]);
     const unpaidPosture =

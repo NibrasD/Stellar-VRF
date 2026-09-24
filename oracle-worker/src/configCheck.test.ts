@@ -10,6 +10,7 @@ import {
   compareChainConfig,
   verifyChainConfig,
   chainConfigSkipPolicyError,
+  feeTokenPolicyError,
   g2ToUncompressed,
   type LocalChainConfig,
   type OnChainConfig,
@@ -94,6 +95,21 @@ describe("verifyChainConfig", () => {
         throw new Error("rpc down");
       })
     ).rejects.toThrow(/rpc down/);
+  });
+});
+
+describe("feeTokenPolicyError (production fee token = native XLM only)", () => {
+  const XLM = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
+  const USDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+  it("accepts the native XLM SAC everywhere", () => {
+    expect(feeTokenPolicyError(XLM, XLM, Networks.PUBLIC, "production", Networks.PUBLIC)).toBeNull();
+  });
+  it("refuses any other token on Mainnet or with NODE_ENV=production", () => {
+    expect(feeTokenPolicyError(USDC, XLM, Networks.PUBLIC, undefined, Networks.PUBLIC)).toMatch(/native XLM/);
+    expect(feeTokenPolicyError(USDC, XLM, Networks.TESTNET, "production", Networks.PUBLIC)).toMatch(/native XLM/);
+  });
+  it("allows other tokens only for non-production testing", () => {
+    expect(feeTokenPolicyError(USDC, XLM, Networks.TESTNET, undefined, Networks.PUBLIC)).toBeNull();
   });
 });
 

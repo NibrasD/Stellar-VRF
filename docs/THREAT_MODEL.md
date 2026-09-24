@@ -209,6 +209,12 @@ A requester cannot call `timeout_refund()` early — the contract checks that th
 bound beacon is emitted. The ledger timestamp is consensus-determined, so a single user can't
 manipulate it.
 
+The refund is **not permissionless**: `timeout_refund()` requires the requester's
+authorization. An account requester calls it directly. A **contract** requester (every callback
+consumer) must invoke it itself, so the consumer contract needs its own refund entrypoint.
+Otherwise its escrowed fee can't be recovered. See CONSUMER_AUTHORIZATION.md →
+*Refunds for contract requesters* and `refund_sample` in `consumer-example`.
+
 ### Key compromise
 
 If the oracle's BLS or Ed25519 key is compromised, the admin can call `rotate_oracle_keys()` to

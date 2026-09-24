@@ -2,10 +2,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
-use soroban_vrf_oracle::{
-    BlsVrfProof, DataKey, VRFOracleContract, VRFOracleContractClient,
-};
 use soroban_vrf_oracle::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
+use soroban_vrf_oracle::{BlsVrfProof, DataKey, VRFOracleContract, VRFOracleContractClient};
 
 // Target structure: at least 32 + 96 + 32 + 192 + 96 + 64 + 8 + 8 + 2 = 530 bytes
 // If less, we expand/cycle bytes to synthesize full cryptographic structures.
@@ -49,9 +47,8 @@ fuzz_target!(|data: &[u8]| {
 
     // Parse fuzzer entropy
     let mut iter = data.iter().copied().cycle();
-    let mut take_bytes = |n: usize| -> std::vec::Vec<u8> {
-        (0..n).map(|_| iter.next().unwrap()).collect()
-    };
+    let mut take_bytes =
+        |n: usize| -> std::vec::Vec<u8> { (0..n).map(|_| iter.next().unwrap()).collect() };
 
     let flags = data[0];
     let pick_req_id_mode = flags & 0x07; // 0..7
@@ -84,15 +81,21 @@ fuzz_target!(|data: &[u8]| {
     // Pre-state mutation (test duplicate fulfillment and refund replay)
     if (flags & 0x20) != 0 {
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Fulfilled(valid_req_id), &true);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Fulfilled(valid_req_id), &true);
         });
     } else if (flags & 0x40) != 0 {
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Refunded(valid_req_id), &true);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Refunded(valid_req_id), &true);
         });
     } else if (flags & 0x80) != 0 {
         env.as_contract(&client.address, || {
-            env.storage().persistent().set(&DataKey::Fulfilling(valid_req_id), &true);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Fulfilling(valid_req_id), &true);
         });
     }
 
@@ -122,21 +125,33 @@ fuzz_target!(|data: &[u8]| {
     // Invariant verifications:
     // 1. If initially refunded, fulfill MUST NEVER succeed
     if initially_refunded && target_req_id == valid_req_id {
-        assert!(res.is_err(), "Replay attack invariant violated: fulfilled after refund");
+        assert!(
+            res.is_err(),
+            "Replay attack invariant violated: fulfilled after refund"
+        );
     }
 
     // 2. If initially fulfilled, duplicate fulfillment MUST NEVER succeed
     if initially_fulfilled && target_req_id == valid_req_id {
-        assert!(res.is_err(), "Duplicate fulfillment invariant violated: fulfilled twice");
+        assert!(
+            res.is_err(),
+            "Duplicate fulfillment invariant violated: fulfilled twice"
+        );
     }
 
     // 3. If target_req_id == 0 or non-existent, MUST NEVER succeed
     if target_req_id == 0 || target_req_id > valid_req_id {
-        assert!(res.is_err(), "Non-existent request fulfillment invariant violated");
+        assert!(
+            res.is_err(),
+            "Non-existent request fulfillment invariant violated"
+        );
     }
 
     // 4. Contract invariants: a request can NEVER be both fulfilled and refunded
     let post_fulfilled = client.is_fulfilled(&valid_req_id);
     let post_refunded = client.is_refunded(&valid_req_id);
-    assert!(!(post_fulfilled && post_refunded), "State mutual exclusion invariant violated!");
+    assert!(
+        !(post_fulfilled && post_refunded),
+        "State mutual exclusion invariant violated!"
+    );
 });

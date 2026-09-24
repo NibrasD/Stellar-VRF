@@ -10,8 +10,8 @@ pub mod testkeys;
 
 use soroban_sdk::crypto::bls12_381::{Bls12381G1Affine, Bls12381G2Affine};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short,
-    Address, Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
+    Symbol, Val, Vec,
 };
 
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
@@ -105,7 +105,6 @@ pub enum DataKey {
     FeeAmount,
 }
 
-
 #[contract]
 pub struct VRFOracleContract;
 
@@ -171,16 +170,30 @@ impl VRFOracleContract {
 
         oracle_address.require_auth();
         env.storage().instance().set(&DataKey::OraclePK, &oracle_pk);
-        env.storage().instance().set(&DataKey::OracleAddr, &oracle_address);
-        env.storage().instance().set(&DataKey::OracleEd25519, &oracle_ed25519_pk);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleAddr, &oracle_address);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleEd25519, &oracle_ed25519_pk);
         env.storage().instance().set(&DataKey::DrandPK, &drand_pk);
-        env.storage().instance().set(&DataKey::DrandGenesis, &drand_genesis_time);
-        env.storage().instance().set(&DataKey::DrandPeriod, &drand_period);
-        env.storage().instance().set(&DataKey::RoundOffset, &round_offset);
+        env.storage()
+            .instance()
+            .set(&DataKey::DrandGenesis, &drand_genesis_time);
+        env.storage()
+            .instance()
+            .set(&DataKey::DrandPeriod, &drand_period);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoundOffset, &round_offset);
         env.storage().instance().set(&DataKey::Counter, &0u64);
         env.storage().instance().set(&DataKey::FeeToken, &fee_token);
-        env.storage().instance().set(&DataKey::FeeAmount, &fee_amount);
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeAmount, &fee_amount);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         env.events().publish((symbol_short!("init"),), oracle_pk);
     }
@@ -190,6 +203,14 @@ impl VRFOracleContract {
     /// # Authorization model
     /// The **current** oracle address must authorize this call. This prevents an
     /// attacker who obtains a new keypair from hijacking the oracle role.
+    ///
+    /// The **new** oracle address must authorize it too, in the same
+    /// transaction. Otherwise a typo or wrong account would install an oracle
+    /// that can never sign `fulfill()`, and the old oracle would already have
+    /// lost the role. Every pending request would then be stranded until
+    /// `timeout_refund()`. Requiring both signatures proves the new account
+    /// is controlled before the switch. When the address is unchanged (key-only
+    /// rotation), one signature covers both.
     ///
     /// # Security note
     /// Pending requests are **not** locked to the oracle key that was active at
@@ -217,6 +238,10 @@ impl VRFOracleContract {
             .get(&DataKey::OracleAddr)
             .unwrap_or_else(|| panic!("not initialized"));
         current_oracle.require_auth();
+        // The new account must prove control before it becomes the oracle.
+        if new_oracle_address != current_oracle {
+            new_oracle_address.require_auth();
+        }
 
         // Fail closed: a structurally valid but unusable key would make every
         // later fulfill() fail and strand pending requests until timeout.
@@ -231,10 +256,18 @@ impl VRFOracleContract {
         }
         validate_ed25519_key(&new_oracle_ed25519_pk);
 
-        env.storage().instance().set(&DataKey::OraclePK, &new_oracle_pk);
-        env.storage().instance().set(&DataKey::OracleAddr, &new_oracle_address);
-        env.storage().instance().set(&DataKey::OracleEd25519, &new_oracle_ed25519_pk);
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .set(&DataKey::OraclePK, &new_oracle_pk);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleAddr, &new_oracle_address);
+        env.storage()
+            .instance()
+            .set(&DataKey::OracleEd25519, &new_oracle_ed25519_pk);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         env.events().publish(
             (symbol_short!("rotate_ok"),),
@@ -276,10 +309,15 @@ impl VRFOracleContract {
             panic!("oracle pk must differ from drand pk");
         }
 
-        env.storage().instance().set(&DataKey::DrandPK, &new_drand_pk);
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .set(&DataKey::DrandPK, &new_drand_pk);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
-        env.events().publish((symbol_short!("rotate_dk"),), new_drand_pk);
+        env.events()
+            .publish((symbol_short!("rotate_dk"),), new_drand_pk);
     }
 
     pub fn request(env: Env, context: Bytes, requester: Address) -> u64 {
@@ -326,7 +364,11 @@ impl VRFOracleContract {
             panic!("already refunded");
         }
 
-        if !env.storage().persistent().has(&DataKey::Requester(request_id)) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Requester(request_id))
+        {
             panic!("request not found");
         }
 
@@ -366,7 +408,9 @@ impl VRFOracleContract {
             panic!("timeout window not reached");
         }
 
-        env.storage().persistent().set(&DataKey::Refunded(request_id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Refunded(request_id), &true);
         env.storage().persistent().extend_ttl(
             &DataKey::Refunded(request_id),
             PERSISTENT_TTL_THRESHOLD,
@@ -403,7 +447,11 @@ impl VRFOracleContract {
         }
 
         // Refund escrowed fee back to requester.
-        let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
+        let fee_amount: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeAmount)
+            .unwrap_or(0);
         if fee_amount > 0 {
             let fee_token: Address = env
                 .storage()
@@ -419,9 +467,12 @@ impl VRFOracleContract {
             env.invoke_contract::<Val>(&fee_token, &transfer_fn, args);
         }
 
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
-        env.events().publish((symbol_short!("timeout"),), (request_id, requester));
+        env.events()
+            .publish((symbol_short!("timeout"),), (request_id, requester));
     }
 
     pub fn timeout_rounds(_env: Env) -> u64 {
@@ -448,7 +499,11 @@ impl VRFOracleContract {
             .persistent()
             .get(&DataKey::Refunded(request_id))
             .unwrap_or(false);
-        if env.storage().persistent().has(&DataKey::Refunded(request_id)) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Refunded(request_id))
+        {
             env.storage().persistent().extend_ttl(
                 &DataKey::Refunded(request_id),
                 PERSISTENT_TTL_THRESHOLD,
@@ -459,7 +514,11 @@ impl VRFOracleContract {
     }
 
     pub fn callback_of(env: Env, request_id: u64) -> Option<(Address, Symbol)> {
-        if !env.storage().persistent().has(&DataKey::CallbackContract(request_id)) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::CallbackContract(request_id))
+        {
             return None;
         }
         let cb_contract: Address = env
@@ -533,7 +592,11 @@ impl VRFOracleContract {
             .unwrap_or_else(|| panic!("oracle address missing"));
         oracle_addr.require_auth();
 
-        if !env.storage().persistent().has(&DataKey::RequestContext(request_id)) {
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::RequestContext(request_id))
+        {
             panic!("request not found");
         }
 
@@ -577,7 +640,8 @@ impl VRFOracleContract {
         message.append(&Bytes::from_slice(&env, &proof.beta_output.to_array()));
         message.append(&u64_be_bytes(&env, proof.drand_round));
         message.append(&Bytes::from_slice(&env, &proof.drand_signature.to_array()));
-        env.crypto().ed25519_verify(&oracle_ed25519, &message, &signature);
+        env.crypto()
+            .ed25519_verify(&oracle_ed25519, &message, &signature);
 
         // Verify drand BLS signature.
         if !verify_drand_signature(&env, &proof) {
@@ -634,7 +698,11 @@ impl VRFOracleContract {
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         // Release escrowed fee to oracle upon successful fulfillment.
-        let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
+        let fee_amount: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FeeAmount)
+            .unwrap_or(0);
         if fee_amount > 0 {
             let fee_token: Address = env
                 .storage()
@@ -913,11 +981,7 @@ impl VRFOracleContract {
         }
 
         // Remove bulky proof data; preserve Fulfilled flag for auditability.
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Proof(request_id))
-        {
+        if env.storage().persistent().has(&DataKey::Proof(request_id)) {
             env.storage()
                 .persistent()
                 .remove(&DataKey::Proof(request_id));
@@ -1200,7 +1264,11 @@ fn request_internal(
 
     // Charge per-request fee via SAC token transfer (requester → contract escrow).
     // Fee is held in escrow until fulfill() (released to oracle) or timeout_refund() (returned to requester).
-    let fee_amount: i128 = env.storage().instance().get(&DataKey::FeeAmount).unwrap_or(0);
+    let fee_amount: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::FeeAmount)
+        .unwrap_or(0);
     if fee_amount > 0 {
         let fee_token: Address = env
             .storage()
@@ -1217,11 +1285,7 @@ fn request_internal(
         env.invoke_contract::<Val>(&fee_token, &transfer_fn, args);
     }
 
-    let counter: u64 = env
-        .storage()
-        .instance()
-        .get(&DataKey::Counter)
-        .unwrap_or(0);
+    let counter: u64 = env.storage().instance().get(&DataKey::Counter).unwrap_or(0);
     let id = counter
         .checked_add(1)
         .unwrap_or_else(|| panic!("counter overflow"));
@@ -1242,8 +1306,7 @@ fn request_internal(
         .instance()
         .get(&DataKey::RoundOffset)
         .unwrap_or_else(|| panic!("round offset missing"));
-    let required_round =
-        compute_required_round(env.ledger().timestamp(), genesis, period, offset);
+    let required_round = compute_required_round(env.ledger().timestamp(), genesis, period, offset);
 
     env.storage()
         .persistent()
@@ -1374,11 +1437,8 @@ pub(crate) fn invoke_callback_if_configured(env: &Env, request_id: u64, proof: &
     args.push_back(proof.beta_output.clone().into_val(env));
     args.push_back(proof.alpha_seed.clone().into_val(env));
 
-    let result = env.try_invoke_contract::<Val, soroban_sdk::Error>(
-        &callback_contract,
-        &callback_fn,
-        args,
-    );
+    let result =
+        env.try_invoke_contract::<Val, soroban_sdk::Error>(&callback_contract, &callback_fn, args);
     if result.is_err() {
         env.events().publish(
             (symbol_short!("cb_failed"),),

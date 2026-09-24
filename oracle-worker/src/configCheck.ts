@@ -101,6 +101,34 @@ export async function verifyChainConfig(
   }
 }
 
+/**
+ * Production fee economics are defined in native XLM only.
+ *
+ * The contract accepts any token address as `fee_token`, but the worker can
+ * only compare a fee with its own XLM costs when that token is the native XLM
+ * SAC. Under any other token every request would be silently unpaid. So on
+ * Mainnet (or with NODE_ENV=production) the worker refuses to start. Supporting
+ * other SEP-41 fee tokens would need a price source, which this project doesn't
+ * have. Returns an error message, or null when the token is acceptable.
+ */
+export function feeTokenPolicyError(
+  feeToken: string,
+  nativeTokenId: string,
+  networkPassphrase: string,
+  nodeEnv: string | undefined,
+  mainnetPassphrase: string
+): string | null {
+  if (feeToken === nativeTokenId) return null;
+  if (networkPassphrase === mainnetPassphrase || nodeEnv === "production") {
+    return (
+      `Contract FeeToken ${feeToken} is not the native XLM SAC (${nativeTokenId}). ` +
+      `Production deployments must use native XLM as fee_token; the worker has no ` +
+      `price for other tokens. Redeploy with the XLM SAC.`
+    );
+  }
+  return null;
+}
+
 /** Mainnet (or NODE_ENV=production) must never skip the check. */
 export function chainConfigSkipPolicyError(
   skip: boolean,

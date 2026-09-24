@@ -2,8 +2,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
-use soroban_vrf_oracle::{VRFOracleContract, VRFOracleContractClient, MAX_DERIVE_DOMAIN_LEN};
 use soroban_vrf_oracle::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
+use soroban_vrf_oracle::{VRFOracleContract, VRFOracleContractClient, MAX_DERIVE_DOMAIN_LEN};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 8 {
@@ -60,20 +60,32 @@ fuzz_target!(|data: &[u8]| {
 
     use soroban_vrf_oracle::DataKey;
     env.as_contract(&client.address, || {
-        env.storage().persistent().set(&DataKey::Fulfilled(id), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Fulfilled(id), &true);
         env.storage()
             .persistent()
             .set(&DataKey::Beta(id), &BytesN::from_array(&env, &beta_bytes));
     });
 
     let result = client.derive_random_in_range(&id, &max);
-    assert!(result < max, "Invariant violated: result {} >= max {}", result, max);
+    assert!(
+        result < max,
+        "Invariant violated: result {} >= max {}",
+        result,
+        max
+    );
 
     // Domain-separated draw: bounded, in range, deterministic.
     let dlen = context_slice.len().min(MAX_DERIVE_DOMAIN_LEN as usize);
     let domain = Bytes::from_slice(&env, &context_slice[..dlen]);
     let d = client.derive_range_for_domain(&id, &domain, &max);
-    assert!(d < max, "Invariant violated: domain result {} >= max {}", d, max);
+    assert!(
+        d < max,
+        "Invariant violated: domain result {} >= max {}",
+        d,
+        max
+    );
     assert_eq!(d, client.derive_range_for_domain(&id, &domain, &max));
 
     let u = client.derive_random(&id);

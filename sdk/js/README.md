@@ -104,6 +104,11 @@ console.log("Random roll:", roll);
 | `deriveRangeForDomain(requestId, domain, min, max)` | `Promise<bigint>` | Same, with a short domain separator (≤ 64 bytes) for several independent draws. **The domain must be fixed before fulfillment**: a constant, never a user-chosen value |
 | `getBeta(requestId)` | `Promise<Uint8Array>` | The verified 32-byte output. Kept after `cleanup_proof()` |
 
+> ⚠ **Domains must be committed before fulfillment.** `deriveRangeForDomain` /
+> `deriveRangeForDomainFromBeta` work after the result is public, so a domain chosen
+> afterwards can be ground (try `A`, `B`, `C`, keep the best). If the value must be fair,
+> the domain has to be a constant or a value stored before `request()`.
+
 > **2.0 breaking change:** the `context` argument of `deriveRandomInRange` is
 > gone. Choosing it after the result was public let a caller grind outputs.
 > SDK 2.x targets the next contract deployment. Keep using 1.0.1 against the

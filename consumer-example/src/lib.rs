@@ -72,9 +72,7 @@ impl VrfSamplingContract {
         if env.storage().instance().has(&ConsumerKey::VrfContract) {
             panic!("already initialized");
         }
-        env.storage()
-            .instance()
-            .set(&ConsumerKey::Admin, &admin);
+        env.storage().instance().set(&ConsumerKey::Admin, &admin);
         env.storage()
             .instance()
             .set(&ConsumerKey::VrfContract, &vrf_contract);
@@ -82,10 +80,8 @@ impl VrfSamplingContract {
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
-        env.events().publish(
-            (symbol_short!("init"),),
-            (admin, vrf_contract),
-        );
+        env.events()
+            .publish((symbol_short!("init"),), (admin, vrf_contract));
     }
 
     /// Request a verifiable random sample in the range [0, range_max).
@@ -147,10 +143,8 @@ impl VrfSamplingContract {
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
-        env.events().publish(
-            (symbol_short!("req_smpl"),),
-            (sample_id, caller, range_max),
-        );
+        env.events()
+            .publish((symbol_short!("req_smpl"),), (sample_id, caller, range_max));
 
         sample_id
     }
@@ -216,10 +210,8 @@ impl VrfSamplingContract {
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND);
 
         // Emit event with the sample result.
-        env.events().publish(
-            (symbol_short!("sample"),),
-            (sample_id, sample, range_max),
-        );
+        env.events()
+            .publish((symbol_short!("sample"),), (sample_id, sample, range_max));
     }
 
     /// Query the random sample result for a fulfilled request.
@@ -255,6 +247,38 @@ impl VrfSamplingContract {
                 .persistent()
                 .remove(&ConsumerKey::SampleResult(sample_id));
         }
+    }
+
+    /// Reclaim the escrowed fee of a sample the oracle never fulfilled.
+    ///
+    /// The VRF contract's `timeout_refund()` requires the *requester's*
+    /// authorization, and the requester of a callback request is this
+    /// contract. So only this contract can trigger the refund: without an
+    /// entrypoint like this one, a timed-out fee would stay locked in the VRF
+    /// contract. Admin-only, and it fails until the timeout window has passed.
+    pub fn refund_sample(env: Env, caller: Address, sample_id: u64) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ConsumerKey::Admin)
+            .unwrap_or_else(|| panic!("not initialized"));
+        if caller != admin {
+            panic!("not authorized");
+        }
+        let vrf_contract: Address = env
+            .storage()
+            .instance()
+            .get(&ConsumerKey::VrfContract)
+            .unwrap_or_else(|| panic!("not initialized"));
+        env.invoke_contract::<()>(
+            &vrf_contract,
+            &Symbol::new(&env, "timeout_refund"),
+            soroban_sdk::vec![&env, sample_id.into_val(&env)],
+        );
+        env.storage()
+            .persistent()
+            .remove(&ConsumerKey::PendingSample(sample_id));
     }
 
     /// Query the admin address.
@@ -335,7 +359,10 @@ mod test {
         let beta = BytesN::from_array(&env, &b);
         assert_eq!(derive_in_range(&env, 7, &beta, 6), 4);
         assert_eq!(derive_in_range(&env, 7, &beta, 1_000_000), 889_164);
-        assert_eq!(derive_in_range(&env, 7, &beta, u64::MAX), 11_798_261_183_955_500_607);
+        assert_eq!(
+            derive_in_range(&env, 7, &beta, u64::MAX),
+            11_798_261_183_955_500_607
+        );
         assert_eq!(derive_in_range(&env, 7, &beta, 1), 0);
     }
 }
