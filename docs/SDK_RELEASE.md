@@ -2,24 +2,20 @@
 
 ## Status
 
-_Registry state verified 2026-09-22 against the live registries (`npm view`, crates.io API)._
+_Registry state verified against the live registries (`npm view`, crates.io API)._
 
 | SDK | Registry | Published | `latest` |
 |---|---|---|---|
-| JS — `stellar-vrf-sdk` | npm | 1.0.0 (2026-09-21 20:02 UTC), **1.0.1 (2026-09-22 13:12 UTC)** | **1.0.1** (`gitHead` `e90347e`) |
-| Rust — `stellar-vrf-sdk` | crates.io | 1.0.0 (2026-09-21 19:29 UTC), **1.0.1 (2026-09-22 13:05 UTC)** | **1.0.1** |
+| JS — `stellar-vrf-sdk` | npm | 1.0.0, 1.0.1, **2.0.0** | **2.0.0** |
+| Rust — `stellar-vrf-sdk` | crates.io | 1.0.0, 1.0.1, **2.0.0** | **2.0.0** |
 
-npm 1.0.1 includes the `Networks.MAINNET` alias: commit `cde82d9` is an ancestor of `e90347e`.
+### Released: **2.0.0**
 
-### Unreleased (in `main`, not in any published version): **2.0.0**
-
-Both manifests are bumped to **2.0.0** (`sdk/js/package.json`, `sdk/rust/Cargo.toml`). The
+Both manifests are at **2.0.0** (`sdk/js/package.json`, `sdk/rust/Cargo.toml`). The
 release is **major** because the derivation API follows the audit round 5 contract changes.
 
-> ⚠ **Publish 2.0.0 now.** The new contract is live (Mainnet `CAW6KECQ…UPRX`, Testnet
-> `CBEDNSJ6…JTBR`, WASM `6a261a26…`). The published 1.0.1 still sends the removed `context`
-> argument to `derive_random_in_range`, so `deriveRandomInRange` from npm/crates.io **fails**
-> against the current contract. Changes in 2.0.0:
+> **Production Compatibility:** Version 2.0.0 is fully compatible with the live contracts
+> (Mainnet `CAW6KECQ…UPRX`, Testnet `CBEDNSJ6…JTBR`, WASM `6a261a26…`). Changes in 2.0.0:
 
 - **Breaking, both SDKs:** `deriveRandomInRange` / `derive_random_in_range` no longer take a
   `context` argument. The contract dropped it because a caller could choose it after seeing

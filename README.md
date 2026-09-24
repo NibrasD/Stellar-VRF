@@ -45,14 +45,13 @@ Your dApp  ◀─derive_random_in_range()──┘
 
 ## Quick Start — JavaScript SDK
 
-> ⚠ **SDK 2.0.0 is not yet published to npm.** The current registry version
-> (`stellar-vrf-sdk@1.0.1`) is **incompatible** with the live contract because it
-> still passes a removed `context` argument to `derive_random_in_range`.
-> **Build from source** until 2.0.0 is published:
-> ```bash
-> cd sdk/js && npm install && npm run build
-> ```
-> See [docs/SDK_RELEASE.md](docs/SDK_RELEASE.md) for the publish checklist.
+Published on npm as
+[`stellar-vrf-sdk`](https://www.npmjs.com/package/stellar-vrf-sdk) (v2.0.0). Requires
+**Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
+
+```bash
+npm install stellar-vrf-sdk @stellar/stellar-sdk
+```
 
 ```typescript
 import { VrfClient, Networks } from "stellar-vrf-sdk";
@@ -107,7 +106,7 @@ shared test vectors.
 ## Quick Start — Rust SDK
 
 Published on crates.io as
-[`stellar-vrf-sdk`](https://crates.io/crates/stellar-vrf-sdk):
+[`stellar-vrf-sdk`](https://crates.io/crates/stellar-vrf-sdk) (v2.0.0):
 
 ```bash
 cargo add stellar-vrf-sdk
