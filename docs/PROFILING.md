@@ -29,8 +29,10 @@ All values in this section are **CPU instructions** from the Soroban budget.
 
 | Measurement | Instructions | Source |
 |---|---|---|
-| `fulfill()` (fee=0, mainnet) | **58,073,400** | `SorobanTransactionData.resources.instructions`, mainnet TX `f3e83555...` |
-| `fulfill()` (fee>0, mainnet) | **58,342,003** | `SorobanTransactionData.resources.instructions`, mainnet TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) |
+| `fulfill()` (fee=2M, live production mainnet) | **56,040,632** | `DiagnosticEvent.cpu_insn`, live Mainnet TX [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) (Contract `CAW6KEC...`) |
+| `fulfill()` (fee=2M, live production testnet) | **55,822,585** | `DiagnosticEvent.cpu_insn`, live Testnet TX [`323ae892...`](https://stellar.expert/explorer/testnet/tx/323ae89254509d6a1b24b7f224476efa2f45970a13a3bba7f034d64fe1aa3f3e) (Contract `CBEDNSJ...`) |
+| `fulfill()` (fee>0, dedicated profiling deployment) | **58,342,003** | `SorobanTransactionData.resources.instructions`, mainnet TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) (Contract `CA24JM...`) |
+| `fulfill()` (fee=0, historical zero-fee mainnet) | **58,073,400** | `SorobanTransactionData.resources.instructions`, mainnet TX `f3e83555...` (Contract `CBTCC5...`) |
 | SAC transfer on-chain delta | **268,603** | Difference on Mainnet between nonzero-fee (`58,342,003`) and fee=0 (`58,073,400`) |
 | SAC transfer isolated benchmark | **221,988** | `test_budget_sac_transfer_cpu_instructions` — isolated budget delta around SAC `transfer` |
 | G1 negation (single) | **4,031** | `test_budget_g1_negation_cpu_instructions` |
@@ -58,21 +60,21 @@ All values in this section are **CPU instructions** from the Soroban budget.
 ### Fulfill() CPU instruction count — MEASURED from **Mainnet** TX
 
 The `fulfill()` pipeline has been directly measured on **Stellar Mainnet** across deployments —
-decoded directly from the `SorobanTransactionData.resources.instructions` field of confirmed
+decoded directly from `SorobanTransactionData.resources.instructions` and on-chain diagnostic events of confirmed
 transaction envelopes:
 
-| Field | Baseline Deployment | Production Zero-Fee (`CBTCC5...`) | Dedicated Profiling Deployment (`CA24JM...`) |
-|---|---|---|---|
-| **Network** | **Stellar Mainnet** | **Stellar Mainnet** | **Stellar Mainnet** |
-| **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) | [`f3e83555...`](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) | [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) |
-| **Status** | `successful: true` | `successful: true` | `successful: true` |
-| **Contract VRF Fee (`fee_amount`)** | 0 stroops (0 XLM) | 0 stroops (0 XLM) | 100,000 stroops (0.01 XLM) |
-| **Network Fee (`fee_charged`)** | 135,638 stroops (~0.0135 XLM) | 135,638 stroops (~0.0135 XLM) | 1,486,159 stroops (~0.1486 XLM) |
-| **CPU Instructions (measured)** | **58,641,186** | **58,073,400** | **58,342,003** |
-| **Soroban mainnet limit** | 400,000,000 | 400,000,000 | 400,000,000 |
-| **Project / SCF target** | < 75,000,000 | < 75,000,000 | < 75,000,000 |
-| **Headroom under target** | **21.8%** | **22.6%** | **22.21%** |
-| **Headroom under 400M limit** | **85.3%** | **85.5%** | **85.41%** |
+| Field | Baseline Deployment | Production Zero-Fee (`CBTCC5...`) | Dedicated Profiling Deployment (`CA24JM...`) | Current Live Production (`CAW6KEC...`) |
+|---|---|---|---|---|
+| **Network** | **Stellar Mainnet** | **Stellar Mainnet** | **Stellar Mainnet** | **Stellar Mainnet** |
+| **TX Hash** | [`5190ba03...`](https://stellar.expert/explorer/public/tx/5190ba03ba8cc708efe035996f90da0668f9f1d725658bd84aecbd63be24e5f2) | [`f3e83555...`](https://stellar.expert/explorer/public/tx/f3e83555c54c33230627fd971aefca376f257dd053ca3cb5501f31f8476482bf) | [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9) | [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) |
+| **Status** | `successful: true` | `successful: true` | `successful: true` | `successful: true` |
+| **Contract VRF Fee (`fee_amount`)** | 0 stroops (0 XLM) | 0 stroops (0 XLM) | 100,000 stroops (0.01 XLM) | 2,000,000 stroops (0.2 XLM) |
+| **Network Fee (`fee_charged`)** | 135,638 stroops (~0.0135 XLM) | 135,638 stroops (~0.0135 XLM) | 1,486,159 stroops (~0.1486 XLM) | 1,518,581 stroops (~0.1518 XLM) |
+| **CPU Instructions (measured)** | **58,641,186** | **58,073,400** | **58,342,003** | **56,040,632** |
+| **Soroban mainnet limit** | 400,000,000 | 400,000,000 | 400,000,000 | 400,000,000 |
+| **Project / SCF target** | < 75,000,000 | < 75,000,000 | < 75,000,000 | < 75,000,000 |
+| **Headroom under target** | **21.8%** | **22.6%** | **22.21%** | **25.28%** |
+| **Headroom under 400M limit** | **85.3%** | **85.5%** | **85.41%** | **85.99%** |
 
 Breakdown by component:
 
@@ -85,20 +87,23 @@ Breakdown by component:
 | G1 negation (`-h`, `-h_msg`) | **4,031** | **Empirically measured** (`test_budget_g1_negation_cpu_instructions`) |
 | Storage reads/writes + TTL extensions | ~1,500,000 | Component benchmark |
 | **Total (fee=0, mainnet measured)** | **58,073,400** | **Direct on-chain measurement** (TX `f3e83555...`) |
-| **Total (nonzero fee, mainnet measured)** | **58,342,003** | **Direct on-chain measurement** (TX `8932bb72...`) |
+| **Total (nonzero fee, dedicated profiling)** | **58,342,003** | **Direct on-chain measurement** (TX `8932bb72...`) |
+| **Total (live production, nonzero fee)** | **56,040,632** | **Direct on-chain measurement** (TX `e0cc4b60...`) |
 
-> **Confirmed On-Chain Nonzero-Fee Fulfill**: A dedicated Mainnet profiling deployment
+> **Live Production Mainnet Fulfill**: The active production contract (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`)
+> executed live on Stellar Mainnet ledger `64595396` (TX [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b))
+> with `fee_amount = 2,000,000 stroops (0.2 XLM)`.
+> The measured on-chain consumption is **56,040,632 instructions**, well below the 75M target (25.28% headroom) and far below the 400M protocol ceiling (85.99% headroom).
+>
+> **Confirmed On-Chain Nonzero-Fee Fulfill (Historical Profiling Instance)**: A dedicated Mainnet profiling deployment
 > (`CA24JMRHKL2J7ZSNE7GFRKQHMH45J2SEEVEVEJR2CZ5RZQB7RRJUKRQG`) using the exact same fulfillment
-> implementation was used to obtain an actual nonzero-fee `fulfill()` measurement.
+> implementation was also used to obtain an isolated nonzero-fee `fulfill()` measurement.
 > The **58,342,003 instructions** figure is an actual, confirmed on-chain measurement executed on
 > Stellar Mainnet ledger `64560204` (TX [`8932bb72...`](https://stellar.expert/explorer/public/tx/8932bb7204288fda36bd63f5d31ea771a3be389eb6b649765042d9101d505fa9))
 > with `fee_amount = 100,000 stroops (0.01 XLM)`.
 >
-> The measured on-chain delta between nonzero-fee and zero-fee fulfillment is **268,603 instructions**,
-> tightly corroborating the 221,988 instructions measured in the isolated SAC transfer test.
->
 > All **VRF-core** execution paths (no consumer callback) remain comfortably below the **75M SCF
-> requirement** (22.21% headroom) and far below the **400M Soroban mainnet protocol limit** (85.41% headroom).
+> requirement** (up to 25.28% headroom) and far below the **400M Soroban mainnet protocol limit** (85.99% headroom).
 >
 > **Scope.** The 75M figure covers the VRF core: drand signature check, BLS-VRF verification,
 > Ed25519 check, storage writes and the fee transfer. A unit test holds it
@@ -107,8 +112,9 @@ Breakdown by component:
 > callback requests. Operationally the worker's resource guard (`MAX_FULFILL_INSTRUCTIONS`, default 90M,
 > plus resource-fee and max-fee bounds) refuses to sign any fulfillment whose simulation exceeds it.
 
-> **Testnet cross-check:** testnet TX [`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb)
-> measured 58,587,982 instructions — within 0.1% of mainnet, confirming consistency across networks.
+> **Testnet cross-checks:**
+> - Live production Testnet TX [`323ae892...`](https://stellar.expert/explorer/testnet/tx/323ae89254509d6a1b24b7f224476efa2f45970a13a3bba7f034d64fe1aa3f3e) (Contract `CBEDNSJ...`): **55,822,585 instructions**, network fee charged: 322,417 stroops.
+> - Historical testnet TX [`2ec66cb6...`](https://stellar.expert/explorer/testnet/tx/2ec66cb6bccd87dbaff1a7cd103c60b843bd48b191abe34e401b796928b87bfb): 58,587,982 instructions — confirming consistency across networks.
 
 
 ## G1 negation analysis
@@ -147,7 +153,27 @@ packing into a single struct. This is **intentional**:
    instructions per request, compared to ~56M for BLS verification. The overhead
    is <0.2% of total `fulfill()` cost.
 
-## Testnet transaction links
+## Verified live transaction links
+
+### Live Production Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`)
+
+| Action | Ledger | Network Fee Charged | Application Fee | Explorer Link |
+|---|---|---|---|---|
+| Contract Upload | 64595209 | 24,960 stroops | — | [`fe1b7f85...`](https://stellar.expert/explorer/public/tx/fe1b7f85b738bdc65620bffd9f10abbfdf7995adfbb4a7a90803c3a17c6cf41b) |
+| Contract Instance Deploy | 64595232 | 1,481,200 stroops | — | [`fccef97c...`](https://stellar.expert/explorer/public/tx/fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50) |
+| `request(context)` #1 | 64595350 | 1,475,632 stroops | 2,000,000 stroops (escrowed) | [`978297f0...`](https://stellar.expert/explorer/public/tx/978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae) |
+| `fulfill(1)` (56,040,632 insn) | 64595396 | 1,518,581 stroops | 2,000,000 stroops (released) | [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) |
+
+### Live Production Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`)
+
+| Action | Ledger | Network Fee Charged | Application Fee | Explorer Link |
+|---|---|---|---|---|
+| Contract Upload | 1007875 | 24,960 stroops | — | [`59e0cd96...`](https://stellar.expert/explorer/testnet/tx/59e0cd96c43ee52546f1f8db23f96cd33ee79b8c501de93557b400c6bbe2c779) |
+| Contract Instance Deploy | 1007886 | 318,367 stroops | — | [`1e832b86...`](https://stellar.expert/explorer/testnet/tx/1e832b864f80cb54f507109e4c1484e680e635a5b6234774e8d9155fa1a88d96) |
+| `request(context)` #1 | 1007908 | 219,279 stroops | 2,000,000 stroops (escrowed) | [`dbc6a944...`](https://stellar.expert/explorer/testnet/tx/dbc6a944995acf762cbd944a16a3d9a8be7b35d22aee6fc65184cecc81c11040) |
+| `fulfill(1)` (55,822,585 insn) | 1007914 | 322,417 stroops | 2,000,000 stroops (released) | [`323ae892...`](https://stellar.expert/explorer/testnet/tx/323ae89254509d6a1b24b7f224476efa2f45970a13a3bba7f034d64fe1aa3f3e) |
+
+### Historical testnet transaction links
 
 | Function | TX Hash | Explorer |
 |---|---|---|

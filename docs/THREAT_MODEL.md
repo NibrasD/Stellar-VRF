@@ -107,16 +107,12 @@ close to real time. Stellar close times normally track wall-clock time within a 
 but the lag has not been measured for this deployment. Deployments that need a wider margin
 can pass a larger `round_offset` at construction.
 
-> **Deployed Mainnet contract (`CBTCC5QL…SUHU`) is affected by an off-by-one fixed in audit
-> round 6.** Earlier code computed `current_round` without the `+ 1`, one round behind drand.
-> The "future" round was then only `round_offset − 1 = 1` round ahead of the published one: its
-> beacon appeared **0–3 s** after the request timestamp, and at round boundaries it could
-> already be public at request time. Requester unpredictability is unaffected, since the output
-> still needs the oracle's BLS key. But the guarantee that *even the oracle* can't know the
-> beacon at request time does not hold on that instance: an oracle colluding with a requester
-> can get close to a known beacon. The fix only takes effect in a **new deployment**, because
-> the contract has no upgrade entrypoint. Until consumers migrate, treat that instance as
-> offering requester-side unpredictability only.
+> **Production deployment (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) includes the round 6 fix.**
+> In earlier legacy WASM code (`CBTCC5QL…SUHU`), `current_round` was computed without the `+ 1`,
+> which was one round behind drand. The active production contract `CAW6KEC…` enforces the correct
+> drand round formula (`floor((now - genesis) / period) + 1 + round_offset`), guaranteeing that the beacon
+> is strictly emitted 3–6 s in the future after the request ledger timestamp. The legacy instance (`CBTCC5QL…`)
+> is superseded.
 
 ## Attack surface
 

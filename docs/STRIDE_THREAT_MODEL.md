@@ -82,12 +82,7 @@ request is created, so the oracle cannot know the VRF input in advance. If the l
 lags real time by more than the margin (not measured for this deployment; validators bound but do
 not eliminate drift), the bound beacon may already be public. A larger `round_offset` widens the margin.
 
-**Residual (Tampering.2.RES.1): live Mainnet instance.** The contract deployed before audit
-round 6 (`CBTCC5QL…SUHU`) computed `current_round` without the `+ 1`. Its bound round was only
-one round ahead of the published beacon (0–3 s lead, sometimes already public at request time).
-This remediation therefore does **not** hold there against an oracle colluding with a requester.
-The fix needs a redeployment (no upgrade entrypoint). See
-[THREAT_MODEL.md](THREAT_MODEL.md#trust-assumptions).
+**Production Status (Tampering.2.RES.1):** The active production contract (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) includes the round 6 fix and enforces the correct `+ 1` drand round calculation. The legacy instance deployed prior to audit round 6 (`CBTCC5QL…SUHU`) has been superseded. See [THREAT_MODEL.md](THREAT_MODEL.md#trust-assumptions).
 
 ### Tampering.3 — Key rotation used to install a malicious oracle key
 

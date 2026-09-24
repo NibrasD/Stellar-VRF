@@ -9,10 +9,9 @@
 > - Later reviews found issues that it did **not** flag:
 >   - the oracle account can bias outputs through key rotation (see THREAT_MODEL.md →
 >     *Trust assumptions*);
->   - the Mainnet instance has `fee_amount = 0`, which enables oracle drain / selective
->     liveness denial;
+>   - the historical Mainnet instance (`CBTCC5QL…`) had `fee_amount = 0`, which enabled oracle drain; the current production instance (`CAW6KEC…`) enforces a 0.2 XLM escrow fee;
 >   - there was a biased range fallback. Section MB-01 has since been corrected in place.
-> - The live Mainnet WASM (`90ad8499…`) predates several source fixes.
+> - The earlier historical Mainnet WASM (`90ad8499…` / `CBTCC5QL…`) predated several source fixes. All audit fixes (rounds 6–9, 128-bit uniform reduction, fee reservation) are now deployed and verified live on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`).
 >
 > For the current security posture, read [`THREAT_MODEL.md`](THREAT_MODEL.md) and the
 > *Known limitations* in the [README](../README.md). The current test counts come from CI
@@ -129,7 +128,7 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
   - For uniform $x \in [0, 2^{128})$ and any $max < 2^{64}$, the deviation between residue classes is bounded by $max / 2^{128} \le 2^{-64}$ — cryptographically negligible.
   - Properties: **no biased fallback path**, **constant cost** (exactly one `sha256`, no loop, deterministic instruction count), and **deterministic** output for identical inputs.
   - The client-side helpers `deriveRandomFromBeta()` (JS SDK) and `derive_random_from_beta()` (Rust SDK) use the same 128-bit reduction, but they are **not the same function** as the contract's: they reduce the first 16 bytes of `beta` directly, while the contract reduces `sha256("VREP_DERIVE_V1" ‖ beta ‖ context)`. Their outputs differ for the same request.
-  - **Deployment status:** the 128-bit method is in the source. The live Mainnet contract (`CBTCC5QL…`, WASM `90ad8499…`) was deployed **before** this change and still runs the earlier bounded rejection loop. This was confirmed by calling it on Mainnet request #1 with `max = 2^63 + 12345` and matching the old algorithm's output. The biased fallback affects only very large `max` values (see above). Ranges used in practice (dice, percentages, indices) are unaffected. A redeployment is needed to ship the fix on-chain.
+  - **Deployment status:** the 128-bit uniform reduction is compiled into WASM `81ffb2f2…` and is deployed live on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`), verified via live fulfillment and on-chain derivations. The earlier legacy instance (`CBTCC5QL…`) ran the prior algorithm.
   - Verified by tests: `test_derive_random_in_range_bounds`, `test_derive_random_in_range_worst_case_sampling`, `test_property_derive_random_in_range_boundary_max_one`, and `test_property_derive_random_in_range_fuzz_various_ranges`.
 
 ### [SL-01] Storage Rent Reclamation & Bounded Growth [VERIFIED-SECURE]
