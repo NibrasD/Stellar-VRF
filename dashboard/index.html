@@ -347,56 +347,180 @@
       return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
     }
 
+    // ── Permanent Seed Events + localStorage Cache ───────────────────────────
+    // Soroban RPC nodes only retain events for ~17 days. To ensure permanent
+    // visibility for any visitor (even on a fresh browser after months/years),
+    // verified genesis on-chain events are pre-seeded here, and all new events
+    // discovered via RPC are accumulated permanently in localStorage.
+
+    const BOOTSTRAP_EVENTS = {
+      "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX": {
+        requests: {
+          "1": {
+            requestId: "1",
+            requester: "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P",
+            ledger: 64595393,
+            txHash: "978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae",
+          },
+          "2": {
+            requestId: "2",
+            requester: "GCMZZ53RKG75NPYBD6ACEQVVVBKKVJRDS5AJOY3WZG5O2TVO5XYVR4DY",
+            ledger: 64598349,
+            txHash: "4afc55d41fc3c4afb7c2266cb210aebf641128250cc256f297b1c109ff95fc3c",
+          },
+          "3": {
+            requestId: "3",
+            requester: "GCMZZ53RKG75NPYBD6ACEQVVVBKKVJRDS5AJOY3WZG5O2TVO5XYVR4DY",
+            ledger: 64598623,
+            txHash: "f421c91c497621d766c0f44b28f438bbadda9ed381cae1f97c38f8f79615a33d",
+          },
+          "4": {
+            requestId: "4",
+            requester: "GCMZZ53RKG75NPYBD6ACEQVVVBKKVJRDS5AJOY3WZG5O2TVO5XYVR4DY",
+            ledger: 64598943,
+            txHash: "6733cdc6c2829f1c8c3c7862901c2a3c92e92e6168d1f57e7cd2c5e8c1072e4b",
+          },
+        },
+        fulfills: {
+          "1": {
+            betaOutput: "d0ff5b25c56d339e85c5afc0f09225a8eefd621b98e2b121c776fc11595dfc9a",
+            ledger: 64595396,
+            txHash: "e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b",
+          },
+          "2": {
+            betaOutput: "5334c7641bf62d6cb9ef004f493e59e0819022d253c8b8a99be94af04ff08043",
+            ledger: 64598414,
+            txHash: "e29aad2c242a22b17813b7951220f63183fae153fe027dd2f66fe352ab851bd9",
+          },
+          "3": {
+            betaOutput: "8f8f59d3e58de45f8bc2bfab473141a1c82d6b83ea88fedf11674cafbb9c65ef",
+            ledger: 64598626,
+            txHash: "1b37b52f4dade617294db25212f49a98949e38f8a19ed60c7350f0dcfa3d4ad1",
+          },
+          "4": {
+            betaOutput: "6315c5418e6be2ea148f3c7010578526e1b17649b04b2259b6727208fba8079c",
+            ledger: 64598946,
+            txHash: "1e1703826aa82ec5e4626aa7b1ee16a998ab2cb44198640ac5d88a4574712bec",
+          },
+        },
+        lastLedger: 64598946,
+      },
+      "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR": {
+        requests: {
+          "1": {
+            requestId: "1",
+            requester: "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P",
+            ledger: 1007910,
+            txHash: "dbc6a944995acf762cbd944a16a3d9a8be7b35d22aee6fc65184cecc81c11040",
+          },
+        },
+        fulfills: {
+          "1": {
+            betaOutput: "1f8e13f412ba72db91cd4a59f93976ca4465aa92c813739775080c58e0be216d",
+            ledger: 1007914,
+            txHash: "323ae89254509d6a1b24b7f224476efa2f45970a13a3bba7f034d64fe1aa3f3e",
+          },
+        },
+        lastLedger: 1007914,
+      },
+    };
+
+    function cacheKey() {
+      return "vrf_events_v3_" + cfg.contract;
+    }
+    function loadCache() {
+      const boot = BOOTSTRAP_EVENTS[cfg.contract] || { requests: {}, fulfills: {}, lastLedger: 0 };
+      try {
+        const raw = localStorage.getItem(cacheKey());
+        if (!raw) return { requests: { ...boot.requests }, fulfills: { ...boot.fulfills }, lastLedger: boot.lastLedger };
+        const parsed = JSON.parse(raw);
+        return {
+          requests: { ...boot.requests, ...(parsed.requests || {}) },
+          fulfills: { ...boot.fulfills, ...(parsed.fulfills || {}) },
+          lastLedger: Math.max(boot.lastLedger, parsed.lastLedger || 0),
+        };
+      } catch {
+        return { requests: { ...boot.requests }, fulfills: { ...boot.fulfills }, lastLedger: boot.lastLedger };
+      }
+    }
+    function saveCache(requests, fulfills, lastLedger) {
+      try {
+        localStorage.setItem(cacheKey(), JSON.stringify({ requests, fulfills, lastLedger }));
+      } catch { /* localStorage full — skip silently */ }
+    }
+
     // ── Event fetching ────────────────────────────────────────────────────────
     async function fetchEvents() {
       if (!cfg.contract) return;
 
-      // Recompute the retention window every refresh. getEvents rejects any
-      // startLedger older than the node's oldest retained ledger, so we must
-      // discover `oldestLedger` and start just inside it.
       const latest = await getLatestLedger();
       document.getElementById("stat-ledger").textContent = latest;
-      let oldest = Math.max(1, latest - 16000);
+
+      // Load whatever we already know from the browser cache.
+      const cache = loadCache();
+      const cachedRequests = cache.requests || {};
+      const cachedFulfills = cache.fulfills || {};
+      const lastCached     = cache.lastLedger || 0;
+
+      // If we have a cache, start from lastCached+1 (incremental).
+      // Otherwise fall back to the full RPC retention window (~17 days).
+      // Probe to discover the RPC node's oldest retained ledger so getEvents
+      // never fails with "startLedger older than oldestLedger".
+      const FALLBACK_WINDOW = 300000; // ~17 days at ~5s/ledger
+      let oldestRetained = Math.max(1, latest - FALLBACK_WINDOW);
       try {
         const probe = await rpcCall("getEvents", {
           startLedger: Math.max(1, latest - 100),
           filters: [{ type: "contract", contractIds: [cfg.contract] }],
           pagination: { limit: 1 },
         });
-        if (probe.oldestLedger) oldest = probe.oldestLedger + 1;
-      } catch (_) { /* fall back to latest-16000 */ }
-      startLedger = oldest;
+        if (probe.oldestLedger) oldestRetained = probe.oldestLedger;
+      } catch (_) { /* fallback to default window */ }
 
-      // Reset accumulators so a refresh reflects current on-chain state.
-      requestEvents = [];
-      fulfillEvents = {};
+      // Start scanning after last cached ledger, but clamp to oldestRetained
+      // if months/years have passed since last visit:
+      let fetchFrom = lastCached > 0 ? (lastCached + 1) : oldestRetained;
+      if (fetchFrom < oldestRetained) {
+        fetchFrom = oldestRetained;
+      }
 
-      // Fetch request events
-      const rawRequests = await getContractEvents("request", startLedger);
-      for (const evt of rawRequests) {
-        const val = decodeEventValue(evt); // [request_id, requester, required_round]
-        if (Array.isArray(val) && val.length >= 3) {
-          const id = String(val[0]);
-          if (!requestEvents.find(e => e.requestId === id)) {
-            requestEvents.push({
-              requestId: id,
-              requester: String(val[1]),
-              ledger: evt.ledger,
-              txHash: evt.txHash,
-            });
+      // Only hit the RPC when there are genuinely new ledgers to scan.
+      if (fetchFrom <= latest) {
+        startLedger = fetchFrom;
+
+        // Merge new request events into the cache
+        const rawRequests = await getContractEvents("request", fetchFrom);
+        for (const evt of rawRequests) {
+          const val = decodeEventValue(evt); // [request_id, requester, required_round]
+          if (Array.isArray(val) && val.length >= 3) {
+            const id = String(val[0]);
+            if (!cachedRequests[id]) {
+              cachedRequests[id] = {
+                requestId: id,
+                requester:  String(val[1]),
+                ledger:     evt.ledger,
+                txHash:     evt.txHash,
+              };
+            }
           }
         }
+
+        // Merge new fulfill events into the cache
+        const rawFulfills = await getContractEvents("fulfill", fetchFrom);
+        for (const evt of rawFulfills) {
+          const val = decodeEventValue(evt); // [request_id, beta_output]
+          if (Array.isArray(val) && val.length >= 2) {
+            const id = String(val[0]);
+            cachedFulfills[id] = { betaOutput: toHex(val[1]), ledger: evt.ledger, txHash: evt.txHash };
+          }
+        }
+
+        saveCache(cachedRequests, cachedFulfills, latest);
       }
 
-      // Fetch fulfill events
-      const rawFulfills = await getContractEvents("fulfill", startLedger);
-      for (const evt of rawFulfills) {
-        const val = decodeEventValue(evt); // [request_id, beta_output]
-        if (Array.isArray(val) && val.length >= 2) {
-          const id = String(val[0]);
-          fulfillEvents[id] = { betaOutput: toHex(val[1]), ledger: evt.ledger, txHash: evt.txHash };
-        }
-      }
+      // Expose merged results to the render functions
+      requestEvents = Object.values(cachedRequests);
+      fulfillEvents  = cachedFulfills;
 
       renderActivity();
       updateStats();
@@ -405,7 +529,7 @@
     function renderActivity() {
       const feed = document.getElementById("activity-feed");
       if (requestEvents.length === 0) {
-        feed.innerHTML = '<div style="padding:28px;text-align:center;color:#374151;font-size:0.82rem">No VRF requests found in the current retention window.<br>Submit one via the <a class="hash-link" href="../playground/">Playground ↗</a></div>';
+        feed.innerHTML = '<div style="padding:28px;text-align:center;color:#374151;font-size:0.82rem">No VRF requests found yet.<br>Submit one via the <a class="hash-link" href="../playground/">Playground ↗</a></div>';
         return;
       }
 
