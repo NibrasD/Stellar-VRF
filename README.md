@@ -158,7 +158,7 @@ docs/               — Operational and security documentation
 - **drand quicknet binding** with future-round enforcement — oracle cannot predict input
 - **Callback support** — `request_with_callback()` for fully on-chain composability
 - **Oracle key rotation** — atomic BLS + Stellar + Ed25519 key rotation
-- **High availability** — primary + hot-standby on separate hosts with Redis leader election, validated by a live failover drill on Mainnet ([evidence](docs/HA_FAILOVER_EVIDENCE.md))
+- **High availability** — primary + hot-standby on separate hosts with Redis leader election, failover mechanism validated in CI and in a two-host Mainnet drill on the earlier instance; the re-run against the current contract is tracked in [evidence](docs/HA_FAILOVER_EVIDENCE.md) (Part C)
 - **Re-entrancy protection** — transient lock per request ID
 - **Storage TTL extension** — automatic TTL renewal on all persistent entries
 

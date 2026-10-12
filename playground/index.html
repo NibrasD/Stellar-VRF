@@ -247,14 +247,18 @@
       </div>
       <div class="card">
         <h2>🧮 Client-side Range Derivation</h2>
-        <p>Given a beta output (hex), derive a number in a range without any network call — useful for integrating the result locally.</p>
-        <label>Beta Output (hex, 64 chars)</label>
+        <p>Reproduces the contract's <code>derive_random_in_range(request_id, max)</code> (v2: <code>sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ request_id ‖ max ‖ beta)</code> with exact two-candidate rejection sampling) entirely in your browser. The range is inclusive: result = Min + derive_random_in_range(id, Max − Min + 1).
+        Use <em>Derive</em> for a purely offline result, or <em>Derive &amp; compare with on-chain</em> to load the beta of a fulfilled request from the contract and check that the browser and <code>derive_random_in_range()</code> return the same value.</p>
+        <label>Request ID</label>
+        <input type="number" id="cs-id" placeholder="e.g. 18" min="0" />
+        <label>Beta Output (hex, 64 chars — leave empty to load from chain)</label>
         <input type="text" id="cs-beta" placeholder="7f3ea1b2…" maxlength="64" />
         <label>Min</label>
         <input type="number" id="cs-min" value="1" />
         <label>Max</label>
         <input type="number" id="cs-max" value="100" />
-        <button class="primary" onclick="deriveClientSide()">🧮 Derive</button>
+        <button class="primary" onclick="deriveClientSide(false)">🧮 Derive</button>
+        <button class="primary" onclick="deriveClientSide(true)">🔗 Derive &amp; compare with on-chain</button>
         <div class="output" id="cs-output" style="text-align:center;color:#374151">Enter beta output and range</div>
       </div>
     </div>
@@ -327,7 +331,7 @@
 
     // ── Stellar SDK (UMD global loaded via <script> above) ─────────────────────
     const SDK = window.StellarSdk;
-    const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative,
+    const { Keypair, Account, TransactionBuilder, Operation, nativeToScVal, scValToNative,
             xdr, rpc, Networks } = SDK;
     // Browsers have no global Buffer; the UMD bundle doesn't reliably export it
     // either. We only need a tiny shim for .isBuffer (used in one hex helper);
@@ -379,8 +383,23 @@
       } catch (_) { return null; }
     }
 
+    // Read-only calls (is_fulfilled, get_proof, get_beta, derive_*) never touch the
+    // ledger state of the caller, and simulateTransaction does not require the
+    // source account to exist. So keyless sessions simulate from a throwaway,
+    // unfunded account: no secret key, no Friendbot (which doesn't exist on
+    // Mainnet), and no dependency on a previous "Connect".
+    const READ_ONLY_SOURCE = Keypair.random().publicKey();
+
+    // Lazily create the RPC client for the *currently selected* network.
+    // (SOROBAN_RPC is a function: it must be called.)
+    function ensureServer() {
+      if (!server) server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
+      return server;
+    }
+
     async function simulate(fnName, args) {
-      const account = await server.getAccount(keypair.publicKey());
+      ensureServer();
+      const account = new Account(READ_ONLY_SOURCE, "0");
       const tx = new TransactionBuilder(account, {
         fee: "1000000", networkPassphrase: NETWORK.passphrase,
       }).addOperation(Operation.invokeContractFunction({
@@ -525,12 +544,6 @@
       const result = document.getElementById("proof-result");
       result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${esc(String(id))} from Soroban RPC…</div>`;
       try {
-        if (!server) {
-          server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
-          // Use a read-only account for simulation (friendbot-funded)
-          keypair = Keypair.random();
-          try { await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`); } catch {}
-        }
         const proof = await simulate("get_proof", [nativeToScVal(id, { type: "u64" })]);
         if (!proof) throw new Error("Request not found or not yet fulfilled");
 
@@ -577,11 +590,6 @@
       const output = document.getElementById("verify-output");
       output.innerHTML = `<span class="spinner"></span> Checking request #${esc(String(id))}…`;
       try {
-        if (!server) {
-          server = new rpc.Server(SOROBAN_RPC, { allowHttp: false });
-          keypair = Keypair.random();
-          try { await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`); } catch {}
-        }
         const fulfilled = await simulate("is_fulfilled", [nativeToScVal(id, { type: "u64" })]);
         if (!fulfilled) {
           output.innerHTML = `<div style="color:#fbbf24">⏳ Request #${esc(String(id))} is not yet fulfilled</div>`;
@@ -598,25 +606,104 @@
     };
 
     // ── Client-side derivation ─────────────────────────────────────────────────
-    window.deriveClientSide = function() {
-      const betaHex = document.getElementById("cs-beta").value.trim();
-      const min = BigInt(document.getElementById("cs-min").value || 1);
-      const max = BigInt(document.getElementById("cs-max").value || 100);
-      const output = document.getElementById("cs-output");
-      if (!betaHex || betaHex.length < 16) {
-        output.innerHTML = `<div style="color:#fca5a5">❌ Enter at least 8 bytes (16 hex chars) of beta output</div>`;
-        return;
+    // Mirrors sdk/js `deriveRangeFromBeta` / `reduceUniform` and the contract's
+    // `derive_random_in_range` + `reduce_uniform` byte for byte.
+    const U64_MAX = (1n << 64n) - 1n;
+    const TWO_128 = 1n << 128n;
+    const DERIVE_DOMAIN = new TextEncoder().encode("VREP_DERIVE_V2");
+    const DERIVE_TAG_RANGE = 0x02;
+
+    function hexToBytes(hex) {
+      if (!/^([0-9a-fA-F]{2})*$/.test(hex)) throw new Error("beta must be hex");
+      const out = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+      return out;
+    }
+    function bytesToHex(b) {
+      return Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+    }
+    function bytesToBig(b) {
+      return b.length === 0 ? 0n : BigInt("0x" + bytesToHex(b));
+    }
+    function be64(v) {
+      const b = new Uint8Array(8);
+      new DataView(b.buffer).setBigUint64(0, v);
+      return b;
+    }
+
+    // Exact-uniform reduction of a 32-byte hash into [0, max): two 128-bit
+    // big-endian candidates, each accepted iff c < 2^128 - (2^128 mod max).
+    function reduceUniform(hash, max) {
+      const limit = TWO_128 - (TWO_128 % max);
+      for (const half of [hash.subarray(0, 16), hash.subarray(16, 32)]) {
+        const c = bytesToBig(half);
+        if (c < limit) return c % max;
       }
+      throw new Error("range derivation failed: both candidates rejected");
+    }
+
+    // == contract derive_random_in_range(request_id, max), computed locally.
+    async function deriveRangeFromBeta(beta, requestId, max) {
+      if (beta.length !== 32) throw new Error("beta must be exactly 32 bytes (64 hex chars)");
+      if (requestId < 0n || requestId > U64_MAX) throw new Error("request ID must be a u64");
+      if (max <= 0n || max > U64_MAX) throw new Error("max must be in [1, 2^64 - 1]");
+      if (max === 1n) return 0n;
+      const input = new Uint8Array(DERIVE_DOMAIN.length + 1 + 8 + 8 + 32);
+      let o = 0;
+      input.set(DERIVE_DOMAIN, o); o += DERIVE_DOMAIN.length;
+      input[o++] = DERIVE_TAG_RANGE;
+      input.set(be64(requestId), o); o += 8;
+      input.set(be64(max), o); o += 8;
+      input.set(beta, o);
+      if (!(window.crypto && window.crypto.subtle))
+        throw new Error("WebCrypto unavailable (a secure https:// context is required)");
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+      return reduceUniform(digest, max);
+    }
+    window.deriveRangeFromBeta = deriveRangeFromBeta;
+
+    window.deriveClientSide = async function(compare) {
+      const output = document.getElementById("cs-output");
+      output.innerHTML = `<span class="spinner"></span> Deriving…`;
       try {
-        if (max <= min) throw new Error("max must be > min");
-        const range = max - min + 1n;
-        const betaVal = BigInt("0x" + betaHex.slice(0, 16));
-        const result = min + (betaVal % range);
-        output.innerHTML = `<div class="result-big">${esc(result.toLocaleString())}</div>
-          <div class="result-label">Range: ${esc(String(min))} — ${esc(String(max))}</div>
+        const idRaw = document.getElementById("cs-id").value.trim();
+        if (idRaw === "") throw new Error("Enter the request ID (it is bound into the derivation hash)");
+        const requestId = BigInt(idRaw);
+        const min = BigInt(document.getElementById("cs-min").value || 1);
+        const max = BigInt(document.getElementById("cs-max").value || 100);
+        if (max < min) throw new Error("max must be >= min");
+        const span = max - min + 1n;
+        if (span > U64_MAX) throw new Error("range [0, 2^64 - 1] cannot be expressed as the contract's exclusive u64 bound");
+
+        let betaHex = document.getElementById("cs-beta").value.trim().replace(/^0x/, "");
+        if (!betaHex) {
+          // Keyless on-chain read of the verified beta.
+          const raw = await simulate("get_beta", [nativeToScVal(requestId, { type: "u64" })]);
+          betaHex = bytesToHex(new Uint8Array(raw));
+          document.getElementById("cs-beta").value = betaHex;
+        }
+        if (betaHex.length !== 64) throw new Error("Beta must be exactly 32 bytes (64 hex chars)");
+
+        const local = min + await deriveRangeFromBeta(hexToBytes(betaHex), requestId, span);
+        let html = `<div class="result-big">${esc(local.toString())}</div>
+          <div class="result-label">Browser-derived, range [${esc(String(min))} – ${esc(String(max))}]</div>
           <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">
-            Formula: min + (beta_prefix % range) = ${esc(String(min))} + (${esc(String(betaVal))} % ${esc(String(range))})
+            ${esc(String(min))} + derive_random_in_range(#${esc(String(requestId))}, ${esc(String(span))}) — sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ id ‖ max ‖ beta) with exact rejection sampling
           </div>`;
+
+        if (compare) {
+          const onchainRaw = await simulate("derive_random_in_range", [
+            nativeToScVal(requestId, { type: "u64" }),
+            nativeToScVal(span, { type: "u64" }),
+          ]);
+          const onchain = min + BigInt(onchainRaw);
+          const ok = onchain === local;
+          html += `<div style="margin-top:12px;color:${ok ? "#86efac" : "#fca5a5"}">
+              ${ok ? "✅ MATCH" : "❌ MISMATCH"} — on-chain derive_random_in_range(${esc(String(requestId))}, ${esc(String(span))}) = ${esc(onchainRaw.toString())}
+              → ${esc(onchain.toString())}
+            </div>`;
+        }
+        output.innerHTML = html;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">❌ ${esc(e.message)}</div>`;
       }

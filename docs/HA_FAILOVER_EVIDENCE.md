@@ -6,11 +6,18 @@ scope of each before judging the Tranche 3 HA criterion.
 | Part | What it proves | Status |
 |---|---|---|
 | **A. Mechanism drill** (automated, real Redis) | Election, split-brain resistance, takeover after hard failure, **fencing of a zombie primary** | ✅ **EXECUTED — 9/9 checks passed** |
-| **B. Production two-host drill** | A standby on a *separate host* restoring real service, proven by a post-failover **Mainnet `fulfill()` TX** | ✅ **EXECUTED — 2026-09-21** |
+| **B. Production two-host drill** | A standby on a *separate host* restoring real service, proven by a post-failover **Mainnet `fulfill()` TX** | ⚠️ Executed 2026-09-21 against the **earlier** Mainnet contract `CCN75KEG…55G57`. **Re-run against the current contract `CAW6KECQ…UPRX` is pending** (Part C) |
 
-Both parts are now complete. Part B is the one that satisfies the Tranche 3
-criterion *"Primary oracle worker running in production with hot-standby replica
-and automatic failover"* — see the Mainnet transaction hashes below.
+> **Scope correction.** The Part B transactions below (request `6329d2b7…`,
+> fulfill `fafa522f…`) invoked the earlier Mainnet instance
+> `CCN75KEGLETGRTVJJDMXB2ZRQD6PC2S56VUOEKVLQPVEIJYGSOV55G57` (verified from the
+> transaction's invoke-contract operation on Horizon), **not** the current
+> production contract `CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`.
+> Part B still demonstrates the HA mechanism on two real hosts, but it is **not**
+> evidence about the current deployment. Part C is the procedure and the table to
+> fill for that evidence; it must be completed before the Tranche 3 criterion
+> *"Primary oracle worker running in production with hot-standby replica and
+> automatic failover"* is claimed for `CAW6…UPRX`.
 
 ---
 
@@ -89,10 +96,11 @@ pre-submit leadership re-check, backed by on-chain idempotency.**
 
 ---
 
-# Part B — Production two-host drill (EXECUTED ✅)
+# Part B — Production two-host drill (executed, earlier contract)
 
 Executed **2026-09-21** on two separate DigitalOcean droplets coordinating
-through a shared, password-protected Redis instance.
+through a shared, password-protected Redis instance. **Target contract:
+`CCN75KEG…55G57` (earlier Mainnet instance), not the current `CAW6…UPRX`.**
 
 ## Topology
 
@@ -189,7 +197,79 @@ A `/health` endpoint flipping to `leader` only proves the *lease* moved. The dec
 proof that the standby actually **restored service** is a `fulfill()` transaction,
 submitted by HOST B, confirmed on Mainnet, for a request created *after* HOST A died.
 
-## Drill procedure
+---
+
+# Part C — Re-run against the current contract `CAW6KECQ…UPRX` (PENDING — not yet executed)
+
+**Status: not executed.** This must be run by the operator with SSH access to the
+two production hosts; it cannot be performed from the development workstation.
+Nothing below is a result. Every `_TBD_` must be replaced by captured output, and
+none may be filled from the Part B run.
+
+Pre-conditions (all must hold before the kill):
+
+- Both workers' `CONTRACT_ID` is `CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`
+  (`grep CONTRACT_ID oracle-worker/.env` on each host).
+- Both hosts run the **same, exact** commit. Record it on each host:
+  `cd /root/Stellar-VRF && git rev-parse HEAD && git status --short`
+  (and `pm2 describe oracle-primary | grep -i 'script path\|exec cwd'`).
+- `oracle-worker/mainnet_proof_of_operation.mjs` targets `CAW6…UPRX`
+  (its `CONTRACT_ID` constant) — it creates the post-failover request.
+
+Artifacts to attach, per the review request:
+
+1. A **new request TX** and the **standby's `fulfill()` TX**, both on `CAW6…UPRX`
+   (confirm with Horizon: `GET /transactions/<hash>/operations` → contract address,
+   or the stellar.expert contract page for `CAW6…UPRX`).
+2. `/health` + log output showing the role change (before kill, after takeover).
+3. The exact worker commit on both hosts.
+
+Capture sequence (timestamps with `date -u` between steps):
+
+```bash
+# 0. commit + config on BOTH hosts
+for H in 165.245.245.101 64.226.86.16; do
+  ssh root@$H 'hostname; cd /root/Stellar-VRF && git rev-parse HEAD; grep -E "^CONTRACT_ID" oracle-worker/.env'
+done
+
+# 1. roles before
+curl -s http://165.245.245.101:8080/health | tee roles_before_A.json   # expect "role":"leader"
+curl -s http://64.226.86.16:8080/health    | tee roles_before_B.json   # expect "role":"standby"
+
+# 2. hard-kill the primary
+ssh root@165.245.245.101 'date -u +%T; kill -9 $(pm2 pid oracle-primary)'
+
+# 3. role change on the standby (TTL 30 s) — keep the log lines
+ssh root@64.226.86.16 'pm2 logs oracle-standby --lines 50 --nostream | grep -E "LEADER|Starting listener|Became"'
+curl -s http://64.226.86.16:8080/health | tee roles_after_B.json       # expect "role":"leader"
+
+# 4. NEW request on CAW6…UPRX, after the failover
+cd oracle-worker && node mainnet_proof_of_operation.mjs                # prints the request TX
+
+# 5. standby fulfils it
+ssh root@64.226.86.16 'pm2 logs oracle-standby --lines 80 --nostream | grep -E "Submitting fulfill|fulfilled"'
+curl -s http://64.226.86.16:8080/health      # requests_fulfilled >= 1
+
+# 6. restarted primary must come back as standby
+ssh root@165.245.245.101 'pm2 restart oracle-primary'; sleep 5
+curl -s http://165.245.245.101:8080/health                              # expect "role":"standby"
+```
+
+### Part C evidence (to be filled from the real run)
+
+| Field | Value |
+|---|---|
+| Contract under test | `CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX` |
+| Worker commit — HOST A | _TBD (`git rev-parse HEAD`)_ |
+| Worker commit — HOST B | _TBD (`git rev-parse HEAD`; must equal HOST A)_ |
+| Roles before kill | _TBD_ |
+| Roles after takeover (health + log lines) | _TBD_ |
+| New request TX / request ID | _TBD_ |
+| Standby `fulfill()` TX | _TBD_ |
+| Both TXs confirmed against `CAW6…UPRX`? | _TBD_ |
+| Restarted primary came back as standby? | _TBD_ |
+
+## Drill procedure (generic)
 
 ```bash
 # 1. Confirm initial roles

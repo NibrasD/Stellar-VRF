@@ -295,8 +295,8 @@ deployed with.
    - `vrf_oracle_balance_stroops` (gauge, updated by the fee guard). Alert well above
      `MIN_ORACLE_BALANCE_XLM`, e.g. at 2× the floor. At the floor the worker stops submitting.
    - Alert if balance < 5 XLM
-   - Each `fulfill()` costs ~0.14 XLM in fees (mainnet measured: 1,387,682 stroops
-     = 0.1387682 XLM on TX
+   - Each `fulfill()` costs ~0.14 XLM in fees (mainnet measured on the earlier
+     instance, not `CAW6…UPRX`: 1,387,682 stroops = 0.1387682 XLM on TX
      [`fafa522f...`](https://stellar.expert/explorer/public/tx/fafa522f31355e755d107eaeabe36c4e37a6b48baf794de42d402188b5de78b0)).
      Budget ~0.15 XLM per fulfillment.
 
