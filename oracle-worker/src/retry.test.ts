@@ -138,6 +138,38 @@ describe("submitFulfillment beforeSend gate (fee guard)", () => {
     expect(beforeSend).toHaveBeenCalledTimes(4); // MAX_RETRIES in the config mock
     expect(server.sendTransaction).toHaveBeenCalledTimes(4);
   });
+
+  it("re-checks leadership AFTER the async beforeSend: never signs/sends, releases the reservation", async () => {
+    const server = mockServer("1500000");
+    let leader = true;
+    const outcomes: string[] = [];
+    const sign = vi.fn();
+    const { rpc } = await import("@stellar/stellar-sdk");
+    const spy = vi
+      .spyOn(rpc, "assembleTransaction")
+      .mockReturnValue({ build: () => ({ fee: "1500000", sign }) } as any);
+    const beforeSend = vi.fn(async () => {
+      leader = false; // lease lost while the fee reservation was in flight
+      return {
+        ok: true as const,
+        settle: async (o: string) => {
+          outcomes.push(o);
+        },
+      };
+    });
+
+    const err = await submitFulfillment(server, 1n, PROOF, () => leader, beforeSend).catch((e) => e);
+    spy.mockRestore();
+
+    expect(err).toBeInstanceOf(FulfillAbortedError);
+    expect(err.message).toMatch(/leadership lost/);
+    expect(beforeSend).toHaveBeenCalledTimes(1);
+    expect(sign).not.toHaveBeenCalled();
+    expect(server.sendTransaction).not.toHaveBeenCalled();
+    expect(outcomes).toEqual(["not_included"]); // reservation released exactly once
+    // No internal retry after the abort (withFulfillRetry not retrying it is covered below).
+    expect(server.getAccount).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("submitFulfillment settles each send's fee reservation by outcome", () => {

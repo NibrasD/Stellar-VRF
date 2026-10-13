@@ -179,6 +179,16 @@ export async function submitFulfillment(
       }
       const settle = gate.settle ?? (async () => {});
 
+      // beforeSend() is async (a Redis round-trip for the fee reservation), so
+      // the lease may have been lost while it ran. Re-check right before
+      // signing; if we abort here nothing was sent, so release the reservation.
+      if (!canSubmit()) {
+        await settle("not_included", tx0);
+        throw new FulfillAbortedError(
+          `aborting fulfill(${requestId}) attempt ${attempt}: no longer allowed to submit (leadership lost)`
+        );
+      }
+
       prepared.sign(ORACLE_KEYPAIR);
 
       let sent: Awaited<ReturnType<rpc.Server["sendTransaction"]>>;

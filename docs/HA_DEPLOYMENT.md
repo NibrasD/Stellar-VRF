@@ -96,7 +96,7 @@ Holding the lease isn't enough. The leader must also be *processing requests*. A
 
    > Each pass also checks **one more window of older IDs**, with a cursor that walks down to ID 1 and then wraps. The newest `RECONCILE_MAX_SCAN` IDs are checked every pass, and every older ID at least once every `ceil(older IDs / RECONCILE_MAX_SCAN)` passes, so no pending request stays undiscovered after a long outage, whatever the request volume. The cursor is in memory; after a restart it starts from the top again, which only re-checks IDs.
 
-**Pre-submit gate inside retries.** `submitFulfillment()` takes a `canSubmit` callback (wired to `isLeader()`) and checks it before **every** internal attempt, including simulate/send retries. A node that loses the lease mid-retry throws `FulfillAbortedError`, and the outer retry wrapper does not retry that error.
+**Pre-submit gate inside retries.** `submitFulfillment()` takes a `canSubmit` callback (wired to `isLeader()`) and checks it before **every** internal attempt, including simulate/send retries, and again right before signing — after the async fee-reservation call (`beforeSend`), whose reservation is released if the check fails. A node that loses the lease mid-retry throws `FulfillAbortedError`, and the outer retry wrapper does not retry that error.
 
 **Health.** A LEADER reports `degraded` on `/health` if no listener session is running, or if the listener made no progress (successful poll or reconciliation) for `HEALTH_LISTENER_STALE_MS`. A grace period of `HEALTH_LISTENER_GRACE_MS` applies after a session starts. Alert on this. It is exactly the "leader holds the lease but isn't working" case.
 
