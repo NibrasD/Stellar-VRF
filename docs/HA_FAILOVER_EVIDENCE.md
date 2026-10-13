@@ -8,6 +8,7 @@ scope of each before judging the Tranche 3 HA criterion.
 | **A. Mechanism drill** (automated, real Redis) | Election, split-brain resistance, takeover after hard failure, **fencing of a zombie primary** | ✅ **EXECUTED — 9/9 checks passed** |
 | **B. Production two-host drill** | A standby on a *separate host* restoring real service, proven by a post-failover **Mainnet `fulfill()` TX** | ⚠️ Executed 2026-09-21 against the **earlier** Mainnet contract `CCN75KEG…55G57` (superseded by Part C) |
 | **C. Production two-host drill on the current contract `CAW6KECQ…UPRX`** | Hard-kill of the primary, automatic standby takeover, new request + standby `fulfill()` on the current contract | ✅ **EXECUTED — 2026-10-12** (request `a993bcbd…`, fulfill `63f8e2aa…`) |
+| **D. Production redeploy to current source** | Both hosts moved off `1758bf8` to `27f8b41` (includes the leadership-loss submit guards); Redis moved to the private VPC | ✅ **DONE — 2026-10-13** (see Part D) |
 
 > **Scope correction.** The Part B transactions below (request `6329d2b7…`,
 > fulfill `fafa522f…`) invoked the earlier Mainnet instance
@@ -229,8 +230,7 @@ an ancestor of the current repository `HEAD` (`d7a65b3`); `HEAD` is 80 commits
 ahead and touches 33 files under `oracle-worker/src` (later audit fixes such as
 the spend ledger, send-attempt cap and supervisor). So the hosts run the
 `CAW6…UPRX`-configured worker as deployed on 2026-09-24, **not** the latest
-source. Redeploying both hosts to a current commit and repeating this drill is
-the remaining follow-up if the reviewer requires the latest source in production.
+source. **Superseded on 2026-10-13: both hosts now run `27f8b41` — see Part D.**
 
 ## Timeline (UTC, 2026-10-12)
 
@@ -413,3 +413,112 @@ defenses:
 
 The on-chain idempotency path (`is_fulfilled()` rejecting a second `fulfill()`)
 was **not** exercised live in this drill; it is covered by the contract tests.
+
+---
+
+# Part D — Production redeploy to current source (DONE 2026-10-13)
+
+Follow-up to review feedback: the Part C hosts ran `1758bf8`, which predates the
+worker's leadership-loss submit guards, so an in-flight request could still be
+submitted after the lease was lost. Both hosts now run commit
+[`27f8b41`](https://github.com/NibrasD/Stellar-VRF/commit/27f8b41a09f1a703423b4e03218118ab3b92417a).
+
+## What `27f8b41` guarantees
+
+`isLeader()` is re-checked right before submitting, and `submitFulfillment()`
+re-checks `canSubmit()` before every internal attempt **and** once more after the
+async fee-reservation call (`beforeSend`), right before signing. Losing the lease
+at any of these points throws `FulfillAbortedError` (not retried) and releases the
+fee reservation. Regression tests in `oracle-worker/src/retry.test.ts`:
+
+- `never touches the network when not allowed to submit`
+- `re-checks leadership AFTER the async beforeSend: never signs/sends, releases the reservation`
+  — added in `27f8b41`; fails on the previous code, passes with the fix.
+
+CI on the same commit: [CI #114](https://github.com/NibrasD/Stellar-VRF/actions/runs/38391628535)
+— success (oracle worker test + build + failover drill, contract, SDKs, secret scan,
+Docker image). Locally: 192/192 worker tests, `tsc` clean.
+
+Residual window: a lease-based guard cannot remove the gap between the last check
+and the network send. If a stale send ever lands, the contract rejects a second
+`fulfill()` for the same request (`already fulfilled`), so the cost is one
+transaction fee, not a second randomness value.
+
+## How it was deployed
+
+No `git pull` on the hosts. A clean, detached checkout of the exact commit was
+built side-by-side, preflighted against the live contract, then PM2 was switched
+to it. The old tree is untouched for rollback.
+
+```bash
+# on each host
+git clone --no-checkout https://github.com/NibrasD/Stellar-VRF.git /root/vrf-releases/<sha>
+git -C /root/vrf-releases/<sha> checkout --detach <sha>
+cd /root/vrf-releases/<sha>/oracle-worker && npm ci && npm run build && npm prune --omit=dev
+install -m 600 /root/Stellar-VRF/oracle-worker/.env .env
+# preflight: new dist/ config + Redis policy + chain-config + fee-token checks vs CAW6…UPRX
+# switch (actual standby first, by /health, not by process name)
+pm2 delete <name> && pm2 start dist/index.js --name <name> --cwd "$PWD" --time && pm2 save
+```
+
+Order, by `/health` role at the time: HOST A (standby) first, then HOST B (leader).
+
+| UTC 2026-10-13 | Event |
+|---|---|
+| 11:51:52.7 | HOST A switched to `27f8b41`; came up `STANDBY` (11:51:57.9) |
+| 11:53:13.5 | HOST B (leader on `1758bf8`) switched to `27f8b41` |
+| 11:53:17.9 | HOST A: `[Leader] oracle-396935 is now the LEADER.` → listener started, `Reconciliation: no outstanding requests (scanned 1..6)` |
+| 11:53:19.6 | HOST B: `[Leader] oracle-277024 is STANDBY. Watching for leader failure.` |
+
+## Running commit on each host (after deploy)
+
+| | HOST A `165.245.245.101` | HOST B `64.226.86.16` |
+|---|---|---|
+| PM2 process / cwd | `oracle-primary`, `/root/vrf-releases/27f8b41…/oracle-worker` | `oracle-standby`, `/root/vrf-releases/27f8b41…/oracle-worker` |
+| `git rev-parse HEAD` | `27f8b41a09f1a703423b4e03218118ab3b92417a` | `27f8b41a09f1a703423b4e03218118ab3b92417a` |
+| Tracked changes | none | none |
+| `/health` role | `leader`, `listener.running: true` | `standby`, `listener.running: false` |
+| Startup checks | chain config matches contract; Redis backend `redis (multi-server)` | same |
+
+`/health` after deploy (12:08 UTC):
+
+```json
+// HOST A
+{"status":"ok","instance":"oracle-396935","role":"leader","requests_fulfilled":0,"requests_failed":0,
+ "listener":{"running":true,"restarts":0,"last_error":null}}
+// HOST B
+{"status":"ok","instance":"oracle-277024","role":"standby","requests_fulfilled":0,"requests_failed":0,
+ "listener":{"running":false,"restarts":0,"last_error":null}}
+```
+
+No new Mainnet request was created for this redeploy (not requested); request #6
+from Part C remains the latest fulfilled request.
+
+## Redis transport change
+
+`27f8b41` refuses plaintext `redis://` to a non-loopback host on Mainnet unless
+`REDIS_ALLOW_PLAINTEXT=true`, which is meant only for an isolated private network.
+HOST B previously reached Redis over HOST A's **public** IP. It now uses the
+DigitalOcean VPC (both hosts are in the same region):
+
+| | Before | After |
+|---|---|---|
+| Redis `bind` on HOST A | `0.0.0.0`, `protected-mode no` | `127.0.0.1 -10.114.0.2`, `protected-mode yes` |
+| HOST B `REDIS_URL` host | `165.245.245.101` (public) | `10.114.0.2` (VPC) + `REDIS_ALLOW_PLAINTEXT=true` |
+| UFW 6379 on HOST A | allow from `64.226.86.16` | allow only `10.114.0.3` on `eth1`; deny everything else |
+| 6379 from the internet | firewalled | not listening on the public interface |
+
+The VPC path was tested from HOST B (`AUTH` / `PING` / lease read) before any
+switch, and the public rule was removed only after HOST B was connected over the
+VPC. Redis still requires a password. Traffic is not TLS-encrypted inside the
+VPC; moving to `rediss://` is the remaining hardening step.
+
+## Rollback
+
+Pre-deploy backups are in `/root/predeploy-20261013T113929Z/` on each host
+(`.env`, `package-lock.json`, `dist/`, PM2 list, Redis config + UFW rules on A).
+The previous tree `/root/Stellar-VRF` (`1758bf8`) is unchanged; pointing PM2 back
+at it restores the old worker. On HOST B, first change the Redis host in
+`/root/Stellar-VRF/oracle-worker/.env` from `165.245.245.101` to `10.114.0.2`: the
+public path is closed now.
+
