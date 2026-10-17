@@ -10,6 +10,15 @@ worker on its own small server (512 MB RAM), isolated from Mainnet:
 - no `NODE_ENV=production`, because that makes `policy.ts` demand Redis. Never copy the
   Mainnet `.env` here, and never copy `.env.testnet` to a Mainnet host.
 
+| Property | Value |
+|---|---|
+| **Contract ID** | [`CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX`](https://stellar.expert/explorer/testnet/contract/CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX) |
+| **Oracle Account** | [`GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET`](https://stellar.expert/explorer/testnet/account/GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET) |
+| **Status** | **Active** (last verified: October 17, 2026; worker running under PM2) |
+| **Service Tier** | Best-effort developer testing (isolated from production Mainnet) |
+
+> **Testnet Reset Notice:** Stellar Testnet is periodically reset by the Stellar Development Foundation (SDF), wiping all contracts and ledger history. After each reset, the contract must be redeployed (`testnet_deploy.mjs`) and its address will change. The Testnet worker operates on a best-effort basis.
+
 Placeholders: `<TESTNET_HOST>` is the server address and `<REL>` is the release name
 printed by `testnet_package.ps1` (for example `testnet-53d5aae1`). Nothing in this
 document contains a secret.
@@ -179,7 +188,7 @@ Settings (environment variables): `MIN_DAYS=14` (alert threshold), `EXTEND_TO_DA
 and also refuses if the keeper balance is below the simulated cost). Days are estimated
 at 5 s per ledger, so they are approximate.
 
-Exit codes: `0` ok, `1` error, `2` less than `MIN_DAYS` remaining, `3` an entry is already
+Exit codes: `0` ok, `1` error, `2` less than `MIN_DAYS` remaining (alert threshold), `3` an entry is already
 archived (needs `RestoreFootprint`, e.g. `stellar contract restore`; the script does not
 do that).
 
@@ -189,11 +198,35 @@ to 60 days is about 187 XLM, free from Friendbot at 10,000 XLM per account). The
 WASM dominates the cost. Re-simulate before relying on these numbers; they follow network
 fee settings.
 
-Schedule it daily, and alert on any non-zero exit:
+### Weekly Cron Schedule (for user `deploy`)
+
+Schedule the extension script to run weekly (every Sunday at 04:17 UTC) as the `deploy` user.
+The output logs to `/home/deploy/vrf-testnet/state/ttl_extend.log`:
 
 ```bash
-( crontab -l 2>/dev/null; echo '17 4 * * * cd /home/deploy/vrf-testnet/current && /usr/local/bin/node ttl_extend.mjs --keeper-file /home/deploy/vrf-testnet/keeper.env >> /home/deploy/vrf-testnet/state/ttl_extend.log 2>&1 || echo "ttl_extend FAILED $(date -u)" >> /home/deploy/vrf-testnet/state/ttl_extend.log' ) | crontab -
+# Exact crontab entry for user deploy:
+17 4 * * 0 cd /home/deploy/vrf-testnet/current && /usr/local/bin/node ttl_extend.mjs --keeper-file /home/deploy/vrf-testnet/keeper.env >> /home/deploy/vrf-testnet/state/ttl_extend.log 2>&1 || echo "ttl_extend FAILED $(date -u)" >> /home/deploy/vrf-testnet/state/ttl_extend.log
 ```
+
+To install this entry directly into the `deploy` user's crontab on the server:
+
+```bash
+( crontab -l 2>/dev/null; echo '17 4 * * 0 cd /home/deploy/vrf-testnet/current && /usr/local/bin/node ttl_extend.mjs --keeper-file /home/deploy/vrf-testnet/keeper.env >> /home/deploy/vrf-testnet/state/ttl_extend.log 2>&1 || echo "ttl_extend FAILED $(date -u)" >> /home/deploy/vrf-testnet/state/ttl_extend.log' ) | crontab -
+```
+
+### Checking TTL Health (`--check`)
+
+To check the contract's remaining TTL at any time without submitting a transaction:
+
+```bash
+cd /home/deploy/vrf-testnet/current
+node ttl_extend.mjs --check --contract CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX
+```
+
+- **Exit code `0`:** Both the contract instance and WASM code have $\ge 14$ days remaining (`MIN_DAYS=14`). The contract is healthy.
+- **Exit code `2`:** Less than 14 days remaining on at least one entry. This triggers an operational alert to inspect rent/keeper balance.
+- **Exit code `1`:** Execution error (e.g., RPC unreachable or configuration error).
+- **Exit code `3`:** An entry has already expired and archived (requires `stellar contract restore`).
 
 Do the same on Mainnet only with a separate Mainnet keeper funded by hand, and run
 `node ttl_extend.mjs --check --mainnet` to monitor it (97 days remained on 2026-10-17).
@@ -209,3 +242,21 @@ ls -l /home/deploy/vrf-testnet/current          # which release is live
 
 Rollback: `ln -sfn /home/deploy/vrf-testnet/releases/<OLD_REL> /home/deploy/vrf-testnet/current`
 then `pm2 restart oracle-testnet`.
+
+## 9. On-Chain Proof of Operation (`CD5K4NNY...`)
+
+The isolated Testnet contract and oracle worker have been verified on-chain on Stellar Testnet:
+
+| Operation | Transaction Hash | Ledger | Status |
+|---|---|---|---|
+| **WASM Upload** | [`c2e31c68...`](https://stellar.expert/explorer/testnet/tx/c2e31c6893e32cd867f41e2447d0fc0f1301d0d3dec5996dac545d37a6b47a07) | 5243101 | Successful |
+| **Deploy & Init** | [`f96f7b19...`](https://stellar.expert/explorer/testnet/tx/f96f7b19e50aefbd24349be62dd994efd8db78be4331ba6f743e6c85cb25dd1d) | 5243102 | Successful |
+| **Request #2** | [`7b22374e...`](https://stellar.expert/explorer/testnet/tx/7b22374ee1e0ba3e9a1d7ff68939c3b2fcd81cd619775bb47b07002bf912e930) | 5247298 | Successful |
+| **Fulfillment #2** | [`e5a3127f...`](https://stellar.expert/explorer/testnet/tx/e5a3127fa1562b3ac746400db4bf919547361b139376a4940e3e5010b4f2a85e) | 5247300 | Successful |
+| **Request #3** | [`97d81548...`](https://stellar.expert/explorer/testnet/tx/97d8154816102415426fef65338953ae88b684427cf876ffdb2f4142a1039a1b) | 5247358 | Successful |
+| **Fulfillment #3** | [`130e6540...`](https://stellar.expert/explorer/testnet/tx/130e6540d2c9f539f8f9577ffd53697e9076614b7bf1b9048499ae96255ae8da) | 5247362 | Successful |
+
+- **Contract ID:** `CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX`
+- **Oracle Account:** `GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET`
+- **Verification Date:** October 17, 2026
+- **Worker Configuration:** PM2 process `oracle-testnet` auto-starts on boot via `pm2 startup`. Both Request #2 and Request #3 were fulfilled and verified against on-chain BLS proofs.

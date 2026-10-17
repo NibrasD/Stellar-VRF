@@ -107,16 +107,16 @@ through a shared, password-protected Redis instance. **Target contract:
 
 | Role | Host | Instance ID | Notes |
 |---|---|---|---|
-| Primary (HOST A) | `165.245.245.101` (`fra1`) | `oracle-118262` | also runs Redis 7.0.15 |
-| Standby (HOST B) | `64.226.86.16` (`fra1`) | `oracle-9981` | connects to A's Redis over the network |
+| Primary (HOST A) | `<HOST_A>` (`fra1`) | `oracle-118262` | also runs Redis 7.0.15 |
+| Standby (HOST B) | `<HOST_B>` (`fra1`) | `oracle-9981` | connects to A's Redis over the network |
 
 Both workers run commit `cde82d9`, Node v22.23.2, under PM2, with
-`REDIS_URL=redis://:<password>@165.245.245.101:6379` and
+`REDIS_URL=redis://:<password>@<HOST_A>:6379` and
 `LEADER_REDIS_KEY=vrf-oracle:leader`. Redis is firewalled so **only HOST B** can
 reach port 6379:
 
 ```
-[1] 6379/tcp   ALLOW IN    64.226.86.16
+[1] 6379/tcp   ALLOW IN    <HOST_B>
 [3] 6379/tcp   DENY IN     Anywhere
 ```
 
@@ -182,14 +182,14 @@ the standby (not the dead primary) did the work:
 
 ```bash
 # roles
-curl -s http://165.245.245.101:8080/health   # leader
-curl -s http://64.226.86.16:8080/health      # standby
+curl -s http://<HOST_A>:8080/health   # leader
+curl -s http://<HOST_B>:8080/health   # standby
 
 # hard-kill the primary
-ssh root@165.245.245.101 'kill -9 $(pm2 pid oracle-primary)'
+ssh root@<HOST_A> 'kill -9 $(pm2 pid oracle-primary)'
 
 # watch the standby take over, then create a new mainnet request
-ssh root@64.226.86.16 'cd /root/Stellar-VRF/oracle-worker && node mainnet_proof_of_operation.mjs'
+ssh root@<HOST_B> 'cd /root/Stellar-VRF/oracle-worker && node mainnet_proof_of_operation.mjs'
 ```
 
 ## Why an on-chain TX is the required artifact
@@ -217,7 +217,7 @@ contract. All output below is copied from the live run, not reconstructed.
 
 ## Worker commit on both hosts
 
-| | HOST A (primary) `165.245.245.101` | HOST B (standby) `64.226.86.16` |
+| | HOST A (primary) `<HOST_A>` | HOST B (standby) `<HOST_B>` |
 |---|---|---|
 | `git rev-parse HEAD` | `1758bf8c1a589f5a418007ab59fbb3c7617cce2f` | `1758bf8c1a589f5a418007ab59fbb3c7617cce2f` |
 | Commit | `feat(mainnet): migrate to new contract CBTCC5QL...TSUHU` (2026-09-22) | same |
@@ -314,31 +314,31 @@ is required unless you want A to lead again.
 
 ```bash
 # 0. commit + config on BOTH hosts
-for H in 165.245.245.101 64.226.86.16; do
+for H in <HOST_A> <HOST_B>; do
   ssh root@$H 'hostname; cd /root/Stellar-VRF && git rev-parse HEAD; grep -E "^CONTRACT_ID" oracle-worker/.env'
 done
 
 # 1. roles before
-curl -s http://165.245.245.101:8080/health | tee roles_before_A.json   # expect "role":"leader"
-curl -s http://64.226.86.16:8080/health    | tee roles_before_B.json   # expect "role":"standby"
+curl -s http://<HOST_A>:8080/health | tee roles_before_A.json   # expect "role":"leader"
+curl -s http://<HOST_B>:8080/health | tee roles_before_B.json   # expect "role":"standby"
 
 # 2. hard-kill the primary
-ssh root@165.245.245.101 'date -u +%T; kill -9 $(pm2 pid oracle-primary)'
+ssh root@<HOST_A> 'date -u +%T; kill -9 $(pm2 pid oracle-primary)'
 
 # 3. role change on the standby (TTL 30 s) — keep the log lines
-ssh root@64.226.86.16 'pm2 logs oracle-standby --lines 50 --nostream | grep -E "LEADER|Starting listener|Became"'
-curl -s http://64.226.86.16:8080/health | tee roles_after_B.json       # expect "role":"leader"
+ssh root@<HOST_B> 'pm2 logs oracle-standby --lines 50 --nostream | grep -E "LEADER|Starting listener|Became"'
+curl -s http://<HOST_B>:8080/health | tee roles_after_B.json       # expect "role":"leader"
 
 # 4. NEW request on CAW6…UPRX, after the failover (run on HOST B; reads CONTRACT_ADDRESS from .env)
 cd oracle-worker && node failover_drill_request.mjs                    # prints REQUEST_TX / REQUEST_ID
 
 # 5. standby fulfils it
-ssh root@64.226.86.16 'pm2 logs oracle-standby --lines 80 --nostream | grep -E "Submitting fulfill|fulfilled"'
-curl -s http://64.226.86.16:8080/health      # requests_fulfilled >= 1
+ssh root@<HOST_B> 'pm2 logs oracle-standby --lines 80 --nostream | grep -E "Submitting fulfill|fulfilled"'
+curl -s http://<HOST_B>:8080/health      # requests_fulfilled >= 1
 
 # 6. restarted primary must come back as standby
-ssh root@165.245.245.101 'pm2 restart oracle-primary'; sleep 5
-curl -s http://165.245.245.101:8080/health                              # expect "role":"standby"
+ssh root@<HOST_A> 'pm2 restart oracle-primary'; sleep 5
+curl -s http://<HOST_A>:8080/health                              # expect "role":"standby"
 ```
 
 ### Part C evidence summary
@@ -381,8 +381,8 @@ curl -s http://HOST_B:8080/metrics | grep vrf_fulfillments_total
 | Field | Value |
 |---|---|
 | Drill timestamp (UTC) | 2026-10-12, 20:21 – 20:26 |
-| Primary host (A) | `165.245.245.101` (`oracle-primary`) |
-| Standby host (B) | `64.226.86.16` (`oracle-standby`) |
+| Primary host (A) | `<HOST_A>` (`oracle-primary`) |
+| Standby host (B) | `<HOST_B>` (`oracle-standby`) |
 | Redis | shared, password-protected; `REDIS_URL` set on both hosts, backend logged as `redis (multi-server)`. Host/port not re-queried in this run (see Part B topology) |
 | Lease TTL / renew interval | TTL `30000 ms` (from worker log). `LEADER_HEARTBEAT_MS` is not set in `.env`, so the worker default applies |
 | Initial role — HOST A | `leader` |
@@ -472,7 +472,7 @@ Order, by `/health` role at the time: HOST A (standby) first, then HOST B (leade
 
 ## Running commit on each host (after deploy)
 
-| | HOST A `165.245.245.101` | HOST B `64.226.86.16` |
+| | HOST A `<HOST_A>` | HOST B `<HOST_B>` |
 |---|---|---|
 | PM2 process / cwd | `oracle-primary`, `/root/vrf-releases/27f8b41…/oracle-worker` | `oracle-standby`, `/root/vrf-releases/27f8b41…/oracle-worker` |
 | `git rev-parse HEAD` | `27f8b41a09f1a703423b4e03218118ab3b92417a` | `27f8b41a09f1a703423b4e03218118ab3b92417a` |
@@ -503,9 +503,9 @@ DigitalOcean VPC (both hosts are in the same region):
 
 | | Before | After |
 |---|---|---|
-| Redis `bind` on HOST A | `0.0.0.0`, `protected-mode no` | `127.0.0.1 -10.114.0.2`, `protected-mode yes` |
-| HOST B `REDIS_URL` host | `165.245.245.101` (public) | `10.114.0.2` (VPC) + `REDIS_ALLOW_PLAINTEXT=true` |
-| UFW 6379 on HOST A | allow from `64.226.86.16` | allow only `10.114.0.3` on `eth1`; deny everything else |
+| Redis `bind` on HOST A | `0.0.0.0`, `protected-mode no` | `127.0.0.1 -<HOST_A_VPC_IP>`, `protected-mode yes` |
+| HOST B `REDIS_URL` host | `<HOST_A>` (public) | `<HOST_A_VPC_IP>` (VPC) + `REDIS_ALLOW_PLAINTEXT=true` |
+| UFW 6379 on HOST A | allow from `<HOST_B>` | allow only `<HOST_B_VPC_IP>` on `eth1`; deny everything else |
 | 6379 from the internet | firewalled | not listening on the public interface |
 
 The VPC path was tested from HOST B (`AUTH` / `PING` / lease read) before any
@@ -519,6 +519,6 @@ Pre-deploy backups are in `/root/predeploy-20261013T113929Z/` on each host
 (`.env`, `package-lock.json`, `dist/`, PM2 list, Redis config + UFW rules on A).
 The previous tree `/root/Stellar-VRF` (`1758bf8`) is unchanged; pointing PM2 back
 at it restores the old worker. On HOST B, first change the Redis host in
-`/root/Stellar-VRF/oracle-worker/.env` from `165.245.245.101` to `10.114.0.2`: the
+`/root/Stellar-VRF/oracle-worker/.env` from `<HOST_A>` to `<HOST_A_VPC_IP>`: the
 public path is closed now.
 

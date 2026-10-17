@@ -30,16 +30,20 @@ Your dApp  ◀─derive_random_in_range()──┘
 | Network | Contract ID | Oracle Account | Status |
 |---|---|---|---|
 | **Mainnet** | [`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`](https://stellar.expert/explorer/public/contract/CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX) | [`GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`](https://stellar.expert/explorer/public/account/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P) | Active & Verified |
-| **Testnet** | [`CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX`](https://stellar.expert/explorer/testnet/contract/CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX) | [`GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET`](https://stellar.expert/explorer/testnet/account/GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET) | Deployed; oracle worker not yet running (requests will not be fulfilled until it is) |
+| **Testnet** | [`CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX`](https://stellar.expert/explorer/testnet/contract/CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX) | [`GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET`](https://stellar.expert/explorer/testnet/account/GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET) | Active (last verified: October 17, 2026; best-effort, see note below) |
+
+> **Testnet Reset & Best-Effort Notice:** Stellar Testnet is periodically reset by the Stellar Development Foundation (SDF), wiping all contracts and state. When a reset occurs, the Testnet contract address will change upon redeployment. The Testnet oracle worker runs as a single isolated worker on a best-effort basis for developer testing and integration.
 
 ### On-Chain Proof of Operation
 
-| Operation | Mainnet Explorer Link | Testnet Explorer Link |
+| Operation | Mainnet Explorer Link | Testnet Explorer Link (`CD5K4NNY...`) |
 |---|---|---|
-| **WASM Upload** | [`fe1b7f85...`](https://stellar.expert/explorer/public/tx/fe1b7f85b738bdc65620bffd9f10abbfdf7995adfbb4a7a90803c3a17c6cf41b) | [`59e0cd96...`](https://stellar.expert/explorer/testnet/tx/59e0cd96c43ee52546f1f8db23f96cd33ee79b8c501de93557b400c6bbe2c779) |
-| **Deploy & Atomic Init** | [`fccef97c...`](https://stellar.expert/explorer/public/tx/fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50) | [`1e832b86...`](https://stellar.expert/explorer/testnet/tx/1e832b864f80cb54f507109e4c1484e680e635a5b6234774e8d9155fa1a88d96) |
-| **Live Request** | [`978297f0...`](https://stellar.expert/explorer/public/tx/978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae) | [`dbc6a944...`](https://stellar.expert/explorer/testnet/tx/dbc6a944995acf762cbd944a16a3d9a8be7b35d22aee6fc65184cecc81c11040) |
-| **Live Fulfillment** | [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) | [`323ae892...`](https://stellar.expert/explorer/testnet/tx/323ae89254509d6a1b24b7f224476efa2f45970a13a3bba7f034d64fe1aa3f3e) |
+| **WASM Upload** | [`fe1b7f85...`](https://stellar.expert/explorer/public/tx/fe1b7f85b738bdc65620bffd9f10abbfdf7995adfbb4a7a90803c3a17c6cf41b) | [`c2e31c68...`](https://stellar.expert/explorer/testnet/tx/c2e31c6893e32cd867f41e2447d0fc0f1301d0d3dec5996dac545d37a6b47a07) |
+| **Deploy & Atomic Init** | [`fccef97c...`](https://stellar.expert/explorer/public/tx/fccef97c5ec84a1a8f483aee779f925c819fab99e91edc692e56644d1089af50) | [`f96f7b19...`](https://stellar.expert/explorer/testnet/tx/f96f7b19e50aefbd24349be62dd994efd8db78be4331ba6f743e6c85cb25dd1d) |
+| **Live Request #2** | [`978297f0...`](https://stellar.expert/explorer/public/tx/978297f0df8d9e6c7ec1167043127287404821758586573e97a99265aa167cae) (#1) | [`7b22374e...`](https://stellar.expert/explorer/testnet/tx/7b22374ee1e0ba3e9a1d7ff68939c3b2fcd81cd619775bb47b07002bf912e930) |
+| **Live Fulfillment #2** | [`e0cc4b60...`](https://stellar.expert/explorer/public/tx/e0cc4b6089b98300a7dfd230320fe5f37917a1dfd6ee034e762ccdf91d3a960b) (#1) | [`e5a3127f...`](https://stellar.expert/explorer/testnet/tx/e5a3127fa1562b3ac746400db4bf919547361b139376a4940e3e5010b4f2a85e) |
+| **Live Request #3** | [`4afc55d4...`](https://stellar.expert/explorer/public/tx/4afc55d41fc3c4afb7c2266cb210aebf641128250cc256f297b1c109ff95fc3c) (#2) | [`97d81548...`](https://stellar.expert/explorer/testnet/tx/97d8154816102415426fef65338953ae88b684427cf876ffdb2f4142a1039a1b) |
+| **Live Fulfillment #3** | [`e29aad2c...`](https://stellar.expert/explorer/public/tx/e29aad2c242a22b17813b7951220f63183fae153fe027dd2f66fe352ab851bd9) (#2) | [`130e6540...`](https://stellar.expert/explorer/testnet/tx/130e6540d2c9f539f8f9577ffd53697e9076614b7bf1b9048499ae96255ae8da) |
 
 - 📊 **Dashboard:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/dashboard/)
 - 🔬 **Playground:** [Live ↗](https://nibrasd.github.io/Stellar-VRF/playground/)
