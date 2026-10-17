@@ -63,7 +63,7 @@ makes the whole `fulfill()` fail. The oracle worker stops retrying such a reques
 a few sends (`MAX_SENDS_PER_REQUEST`), and you'd have to use `timeout_refund()`.
 
 > This behaviour is live on the current deployment (Mainnet `CAW6KECQ…UPRX`, Testnet
-> `CBEDNSJ6…JTBR`). Only the legacy instance `CBTCC5QL…` reverted `fulfill()` when a callback
+> `CAW2UEKL…P3UX`). Only the legacy instance `CBTCC5QL…` reverted `fulfill()` when a callback
 > panicked.
 
 **What is isolated and what is not:**

@@ -11,7 +11,7 @@
 >     *Trust assumptions*);
 >   - the historical Mainnet instance (`CBTCC5QL…`) had `fee_amount = 0`, which enabled oracle drain; the current production instance (`CAW6KEC…`) enforces a 0.2 XLM escrow fee;
 >   - there was a biased range fallback. Section MB-01 has since been corrected in place.
-> - The earlier historical Mainnet WASM (`90ad8499…` / `CBTCC5QL…`) predated several source fixes. All audit fixes (rounds 6–9, 128-bit uniform reduction, fee reservation) are now deployed and verified live on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`).
+> - The earlier historical Mainnet WASM (`90ad8499…` / `CBTCC5QL…`) predated several source fixes. All audit fixes (rounds 6–9, 128-bit uniform reduction, fee reservation) are now deployed and verified live on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX`).
 >
 > For the current security posture, read [`THREAT_MODEL.md`](THREAT_MODEL.md) and the
 > *Known limitations* in the [README](../README.md). The current test counts come from CI
@@ -130,7 +130,7 @@ The contract was evaluated systematically against each of Plamen's 19 specialize
   - If both candidates are rejected (probability $< 2^{-128}$), the call fails explicitly. There is **no biased fallback** and no unbounded loop.
   - There is **no caller-chosen context** at derivation time. `derive_range_for_domain` exists for multiple values from one result, and its domain must be fixed before fulfillment (see README).
   - The SDK helpers (`deriveRandomInRange` / `derive_random_in_range` offline variants) implement the same algorithm and are checked against shared test vectors.
-  - **Deployment status:** deployed on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`), WASM hash `6a261a26976ca5a45c5bd23b545b0a83faec363b3de132a882cfbe1b4f19e556`. The legacy instance (`CBTCC5QL…`) ran the earlier algorithm.
+  - **Deployment status:** deployed on Stellar Mainnet (`CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX`) and Testnet (`CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX`), WASM hash `6a261a26976ca5a45c5bd23b545b0a83faec363b3de132a882cfbe1b4f19e556`. The legacy instance (`CBTCC5QL…`) ran the earlier algorithm.
   - Verified by tests: `test_derive_random_in_range_bounds`, `test_derive_random_in_range_worst_case_sampling`, `test_property_derive_random_in_range_boundary_max_one`, and `test_property_derive_random_in_range_fuzz_various_ranges`.
 
 ### [SL-01] Storage Rent Reclamation & Bounded Growth [VERIFIED-SECURE]

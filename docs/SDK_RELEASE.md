@@ -15,7 +15,7 @@ Both manifests are at **2.0.0** (`sdk/js/package.json`, `sdk/rust/Cargo.toml`). 
 release is **major** because the derivation API follows the audit round 5 contract changes.
 
 > **Production Compatibility:** Version 2.0.0 is fully compatible with the live contracts
-> (Mainnet `CAW6KECQ…UPRX`, Testnet `CBEDNSJ6…JTBR`, WASM `6a261a26…`). Changes in 2.0.0:
+> (Mainnet `CAW6KECQ…UPRX`, Testnet `CAW2UEKL…P3UX`, WASM `6a261a26…`). Changes in 2.0.0:
 
 - **Breaking, both SDKs:** `deriveRandomInRange` / `derive_random_in_range` no longer take a
   `context` argument. The contract dropped it because a caller could choose it after seeing

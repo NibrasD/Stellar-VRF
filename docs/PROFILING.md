@@ -45,7 +45,7 @@ The table below tracks actual measurements across deployments on Stellar Mainnet
 
 ## 2. Stellar Testnet Measurements
 
-### A. Production Testnet Contract (`CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR`)
+### A. Previous Testnet Contract (`CBEDNSJ6…JTBR`, retired 2026-10-17; measurements kept as history)
 * **Application Fee (`fee_amount`)**: `2,000,000 stroops (0.2 XLM)`
 
 | Operation | TX Hash | Ledger | Network Fee Charged (`fee_charged`) | Consumed CPU Instructions |

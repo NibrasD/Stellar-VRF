@@ -186,7 +186,7 @@ It is documented as MUST-be-fixed-before-fulfillment, because the contract can't
 when a domain was chosen.
 
 **Deployment note:** these changes are live on the current deployment (Mainnet
-`CAW6KECQ…UPRX`, Testnet `CBEDNSJ6…JTBR`). Only the legacy instance `CBTCC5QL…` ran the old
+`CAW6KECQ…UPRX`, Testnet `CAW2UEKL…P3UX`). Only the legacy instance `CBTCC5QL…` ran the old
 loop and accepted a derivation `context`.
 
 ---

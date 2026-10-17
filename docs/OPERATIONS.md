@@ -10,7 +10,7 @@ on mainnet.
 | Network | Contract ID | Oracle Account |
 |---|---|---|
 | **Mainnet** | `CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` |
-| Testnet | `CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR` | `GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P` |
+| Testnet | `CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX` | `GA2WKWFHOGUCBX573A26NQAF44UFPUCB3ZS23ROKBXOUQLU7D5V62VET` |
 
 ### Mainnet Transaction Proof
 
@@ -43,7 +43,7 @@ Two clean release builds on Windows produced this same hash (it was recorded for
 revision of `main`; re-record it after contract changes). This hash is for the unoptimized
 `cargo build` output.
 
-The **deployed** contract (Mainnet `CAW6KECQ…UPRX` and Testnet `CBEDNSJ6…JTBR`) runs the
+The **deployed** contract (Mainnet `CAW6KECQ…UPRX` and Testnet `CAW2UEKL…P3UX`) runs the
 `stellar contract optimize` output, whose on-chain WASM hash is
 `6a261a26976ca5a45c5bd23b545b0a83faec363b3de132a882cfbe1b4f19e556` (see
 `oracle-worker/deployed.mainnet.json`). To verify it, rebuild, optimize, and compare the

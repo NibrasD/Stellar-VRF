@@ -151,7 +151,7 @@ still paid the network fee. The worker retried, and reconciliation re-queued the
 `RECONCILE_INTERVAL_MS`. Any consumer could make the oracle pay fees on its request indefinitely,
 and never pay it.
 
-**Now (live on the current deployment `CAW6KECQ…UPRX` / `CBEDNSJ6…JTBR`):**
+**Now (live on the current deployment `CAW6KECQ…UPRX` / `CAW2UEKL…P3UX`):**
 `invoke_callback_if_configured()` uses `env.try_invoke_contract`. If the callback panics, traps,
 returns an error or doesn't exist, the host rolls back **only the callback's own writes** and the
 contract emits `cb_failed` with `(request_id, callback_contract)`. `Fulfilled`, the stored proof,
@@ -183,7 +183,7 @@ refused before any fee is spent. Deterministic failures (contract panics, `trapp
 not from *cost*. A callback too expensive to fit the guard or the network limits means the
 request is **not fulfilled at all**, and only `timeout_refund()` remains. Keep `on_vrf()` small.
 
-**Live production contracts** (`CAW6KECQ…UPRX` / `CBEDNSJ6…JTBR`) use `try_invoke_contract`.
+**Live production contracts** (`CAW6KECQ…UPRX` / `CAW2UEKL…P3UX`) use `try_invoke_contract`.
 The resource guard, terminal classification and the send cap all apply.
 
 ### Signature forgery
