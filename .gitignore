@@ -52,6 +52,9 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+# TTL keeper key files (ttl_extend.mjs --keygen). Keep them outside the repo anyway.
+keeper.env
+*.keeper.env
 
 # Build Artifacts
 dist/
