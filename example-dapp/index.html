@@ -214,7 +214,11 @@
     <div class="card">
       <h2>🔮 What is Stellar VRF?</h2>
       <p>Stellar VRF is a <strong style="color:#e0e6f0">Verifiable Random Function</strong> oracle for the Stellar/Soroban blockchain. It generates cryptographically provable random numbers using BLS12-381 cryptography and the drand distributed randomness beacon.</p>
-      <p>Any dApp can request on-chain randomness by calling the VRF smart contract. The oracle fulfills the request with a BLS proof that is verified on-chain — ensuring the result is <strong style="color:#e0e6f0">tamper-proof, unbiased, and publicly auditable</strong>.</p>
+      <p>Any dApp can request on-chain randomness by calling the VRF smart contract. The oracle fulfills the request with a BLS proof that the contract verifies on-chain, so every result is <strong style="color:#e0e6f0">publicly verifiable</strong> against the registered oracle and drand keys.</p>
+      <div class="net-info mainnet" style="margin-top:10px">
+        <strong>Trust model.</strong> The oracle account can rotate the oracle and drand keys, and a result is checked against the keys registered <em>at fulfillment time</em>. Whoever controls that account could therefore bias outputs, so the oracle operator is a <strong>trusted party</strong>. Multisig / a hardware signer for that account is a requirement in the threat model and is <strong>not in place yet</strong>. The contract is internally reviewed and fuzzed, <strong>not externally audited</strong>.
+        <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/blob/main/docs/THREAT_MODEL.md#trust-assumptions" target="_blank" rel="noopener noreferrer">Threat model ↗</a>
+      </div>
 
       <h3>Request Flow</h3>
       <div class="flow-diagram"><span class="hl">Your dApp</span>  ──request()──▶  <span class="hl">VRF Contract</span>  ◀──fulfill()──  <span class="hl">Oracle</span>
@@ -223,7 +227,7 @@
                                         │               <span class="gr">BLS-VRF proof</span>
                                         ▼
                               <span class="gr">✓ Pairing check verified</span>
-                              <span class="gr">✓ Random output stored</span>
+                              <span class="gr">✓ Random output recorded</span>
                                         │
 <span class="hl">Your dApp</span>  ◀─derive_random_in_range()──┘</div>
 
@@ -239,7 +243,8 @@
     <!-- ── JS SDK ── -->
     <div class="card">
       <h2>⚡ Option A — JavaScript SDK</h2>
-      <p>The fastest way to integrate. Install the SDK and call the contract with a few lines of code. Works in Node.js and browser environments.</p>
+      <p>The fastest way to integrate. Install the SDK and call the contract with a few lines of code. Requires <strong>Node.js ≥ 22.12.0</strong> (<span class="inline-code">@stellar/stellar-sdk</span> v17). The example below signs with a server-side keypair; in a browser, sign with a wallet such as Freighter instead (see Option C).</p>
+      <p><small style="color:#94a3b8">Prefer Rust? The <a class="tx-link" href="https://crates.io/crates/stellar-vrf-sdk" target="_blank" rel="noopener noreferrer">Rust SDK</a> is <strong>read/verify only</strong>: it queries results and reproduces derivations, but cannot submit <span class="inline-code">request()</span>.</small></p>
 
       <h3>1. Install</h3>
       <span class="code-label">Terminal</span>
@@ -254,7 +259,9 @@ const client = new VrfClient({
   contractId: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   rpcUrl:     "https://mainnet.sorobanrpc.com",
   networkPassphrase: Networks.PUBLIC,
-  keypair:    Keypair.fromSecret("S..."),  // signs locally, never sent
+  // Server-side only: load the key from your secret store / environment.
+  // Never hard-code it, and never put a secret key in a web page.
+  keypair:    Keypair.fromSecret(process.env.VRF_REQUESTER_SECRET),
 });
 
 // Context binds the randomness to your specific use case
@@ -342,14 +349,42 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
         .get(&amp;ConsumerKey::PendingSample(sample_id))
         .unwrap_or_else(|| panic!("unknown sample_id"));
 
-    // Derive a random value in [0, range_max)
-    let arr = beta_output.to_array();
-    let raw = u64::from_be_bytes(arr[0..8].try_into().unwrap());
-    let sample = raw % range_max;
+    // Exactly uniform value in [0, range_max): the same function as the VRF
+    // contract's derive_random_in_range(sample_id, range_max). Do NOT use
+    // `raw % range_max` on beta bytes: that is biased for most ranges.
+    let sample = derive_in_range(&amp;env, sample_id, &amp;beta_output, range_max);
 
     env.storage().persistent()
         .set(&amp;ConsumerKey::SampleResult(sample_id), &amp;sample);
+}
+
+/// Byte-for-byte copy of the VRF contract's derive_random_in_range():
+/// h = sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ request_id ‖ max ‖ beta), split into two
+/// 128-bit candidates; exact rejection sampling, no modulo bias, no loop.
+fn derive_in_range(env: &amp;Env, request_id: u64, beta: &amp;BytesN&lt;32&gt;, max: u64) -> u64 {
+    if max == 1 {
+        return 0;
+    }
+    let mut input = Bytes::from_slice(env, b"VREP_DERIVE_V2");
+    input.push_back(0x02);
+    input.append(&amp;Bytes::from_slice(env, &amp;request_id.to_be_bytes()));
+    input.append(&amp;Bytes::from_slice(env, &amp;max.to_be_bytes()));
+    input.append(&amp;Bytes::from_slice(env, &amp;beta.to_array()));
+    let h = env.crypto().sha256(&amp;input).to_array();
+
+    let m = max as u128;
+    let rem = 0u128.wrapping_sub(m) % m; // 2^128 mod max
+    for half in [&amp;h[0..16], &amp;h[16..32]] {
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(half);
+        let c = u128::from_be_bytes(buf);
+        if c &lt;= u128::MAX - rem {
+            return (c % m) as u64; // exact: c is below the largest multiple of max
+        }
+    }
+    panic!("range derivation failed: both candidates rejected"); // p &lt; 2^-128
 }</pre>
+      <p><small style="color:#94a3b8">This is the function from <span class="inline-code">consumer-example/src/lib.rs</span>; its test asserts the shared vectors used by the contract and both SDKs (e.g. request 7, beta <span class="inline-code">00..1f</span>, max 6 → 4).</small></p>
 
       <h3>Full Working Example</h3>
       <p>
@@ -362,36 +397,43 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
     <!-- ── Direct SDK (Browser) ── -->
     <div class="card">
       <h2>🌐 Option C — Direct Browser Integration</h2>
-      <p>If you prefer not to use the SDK package, you can call the VRF contract directly using the Stellar SDK from a CDN. This is exactly how the <a class="tx-link" href="../playground/">Playground</a> works.</p>
+      <p>If you prefer not to use the SDK package, you can call the VRF contract directly using the Stellar SDK from a CDN and let the user's wallet sign. This is how the <a class="tx-link" href="../playground/">Playground</a> works on Mainnet. <strong>Never ask users to paste a secret key into a web page</strong>: use a wallet such as <a class="tx-link" href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Freighter</a>, which keeps the key in the extension and shows the user what they are signing.</p>
       <span class="code-label">HTML</span>
       <pre>&lt;script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js"&gt;&lt;/script&gt;
-&lt;script&gt;
-  const { Keypair, TransactionBuilder, Operation,
-          nativeToScVal, scValToNative, rpc } = StellarSdk;
+&lt;script src="https://cdn.jsdelivr.net/npm/@stellar/freighter-api@6.0.1/build/index.min.js"&gt;&lt;/script&gt;
+&lt;script type="module"&gt;
+  const { TransactionBuilder, Operation, nativeToScVal, rpc, Networks } = StellarSdk;
+  const freighter = window.freighterApi;
 
-  const CONTRACT = "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX";
-  const server   = new rpc.Server("https://mainnet.sorobanrpc.com");
-  const keypair  = Keypair.fromSecret("S...");
+  const CONTRACT   = "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX";
+  const PASSPHRASE = Networks.PUBLIC;
+  const server     = new rpc.Server("https://mainnet.sorobanrpc.com");
 
-  // Build and submit the request() transaction
-  const contextBytes = new TextEncoder().encode("my-context");
-  const account = await server.getAccount(keypair.publicKey());
-  const tx = new TransactionBuilder(account, {
-    fee: "2000000",
-    networkPassphrase: "Public Global Stellar Network ; September 2015",
-  }).addOperation(Operation.invokeContractFunction({
-    contract: CONTRACT,
-    function: "request",
-    args: [
-      nativeToScVal(contextBytes, { type: "bytes" }),
-      nativeToScVal(keypair.publicKey(), { type: "address" }),
-    ],
-  })).setTimeout(120).build();
+  // 1. Ask the wallet for the user's address (opens a Freighter prompt).
+  const access = await freighter.requestAccess();
+  if (access.error) throw new Error(access.error.message);
+  const address = access.address;
 
+  // 2. Build and simulate the request() transaction.
+  const account = await server.getAccount(address);
+  const tx = new TransactionBuilder(account, { fee: "2000000", networkPassphrase: PASSPHRASE })
+    .addOperation(Operation.invokeContractFunction({
+      contract: CONTRACT,
+      function: "request",
+      args: [
+        nativeToScVal(new TextEncoder().encode("my-context"), { type: "bytes" }),
+        nativeToScVal(address, { type: "address" }),
+      ],
+    })).setTimeout(120).build();
   const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
   const prepared = rpc.assembleTransaction(tx, sim).build();
-  prepared.sign(keypair);
-  await server.sendTransaction(prepared);
+
+  // 3. The wallet signs; the secret key never touches this page.
+  const signed = await freighter.signTransaction(prepared.toXDR(),
+    { networkPassphrase: PASSPHRASE, address });
+  if (signed.error) throw new Error(signed.error.message);
+  await server.sendTransaction(TransactionBuilder.fromXDR(signed.signedTxXdr, PASSPHRASE));
 &lt;/script&gt;</pre>
     </div>
 
@@ -414,12 +456,21 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
       <div id="network-info-box" class="net-info">
         ⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.
       </div>
-      <form onsubmit="return false;">
-        <label>Secret Key (S…)</label>
-        <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <button type="button" id="freighter-btn" onclick="connectFreighter()">🦊 Connect Freighter wallet</button>
+      </div>
+      <small id="freighter-hint" style="color:#475569;display:block;margin-bottom:12px">
+        Recommended. Your key stays in the wallet; you approve every transaction there.
+        <a class="tx-link" href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Get Freighter ↗</a>
+      </small>
+      <!-- Secret-key entry exists ONLY for Testnet throwaway accounts. It is
+           hidden and refused in code on Mainnet. -->
+      <form onsubmit="return false;" id="testnet-key-form">
+        <label>Testnet-only: throwaway secret key (S…)</label>
+        <input type="password" id="secret-key" placeholder="S… Testnet throwaway key only (signs locally)" autocomplete="off" />
         <div id="keypair-hint" style="margin-top:6px"></div>
         <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-          <button type="button" id="connect-btn" onclick="initClient()">Connect</button>
+          <button type="button" id="connect-btn" onclick="initClient()">Connect Testnet key</button>
           <button type="button" id="fund-btn" onclick="createTestnetAccount()"
             style="background:#065f46">⚡ Create &amp; Fund Testnet Account</button>
         </div>
@@ -480,9 +531,11 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
 
   <!-- Stellar SDK UMD bundle -->
   <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
+  <!-- Freighter wallet API (UMD, exposes window.freighterApi). Pinned + SRI. -->
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/freighter-api@6.0.1/build/index.min.js" integrity="sha384-PBwq0JVfqy16Z6jvKJPx93jpStXbwF2oWvsRTODkvE/3hOX5zmLvAuMiKgAaxe2b" crossorigin="anonymous"></script>
   <script>
     const SDK = window.StellarSdk;
-    const { Keypair, TransactionBuilder, Operation, nativeToScVal, scValToNative, rpc, Networks } = SDK;
+    const { Keypair, Account, TransactionBuilder, Operation, nativeToScVal, scValToNative, rpc, Networks } = SDK;
     function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
     const NETWORKS = {
@@ -501,12 +554,22 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
     };
     let NETWORK = NETWORKS.testnet;
     let server = null;
-    let keypair = null;
+    // The active signer: { address, sign(tx) -> signed tx }. Either a Freighter
+    // wallet (any network) or a local Testnet-only throwaway Keypair.
+    let signer = null;
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const isMainnet = () => NETWORK === NETWORKS.mainnet;
+    // Read-only calls simulate from a random, unfunded account: no key needed.
+    const READ_ONLY_SOURCE = Keypair.random().publicKey();
+    function ensureServer() {
+      if (!server) server = new rpc.Server(NETWORK.soroban, { allowHttp: false });
+      return server;
+    }
 
     window.switchNetwork = function (net) {
       NETWORK = NETWORKS[net];
-      keypair = null; server = null;
+      signer = null; server = null;
+      document.getElementById("secret-key").value = "";
       const isMain = net === "mainnet";
       const badge = document.getElementById("network-badge");
       badge.textContent = isMain ? "● Mainnet" : "● Testnet";
@@ -522,12 +585,13 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
       const infoBox = document.getElementById("network-info-box");
       infoBox.className = isMain ? "net-info mainnet" : "net-info";
       infoBox.innerHTML = isMain
-        ? `🔴 <strong>Stellar Mainnet</strong> — real XLM will be spent. Enter a dedicated keypair with a small balance. Your secret key signs locally and is <strong>never sent to any server</strong>.`
-        : `⚠️ <strong>Stellar Testnet</strong> — free to use. Click the fund button to get a funded keypair instantly.`;
+        ? `🔴 <strong>Stellar Mainnet</strong> — real XLM will be spent (0.2 XLM request fee plus network fee). Mainnet transactions are signed <strong>only with the Freighter wallet</strong>; this page never accepts a Mainnet secret key. Set Freighter to Mainnet first.`
+        : `⚠️ <strong>Stellar Testnet</strong> — free to use. Connect Freighter (set to Testnet), or click the fund button for a throwaway keypair.`;
 
-      document.getElementById("keypair-hint").innerHTML = isMain
-        ? `<small style="color:#fbbf24">⚠️ Never enter a wallet holding large funds. Use a dedicated keypair.</small>`
-        : `<small style="color:#475569">No account? Use the fund button →</small>`;
+      // Secret-key entry is Testnet-only: hide it entirely on Mainnet.
+      document.getElementById("testnet-key-form").style.display = isMain ? "none" : "block";
+      document.getElementById("keypair-hint").innerHTML =
+        `<small style="color:#475569">Throwaway Testnet keys only. Never paste a key that holds real funds into any web page.</small>`;
       document.getElementById("fund-btn").style.display = isMain ? "none" : "inline-block";
       document.getElementById("connect-status").innerHTML = "";
       document.getElementById("request-btn").disabled = true;
@@ -547,41 +611,76 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
       }
     };
 
-    window.initClient = async function () {
-      const secret = document.getElementById("secret-key").value.trim();
-      const status = document.getElementById("connect-status");
+    function setConnected(s) {
+      signer = s;
+      document.getElementById("connect-status").innerHTML =
+        `✅ Connected via ${esc(s.kind)}: <span style="color:#34d399">${esc(s.address.slice(0, 20))}…</span>`;
+      document.getElementById("request-btn").disabled = false;
+    }
+    function connectFailed(e) {
+      signer = null;
+      document.getElementById("connect-status").innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
+      document.getElementById("request-btn").disabled = true;
+    }
+
+    // Freighter: the key never leaves the wallet. Works on Testnet and Mainnet;
+    // the wallet must be set to the same network as the page.
+    window.connectFreighter = async function () {
       try {
-        keypair = Keypair.fromSecret(secret);
-        server = new rpc.Server(NETWORK.soroban, { allowHttp: false });
-        await server.getAccount(keypair.publicKey());
-        status.innerHTML = `✅ Connected: <span style="color:#34d399">${esc(keypair.publicKey().slice(0, 20))}…</span>`;
-        document.getElementById("request-btn").disabled = false;
-      } catch (e) {
-        keypair = null;
-        status.innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
-        document.getElementById("request-btn").disabled = true;
-      }
+        const fa = window.freighterApi;
+        if (!fa) throw new Error("Freighter API failed to load.");
+        const conn = await fa.isConnected();
+        if (!conn || !conn.isConnected) throw new Error("Freighter extension not detected. Install it from freighter.app and reload.");
+        const access = await fa.requestAccess();
+        if (access.error) throw new Error(access.error.message || String(access.error));
+        const net = await fa.getNetworkDetails();
+        if (net.error) throw new Error(net.error.message || String(net.error));
+        if (net.networkPassphrase !== NETWORK.passphrase)
+          throw new Error(`Freighter is set to "${net.network}". Switch Freighter to ${isMainnet() ? "Mainnet" : "Testnet"} to match this page.`);
+        const address = access.address;
+        await ensureServer().getAccount(address);   // must exist / be funded
+        setConnected({
+          kind: "Freighter",
+          address,
+          async sign(tx) {
+            const res = await fa.signTransaction(tx.toXDR(), { networkPassphrase: NETWORK.passphrase, address });
+            if (res.error) throw new Error(res.error.message || String(res.error));
+            return TransactionBuilder.fromXDR(res.signedTxXdr, NETWORK.passphrase);
+          },
+        });
+      } catch (e) { connectFailed(e); }
+    };
+
+    // Local Keypair signing is refused on Mainnet, in code, not just hidden in the UI.
+    window.initClient = async function () {
+      const input = document.getElementById("secret-key");
+      const secret = input.value.trim();
+      try {
+        if (isMainnet()) throw new Error("Secret keys are not accepted on Mainnet. Use the Freighter wallet.");
+        const kp = Keypair.fromSecret(secret);
+        input.value = "";                            // don't leave it in the DOM
+        await ensureServer().getAccount(kp.publicKey());
+        setConnected({ kind: "Testnet throwaway key", address: kp.publicKey(), async sign(tx) { tx.sign(kp); return tx; } });
+      } catch (e) { connectFailed(e); }
     };
 
     async function simulate(fnName, args) {
-      const account = await server.getAccount(keypair.publicKey());
-      const tx = new TransactionBuilder(account, { fee: "1000000", networkPassphrase: NETWORK.passphrase })
+      const tx = new TransactionBuilder(new Account(READ_ONLY_SOURCE, "0"), { fee: "1000000", networkPassphrase: NETWORK.passphrase })
         .addOperation(Operation.invokeContractFunction({ contract: NETWORK.contract, function: fnName, args }))
         .setTimeout(30).build();
-      const sim = await server.simulateTransaction(tx);
+      const sim = await ensureServer().simulateTransaction(tx);
       if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
       return sim.result?.retval ? scValToNative(sim.result.retval) : null;
     }
 
     async function submitTx(fnName, args) {
-      const account = await server.getAccount(keypair.publicKey());
+      const account = await ensureServer().getAccount(signer.address);
       const tx = new TransactionBuilder(account, { fee: "2000000", networkPassphrase: NETWORK.passphrase })
         .addOperation(Operation.invokeContractFunction({ contract: NETWORK.contract, function: fnName, args }))
         .setTimeout(120).build();
       const sim = await server.simulateTransaction(tx);
       if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
-      const prepared = rpc.assembleTransaction(tx, sim).build();
-      prepared.sign(keypair);
+      const prepared = await signer.sign(rpc.assembleTransaction(tx, sim).build());
       const sent = await server.sendTransaction(prepared);
       if (sent.status === "ERROR") throw new Error(JSON.stringify(sent.errorResult));
       for (let i = 0; i < 60; i++) {
@@ -594,7 +693,7 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
     }
 
     window.submitRequest = async function () {
-      if (!keypair) {
+      if (!signer) {
         document.getElementById("status-area").innerHTML =
           `<div class="status error">❌ Connect a funded account first (use the Connect card above).</div>`;
         return;
@@ -612,7 +711,7 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
         const contextBytes = new TextEncoder().encode(ctx);
         const { result: reqResult, hash } = await submitTx("request", [
           nativeToScVal(contextBytes, { type: "bytes" }),
-          nativeToScVal(keypair.publicKey(), { type: "address" }),
+          nativeToScVal(signer.address, { type: "address" }),
         ]);
         let requestId = 1n;
         try {
@@ -662,7 +761,7 @@ const roll = 1n + deriveRangeFromBeta(beta, requestId, 100n);</pre>
           <div class="field"><div class="field-label">Request ID</div><div class="field-value">${safeReqId}</div></div>
           <div class="field"><div class="field-label">Request TX</div><div class="field-value"><a class="tx-link" href="${esc(safeHashUrl)}" target="_blank" rel="noopener noreferrer">${safeHash}</a></div></div>
           <div class="field"><div class="field-label">Derived Result</div><div class="field-value">${esc(String(result))} ∈ [${esc(String(rangeMin))}, ${esc(String(rangeMax))}]</div></div>`;
-        statusArea.innerHTML = `<div class="status success">✅ Fulfilled and verified on-chain. The result is tamper-proof and publicly auditable.</div>`;
+        statusArea.innerHTML = `<div class="status success">✅ Fulfilled; the proof was verified on-chain against the registered oracle and drand keys, and anyone can re-check it.</div>`;
       } catch (e) {
         statusArea.innerHTML = `<div class="status error">⚠️  ${esc(e.message)}</div>`;
       } finally {

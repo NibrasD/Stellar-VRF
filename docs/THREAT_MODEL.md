@@ -325,11 +325,24 @@ verification (~56M instructions), not storage operations.
   Treat Stellar multisig (signer weights/thresholds) and/or a hardware signer for the oracle
   account as a **security requirement**, not an operational nicety. The HA hosts should hold
   only the operational key material they need.
+  **Current status (open):** this requirement is **not yet met**. Horizon shows the Mainnet
+  oracle account `GA6HYAVW…KP5P` with a single ed25519 signer (its own key, weight 1) and
+  thresholds `0/0/0`. Anyone can re-check this at
+  `https://horizon.stellar.org/accounts/GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P`.
+  Note that the same account signs every `fulfill()`. Account signer weights apply to every
+  Soroban call from that account alike, so they cannot require an extra signer for
+  `rotate_*()` while leaving `fulfill()` single-signed; a multisig threshold would apply to
+  fulfillments too. Practical options are a hardware/remote signer for the key the workers
+  use, or (with a contract change and redeployment) a separate admin authority for
+  rotations. Until one is in place the operator must be treated as fully trusted.
 - **`rotate_drand_pk()` is not a chain migration** — it swaps the group key only. drand genesis,
   period and the signature DST (quicknet, G1, unchained) are fixed, and there is no upgrade
   entrypoint, so moving to a different drand chain requires a new deployment.
 - **Results are not permanent in contract storage** — `cleanup_proof()` (requester or oracle)
   deletes proof/context/callback data, and all persistent entries are subject to Soroban TTL
   archival. The `fulfill` transaction and event remain the durable record.
-- **No formal audit** — the contract has 60 unit tests and has been manually reviewed,
-  but has not undergone a formal third-party audit.
+- **No formal audit** — the contract has been internally and manually reviewed, unit-tested
+  (`cargo test --all-targets` in CI) and fuzzed (five `cargo-fuzz` targets, a bounded
+  10,000-run smoke per change in CI), but has **not** undergone a formal third-party audit.
+  `docs/AUDIT_REPORT.md` is a historical automated review, not an audit. Public material
+  should describe the code as "internally reviewed and fuzzed", never as "audited".

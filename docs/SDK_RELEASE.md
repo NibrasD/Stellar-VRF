@@ -91,7 +91,7 @@ cargo init --bin crate_check && cargo add stellar-vrf-sdk
 #      Locking 164 packages to latest Rust 1.95.0 compatible versions
 ```
 
-The registry API now lists `1.0.1` and `1.0.0`.
+(Historical, at the time of 1.0.1.) The registry now lists `2.0.0`, `1.0.1` and `1.0.0`.
 URL: <https://crates.io/crates/stellar-vrf-sdk>
 
 ### JS SDK — PUBLISHED ✅
@@ -112,7 +112,8 @@ node -e 'import("stellar-vrf-sdk").then(m => console.log(typeof m.VrfClient))'
 # function
 ```
 
-The registry API now reports `dist-tags.latest = 1.0.1`.
+(Historical, at the time of 1.0.1.) The registry now reports `dist-tags.latest = 2.0.0`;
+see the Status table and the evidence in section 3.
 
 ## Pre-flight (already verified)
 
@@ -131,7 +132,7 @@ The registry API now reports `dist-tags.latest = 1.0.1`.
 
 ```bash
 cd sdk/js
-npm version minor --no-git-tag-version   # e.g. 1.0.1 -> 1.1.0 (also bump sdk/rust/Cargo.toml)
+npm version minor --no-git-tag-version   # e.g. 2.0.0 -> 2.1.0 (also bump sdk/rust/Cargo.toml)
 npm login
 npm whoami                # confirm auth (E401 means not logged in)
 npm publish --otp=<code>
@@ -160,27 +161,30 @@ cargo search stellar-vrf-sdk
 cargo add stellar-vrf-sdk     # in a scratch project
 ```
 
-## 3. Record the evidence
+## 3. Release evidence — 2.0.0 (current `latest`)
 
-After both publishes succeed, fill this in and update the README to drop the
-"not yet published" notice:
+Registry data from the npm registry and the crates.io API; install checks re-run
+from empty directories on 2026-10-17 (Node v24.15.0).
 
 | Field | Value |
 |---|---|
-| npm package | `stellar-vrf-sdk` |
-| npm version | _TBD_ |
-| npm URL | _TBD_ |
-| npm publish timestamp (UTC) | _TBD_ |
-| `npm install` verified from clean dir | _TBD_ |
+| npm package | `stellar-vrf-sdk` (unscoped; `@stellar-vrf/sdk` does not exist and returns 404) |
+| npm version / `dist-tags.latest` | `2.0.0` / `2.0.0` (published: 1.0.0, 1.0.1, 2.0.0) |
+| npm URL | <https://www.npmjs.com/package/stellar-vrf-sdk> |
+| npm publish timestamp (UTC) | 2026-09-24T19:13:11.722Z |
+| npm `engines.node` | `>=22.12.0` |
+| `npm install` verified from clean dir | ✅ `npm install stellar-vrf-sdk@2.0.0 @stellar/stellar-sdk` → `added 42 packages`; `VrfClient`, `deriveRangeFromBeta` exported, `Networks.MAINNET` defined, `deriveRandomInRange(requestId, min, max)` |
 | crates.io crate | `stellar-vrf-sdk` |
-| crates.io version | _TBD_ |
-| crates.io URL | _TBD_ |
-| cargo publish timestamp (UTC) | _TBD_ |
-| `cargo add` verified from clean project | _TBD_ |
+| crates.io version (`max_version`) | `2.0.0` (published: 1.0.0, 1.0.1, 2.0.0) |
+| crates.io URL | <https://crates.io/crates/stellar-vrf-sdk> |
+| cargo publish timestamp (UTC) | 2026-09-24T19:12:49Z |
+| `cargo add` verified from clean project | ✅ `cargo add stellar-vrf-sdk@2.0.0` → `Adding stellar-vrf-sdk v2.0.0 to dependencies` |
 
-## 4. README follow-up (required)
+For a future release, add a new table like this one instead of editing it.
 
-`README.md` currently contains an explicit **"Registry status: not yet published
-to npm"** notice plus a from-repo install path. Once published, replace that block
-with the plain `npm install stellar-vrf-sdk @stellar/stellar-sdk` instruction so
-reviewers are never given a command that fails.
+## 4. README
+
+`README.md` uses the plain `npm install stellar-vrf-sdk @stellar/stellar-sdk` and
+`cargo add stellar-vrf-sdk` instructions. Keep them in sync with the published
+names: the Pages workflow fails the deploy if a page still contains the old
+`@stellar-vrf/sdk` name.

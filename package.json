@@ -1,7 +1,7 @@
 {
   "name": "stellar-vrf",
   "version": "2.0.0",
-  "description": "Cryptographically provable, tamper-proof randomness for Soroban smart contracts.",
+  "description": "Publicly verifiable randomness for Soroban smart contracts (BLS12-381 VRF + drand, verified on-chain).",
   "private": true,
   "scripts": {
     "test:js-sdk": "cd sdk/js && npm test",

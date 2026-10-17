@@ -186,16 +186,24 @@
     </div>
 
     <div class="card" style="margin-bottom:24px">
-      <h2 id="keypair-title">🔑 Testnet Keypair</h2>
-      <form onsubmit="return false;">
-        <label>Secret Key (S...)</label>
-        <input type="password" id="secret-key" placeholder="S… (signs locally, never sent to any server)" autocomplete="off" />
+      <h2 id="keypair-title">🔑 Connect a signer</h2>
+      <p style="margin-bottom:10px">Only needed to <em>submit</em> a request. Proof Explorer, Verify and Derivation work without any account.</p>
+      <button type="button" class="primary" id="freighter-btn" onclick="connectFreighter()">🦊 Connect Freighter wallet</button>
+      <div style="margin-top:6px">
+        <small style="color:#6b7280">Recommended. Your key stays in the wallet; you approve every transaction there.
+          <a class="tx-link" href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Get Freighter ↗</a></small>
+      </div>
+      <!-- Secret-key entry exists ONLY for Testnet throwaway accounts. It is
+           hidden and refused in code on Mainnet. -->
+      <form onsubmit="return false;" id="testnet-key-form" style="margin-top:14px">
+        <label>Testnet-only: throwaway secret key (S...)</label>
+        <input type="password" id="secret-key" placeholder="S… Testnet throwaway key only (signs locally)" autocomplete="off" />
         <div id="keypair-hint" style="margin-top:6px">
           <small style="color:#6b7280">
             Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>
           </small>
         </div>
-        <button type="button" class="primary" onclick="initClient()">🔗 Connect</button>
+        <button type="button" class="primary" onclick="initClient()">🔗 Connect Testnet key</button>
       </form>
       <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
     </div>
@@ -210,7 +218,7 @@
     <div class="panel active" id="panel-random">
       <div class="card">
         <h2>🔢 Verifiable Random Number</h2>
-        <p>Generates a cryptographically verifiable random number on-chain using BLS12-381 VRF. Useful for fair selection, audit sampling, NFT trait assignment, or any use case requiring transparent, tamper-proof randomness.</p>
+        <p>Generates a publicly verifiable random number on-chain using a BLS12-381 VRF and drand. Useful for fair selection, audit sampling or NFT trait assignment. The proof is checked on-chain against the registered oracle and drand keys; the oracle operator remains a trusted party (it can rotate those keys; see the <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/blob/main/docs/THREAT_MODEL.md#trust-assumptions" target="_blank" rel="noopener noreferrer">threat model ↗</a>).</p>
         <label>From (inclusive)</label>
         <input type="number" id="random-sides" value="1" min="1" />
         <label>To (inclusive)</label>
@@ -218,7 +226,7 @@
         <label>Context / Purpose</label>
         <input type="text" id="random-context" value="random-selection" placeholder="e.g. audit-sample, nft-trait, team-assignment" />
         <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🔢 Generate Random Number</button>
-        <div class="output" id="random-output" style="text-align:center;color:#374151">Connect your keypair above first</div>
+        <div class="output" id="random-output" style="text-align:center;color:#374151">Connect a signer above first</div>
         <div class="log" id="random-log" style="display:none"></div>
       </div>
     </div>
@@ -239,7 +247,7 @@
     <div class="panel" id="panel-verify">
       <div class="card">
         <h2>✅ Verify On-Chain</h2>
-        <p>Check whether a request has been fulfilled and its BLS12-381 pairing proof verified on-chain. The contract permanently stores the proof — no trust in the oracle required.</p>
+        <p>Check whether a request has been fulfilled and its BLS12-381 pairing proof verified on-chain. The proof stays in contract storage until <code>cleanup_proof()</code> removes it or Soroban storage TTL archives it; the <code>fulfill</code> transaction remains the permanent record. The <code>Fulfilled</code> flag and <code>beta</code> survive <code>cleanup_proof()</code>.</p>
         <label>Request ID</label>
         <input type="number" id="verify-id" placeholder="e.g. 1" />
         <button class="primary" onclick="verifyOnChain()">✅ Check Fulfillment Status</button>
@@ -269,6 +277,8 @@
        window.StellarSdk. (Dynamic import() of a UMD file returns an empty module
        and breaks everything.) -->
   <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
+  <!-- Freighter wallet API (UMD, exposes window.freighterApi). Pinned + SRI. -->
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/freighter-api@6.0.1/build/index.min.js" integrity="sha384-PBwq0JVfqy16Z6jvKJPx93jpStXbwF2oWvsRTODkvE/3hOX5zmLvAuMiKgAaxe2b" crossorigin="anonymous"></script>
     <script>
     function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
     // -- Constants ──────────────────────────────────────────────────────────────
@@ -296,7 +306,7 @@
     // ── Network Switcher ───────────────────────────────────────────────────────
     window.switchNetwork = function(net) {
       NETWORK = NETWORKS[net];
-      keypair = null;
+      signer  = null;
       server  = null;
       document.getElementById("connect-status").textContent = "";
       document.getElementById("secret-key").value = "";
@@ -311,18 +321,20 @@
 
       // Update info box
       document.getElementById("network-info-box").innerHTML = isMainnet
-        ? `🔴 <strong>Stellar Mainnet</strong> — Real XLM will be spent on transactions.
-           Your secret key signs locally and is <strong>never sent to any server</strong>.
+        ? `🔴 <strong>Stellar Mainnet</strong> — submitting a request spends real XLM (0.2 XLM fee plus network fee).
+           Mainnet transactions are signed <strong>only with the Freighter wallet</strong>; this page never accepts a Mainnet secret key.
+           Reading proofs and verifying results needs no account.
            Contract: <code style="color:#86efac;font-size:0.78rem">CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX</code>`
-        : `⚠️  Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+        : `⚠️  Connected to <strong>Stellar Testnet</strong>. Connect Freighter (set to Testnet), or use a throwaway Testnet key.
            Need a funded testnet account?
            <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>`;
 
       // Update keypair section
-      document.getElementById("keypair-title").textContent = isMainnet ? "🔑 Mainnet Keypair" : "🔑 Testnet Keypair";
-      document.getElementById("keypair-hint").innerHTML = isMainnet
-        ? `<small style="color:#fbbf24">⚠️ Use a dedicated oracle/app keypair with a small XLM balance. Never enter a wallet with large funds.</small>`
-        : `<small style="color:#6b7280">Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a></small>`;
+      // Secret-key entry is Testnet-only: hide it entirely on Mainnet.
+      document.getElementById("keypair-title").textContent = isMainnet ? "🔑 Connect a signer (Mainnet: Freighter only)" : "🔑 Connect a signer";
+      document.getElementById("testnet-key-form").style.display = isMainnet ? "none" : "block";
+      document.getElementById("keypair-hint").innerHTML =
+        `<small style="color:#6b7280">Throwaway Testnet keys only — never paste a key holding real funds into any web page. Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a></small>`;
 
       // Disable action buttons until reconnected
       const btn = document.getElementById("random-btn");
@@ -339,7 +351,10 @@
     const Buffer = (SDK && SDK.Buffer) || globalThis.Buffer || { isBuffer: () => false };
 
     let server = null;
-    let keypair = null;
+    // The active signer: { kind, address, sign(tx) -> signed tx }. Either a
+    // Freighter wallet (any network) or a local Testnet-only throwaway Keypair.
+    let signer = null;
+    const isMainnetSelected = () => NETWORK === NETWORKS.mainnet;
 
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -411,7 +426,8 @@
     }
 
     async function submitTx(fnName, args, logId) {
-      const account = await server.getAccount(keypair.publicKey());
+      ensureServer();
+      const account = await server.getAccount(signer.address);
       const tx = new TransactionBuilder(account, {
         fee: "2000000", networkPassphrase: NETWORK.passphrase,
       }).addOperation(Operation.invokeContractFunction({
@@ -421,8 +437,8 @@
       const sim = await server.simulateTransaction(tx);
       if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
 
-      const prepared = rpc.assembleTransaction(tx, sim).build();
-      prepared.sign(keypair);
+      if (signer.kind === "Freighter") addLog(logId, "Approve the transaction in Freighter…", "info");
+      const prepared = await signer.sign(rpc.assembleTransaction(tx, sim).build());
       const sent = await server.sendTransaction(prepared);
       if (sent.status === "ERROR") throw new Error(JSON.stringify(sent.errorResult));
 
@@ -445,22 +461,60 @@
     }
 
     // ── Connect ────────────────────────────────────────────────────────────────
-    window.initClient = async function() {
-      const secret = document.getElementById("secret-key").value.trim();
-      const status = document.getElementById("connect-status");
+    function setConnected(s) {
+      signer = s;
+      document.getElementById("connect-status").innerHTML =
+        `✅ Connected to <strong>${isMainnetSelected() ? "🔴 Mainnet" : "Testnet"}</strong> via ${esc(s.kind)}: <span style="color:#86efac">${esc(s.address.slice(0,20))}…</span>`;
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = false;
+      document.getElementById("random-output").textContent = "Ready! Click Generate.";
+    }
+    function connectFailed(e) {
+      signer = null;
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = true;
+      document.getElementById("connect-status").innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
+    }
+
+    // Freighter: the key never leaves the wallet. Works on Testnet and Mainnet;
+    // the wallet must be set to the same network as the page.
+    window.connectFreighter = async function() {
       try {
-        keypair = Keypair.fromSecret(secret);
-        server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
-        const account = await server.getAccount(keypair.publicKey());
-        const isMainnet = NETWORK === NETWORKS.mainnet;
-        status.innerHTML = `✅ Connected to <strong>${isMainnet ? "🔴 Mainnet" : "Testnet"}</strong>: <span style="color:#86efac">${esc(keypair.publicKey().slice(0,20))}…</span>`;
-        // Enable buttons
-        const btn = document.getElementById("random-btn");
-        if (btn) btn.disabled = false;
-        document.getElementById("random-output").textContent = "Ready! Click Generate.";
-      } catch(e) {
-        status.innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
-      }
+        const fa = window.freighterApi;
+        if (!fa) throw new Error("Freighter API failed to load.");
+        const conn = await fa.isConnected();
+        if (!conn || !conn.isConnected) throw new Error("Freighter extension not detected. Install it from freighter.app and reload.");
+        const access = await fa.requestAccess();
+        if (access.error) throw new Error(access.error.message || String(access.error));
+        const net = await fa.getNetworkDetails();
+        if (net.error) throw new Error(net.error.message || String(net.error));
+        if (net.networkPassphrase !== NETWORK.passphrase)
+          throw new Error(`Freighter is set to "${net.network}". Switch Freighter to ${isMainnetSelected() ? "Mainnet" : "Testnet"} to match this page.`);
+        const address = access.address;
+        await ensureServer().getAccount(address);   // must exist / be funded
+        setConnected({
+          kind: "Freighter",
+          address,
+          async sign(tx) {
+            const res = await fa.signTransaction(tx.toXDR(), { networkPassphrase: NETWORK.passphrase, address });
+            if (res.error) throw new Error(res.error.message || String(res.error));
+            return TransactionBuilder.fromXDR(res.signedTxXdr, NETWORK.passphrase);
+          },
+        });
+      } catch(e) { connectFailed(e); }
+    };
+
+    // Local Keypair signing is refused on Mainnet, in code, not just hidden in the UI.
+    window.initClient = async function() {
+      const input = document.getElementById("secret-key");
+      const secret = input.value.trim();
+      try {
+        if (isMainnetSelected()) throw new Error("Secret keys are not accepted on Mainnet. Use the Freighter wallet.");
+        const kp = Keypair.fromSecret(secret);
+        input.value = "";                            // don't leave it in the DOM
+        await ensureServer().getAccount(kp.publicKey());
+        setConnected({ kind: "Testnet throwaway key", address: kp.publicKey(), async sign(tx) { tx.sign(kp); return tx; } });
+      } catch(e) { connectFailed(e); }
     };
 
     // ── Tab switch ─────────────────────────────────────────────────────────────
@@ -474,7 +528,7 @@
 
     // ── Random Number Generator ────────────────────────────────────────────────
     window.rollRandom = async function() {
-      if (!keypair) return;
+      if (!signer) return;
       const minVal = BigInt(document.getElementById("random-sides").value || 1);
       const maxEl = document.getElementById("random-max");
       const maxVal = BigInt(maxEl ? maxEl.value || 1000 : 1000);
@@ -492,7 +546,7 @@
         // request()  (contextBytes is a Uint8Array — nativeToScVal accepts it directly)
         const txResult = await submitTx("request", [
           nativeToScVal(contextBytes, { type: "bytes" }),
-          nativeToScVal(keypair.publicKey(), { type: "address" }),
+          nativeToScVal(signer.address, { type: "address" }),
         ], "random-log");
 
         // Extract request ID from return value
@@ -598,7 +652,7 @@
         output.innerHTML = `<div style="color:#86efac;font-size:1rem">✅ Request #${esc(String(id))} is fulfilled</div>
           <div style="color:#6b7280;font-size:0.78rem;margin-top:8px">
             The BLS12-381 pairing check e(γ, G2) == e(H(α), PK) was verified on-chain at fulfillment time.
-            The proof is permanently stored in contract storage and can be retrieved with get_proof(${id}).
+            While it is still in contract storage (until cleanup_proof() or TTL archival), the proof can be retrieved with get_proof(${esc(String(id))}); the fulfill transaction keeps it permanently.
           </div>`;
       } catch(e) {
         output.innerHTML = `<div style="color:#fca5a5">❌ ${esc(e.message)}</div>`;

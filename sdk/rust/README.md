@@ -4,8 +4,9 @@
 [![docs.rs](https://docs.rs/stellar-vrf-sdk/badge.svg)](https://docs.rs/stellar-vrf-sdk)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/NibrasD/Stellar-VRF/blob/main/LICENSE)
 
-Rust SDK for the **Stellar VRF Oracle** — verifiable, tamper-proof on-chain
-randomness for Stellar/Soroban.
+Rust SDK for the **Stellar VRF Oracle** — publicly verifiable on-chain
+randomness for Stellar/Soroban. **Read/verify only:** it queries state and events and
+reproduces derivations offline, but cannot submit transactions (see *Scope* below).
 
 Randomness comes from the [drand](https://drand.love) quicknet beacon and is proven
 with a **BLS12-381 pairing check executed on-chain**, so every result is publicly
@@ -66,7 +67,7 @@ an unexpected shape is an error, never a silent default.
 **To submit transactions**, use the
 [JavaScript SDK](https://www.npmjs.com/package/stellar-vrf-sdk) or the
 [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli),
-both of which use audited XDR serialization.
+both of which use the official, widely used XDR serialization.
 
 ## Quick Start
 
@@ -139,7 +140,9 @@ Your dApp ──request()──▶ VRF Contract ◀──fulfill()── Oracle
 
 ## Independently verifying a result
 
-You do not have to trust the oracle. The proof is stored in contract storage after
+You do not have to trust the oracle to have *computed* the result correctly (you do still
+trust the oracle account not to rotate keys to bias outputs; see the trust assumption at the
+top). The proof is stored in contract storage after
 fulfillment (until it is removed via `cleanup_proof()` or archived by storage TTL)
 and is always recoverable from the `fulfill` transaction itself:
 

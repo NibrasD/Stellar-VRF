@@ -35,9 +35,9 @@
 
 The ECVRF experiment proved that full on-chain secp256k1 verification in WASM is not viable on Soroban due to the 100M instruction limit. Even after applying Shamir's Trick optimization (saving ~22M instructions), the total pipeline cost of **134M** still exceeded the mainnet budget.
 
-We then adopted a **BLS12-381 pairing-based VRF** which leverages Soroban's native host functions (CAP-0059, Protocol 22+), achieving a total pipeline cost of **~58M instructions** — safely under the limit with 42% headroom.
+We then adopted a **BLS12-381 pairing-based VRF** which leverages Soroban's native host functions (CAP-0059, Protocol 22+), achieving a total pipeline cost of **~56M instructions** (56,040,632 measured for `fulfill()` on Mainnet; see [`docs/PROFILING.md`](docs/PROFILING.md)) — safely under the limit with ~44% headroom.
 
 | Construction | Cost | Status |
 |---|---|---|
 | ECVRF (WASM k256) | ~134M total | ❌ Over limit |
-| BLS-VRF (native host functions) | ~58M total | ✅ Production-ready |
+| BLS-VRF (native host functions) | ~56M total (measured) | ✅ Production-ready |

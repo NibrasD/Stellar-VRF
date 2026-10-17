@@ -4,7 +4,7 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/NibrasD/Stellar-VRF/blob/main/LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D22.12.0-brightgreen.svg)](https://nodejs.org)
 
-JavaScript/TypeScript SDK for the **Stellar VRF Oracle** — verifiable, tamper-proof
+JavaScript/TypeScript SDK for the **Stellar VRF Oracle** — publicly verifiable
 on-chain randomness for Stellar/Soroban.
 
 Randomness is produced from the [drand](https://drand.love) quicknet beacon and
@@ -63,7 +63,9 @@ const client = new VrfClient({
   contractId: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   rpcUrl: "https://mainnet.sorobanrpc.com",
   networkPassphrase: Networks.PUBLIC,
-  keypair: Keypair.fromSecret("S..."),
+  // Server-side only: load the key from your secret store / environment.
+  // Never hard-code it, and never put a secret key in a web page.
+  keypair: Keypair.fromSecret(process.env.VRF_REQUESTER_SECRET!),
 });
 
 // Submit a randomness request
@@ -155,7 +157,11 @@ Networks.PUBLIC   // "Public Global Stellar Network ; September 2015"
 
 ## Independently verifying a result
 
-You never have to trust the oracle. Every fulfilled request keeps its proof on-chain:
+You don't have to trust the oracle to have *computed* the result correctly: the contract
+checked the proof on-chain, and you can re-check it. You do still trust the oracle account
+not to rotate keys to bias outputs (see the trust assumption at the top). The proof stays in
+contract storage until `cleanup_proof()` removes it or storage TTL archives it, and it is
+always recoverable from the `fulfill` transaction:
 
 ```typescript
 const proof = await client.getProof(requestId);
