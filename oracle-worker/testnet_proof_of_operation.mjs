@@ -21,11 +21,12 @@ import {
 } from "@stellar/stellar-sdk";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, ".env") });
+// Testnet-only credentials; never read the Mainnet .env here.
+dotenv.config({ path: path.resolve(__dirname, ".env.testnet") });
 
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 const NETWORK = Networks.TESTNET;
-const CONTRACT_ID = "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR";
+const CONTRACT_ID = "CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX";
 
 const ORACLE_SECRET = process.env.ORACLE_STELLAR_SECRET || process.env.ORACLE_SECRET;
 if (!ORACLE_SECRET) {

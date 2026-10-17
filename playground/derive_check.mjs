@@ -73,7 +73,7 @@ if (process.env.LIVE) {
 
   const NETS = {
     mainnet: ["CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX", "https://mainnet.sorobanrpc.com", "Public Global Stellar Network ; September 2015"],
-    testnet: ["CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR", "https://soroban-testnet.stellar.org", "Test SDF Network ; September 2015"],
+    testnet: ["CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX", "https://soroban-testnet.stellar.org", "Test SDF Network ; September 2015"],
   };
   const [contract, url, passphrase] = NETS[process.env.NETWORK || "mainnet"];
   const server = new rpc.Server(url, { allowHttp: false });

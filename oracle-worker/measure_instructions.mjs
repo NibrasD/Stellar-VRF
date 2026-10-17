@@ -15,7 +15,7 @@ const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 const NETWORK     = Networks.TESTNET;
 
 // Testnet deployment
-const CONTRACT_ID = "CBEDNSJ63LANUSJHRZSNQUV22X6JYU6E7PTUDIGQDOHNH7VIT4CAJTBR";
+const CONTRACT_ID = "CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX";
 const ORACLE_SECRET = process.env.ORACLE_SECRET;
 if (!ORACLE_SECRET) { console.error("ERROR: ORACLE_SECRET env var is required"); process.exit(1); }
 const ORACLE_KP   = Keypair.fromSecret(ORACLE_SECRET);

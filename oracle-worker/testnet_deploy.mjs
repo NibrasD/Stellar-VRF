@@ -21,7 +21,10 @@ import {
 } from "@stellar/stellar-sdk";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, ".env") });
+// Testnet credentials live in .env.testnet ONLY. This script must never read the
+// Mainnet `.env`, so a Mainnet key can't be used here by accident.
+dotenv.config({ path: path.resolve(__dirname, ".env.testnet") });
+const MAINNET_ORACLE = "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P";
 
 const TESTNET_RPC = "https://soroban-testnet.stellar.org";
 const NETWORK = Networks.TESTNET;
@@ -34,6 +37,10 @@ if (!ORACLE_SECRET) {
 }
 const ORACLE_KP = Keypair.fromSecret(ORACLE_SECRET);
 const ORACLE_PUBLIC = ORACLE_KP.publicKey();
+if (ORACLE_PUBLIC === MAINNET_ORACLE) {
+  console.error("REFUSING: this is the Mainnet oracle account. Generate Testnet keys with testnet_keygen.mjs.");
+  process.exit(1);
+}
 // rawPublicKey() may be a Uint8Array, whose toString() ignores "hex" and
 // yields "60,124,…"; wrap it in a Buffer to get real hex.
 const ORACLE_ED25519 = Buffer.from(ORACLE_KP.rawPublicKey()).toString("hex");
@@ -55,7 +62,9 @@ const DRAND_PK =
 
 // Native XLM SAC on Testnet
 const XLM_SAC_TESTNET = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
-const FEE_AMOUNT = 0n; // fee-free on testnet for frictionless testing
+// Mirror Mainnet's 0.2 XLM escrow (CAW6…UPRX) so Testnet behaves like production
+// and the worker's unpaid-request budget does not throttle public users.
+const FEE_AMOUNT = BigInt(process.env.TESTNET_FEE_STROOPS ?? "2000000");
 
 const WASM_PATH = path.resolve(
   __dirname,
@@ -86,7 +95,14 @@ async function pollTx(hash) {
   process.stdout.write("  Confirming");
   for (let i = 0; i < 90; i++) {
     await new Promise((r) => setTimeout(r, 2000));
-    const s = await server.getTransaction(hash);
+    let s;
+    try {
+      s = await server.getTransaction(hash);
+    } catch (e) {
+      // Public RPC gateways occasionally answer 502/503 while the tx is fine.
+      process.stdout.write("!");
+      continue;
+    }
     if (s.status === rpc.Api.GetTransactionStatus.SUCCESS) {
       process.stdout.write(" ✔\n");
       return s;
@@ -149,7 +165,7 @@ async function main() {
     xdr.ScVal.scvU32(3),
     xdr.ScVal.scvU32(2),
     new Address(XLM_SAC_TESTNET).toScVal(),
-    nativeToScVal(0n, { type: "i128" }),
+    nativeToScVal(FEE_AMOUNT, { type: "i128" }),
   ];
 
   const deployAcct = await getAccount(ORACLE_PUBLIC);
@@ -217,6 +233,12 @@ async function main() {
   fs.writeFileSync(path.resolve(__dirname, "deployed.testnet.json"), JSON.stringify(record, null, 2));
   fs.writeFileSync(path.resolve(__dirname, "../soroban-contract/deployed.testnet.json"), JSON.stringify(record, null, 2));
   console.log("\nSaved deployment records to deployed.testnet.json ✔");
+
+  // Point the Testnet worker config at the new contract (only the address line is touched).
+  const envPath = path.resolve(__dirname, ".env.testnet");
+  const envText = fs.readFileSync(envPath, "utf8");
+  fs.writeFileSync(envPath, envText.replace(/^CONTRACT_ADDRESS=.*$/m, `CONTRACT_ADDRESS=${contractId}`));
+  console.log("CONTRACT_ADDRESS written to .env.testnet ✔");
   console.log(`\n🎉 Testnet Contract deployed successfully: ${contractId}`);
 }
 
