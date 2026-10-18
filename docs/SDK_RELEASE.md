@@ -6,8 +6,8 @@ _Registry state verified against the live registries (`npm view`, crates.io API)
 
 | SDK | Registry | Published | `latest` |
 |---|---|---|---|
-| JS — `stellar-vrf-sdk` | npm | 1.0.0, 1.0.1, **2.0.0** | **2.0.0** |
-| Rust — `stellar-vrf-sdk` | crates.io | 1.0.0, 1.0.1, **2.0.0** | **2.0.0** |
+| JS — `stellar-vrf-sdk` | npm | 1.0.0, 1.0.1, **2.0.0** | **2.0.0** (2.0.1 ready for publish) |
+| Rust — `stellar-vrf-sdk` | crates.io | 1.0.0, 1.0.1, 2.0.0, **2.0.1** | **2.0.1** |
 
 ### Released: **2.0.0**
 
@@ -181,6 +181,17 @@ from empty directories on 2026-10-17 (Node v24.15.0).
 | `cargo add` verified from clean project | ✅ `cargo add stellar-vrf-sdk@2.0.0` → `Adding stellar-vrf-sdk v2.0.0 to dependencies` |
 
 For a future release, add a new table like this one instead of editing it.
+ 
+## 3.1 Release evidence — 2.0.1
+ 
+| Field | Value |
+|---|---|
+| crates.io crate | `stellar-vrf-sdk` |
+| crates.io version (`max_version`) | `2.0.1` (published: 1.0.0, 1.0.1, 2.0.0, 2.0.1) |
+| crates.io URL | <https://crates.io/crates/stellar-vrf-sdk> |
+| cargo publish timestamp (UTC) | 2026-10-18T15:48:59Z |
+| Release Summary | Updated Rust doc example and internal tests to active isolated Testnet contract `CD5K4NNY...`; explicit Read/verify-only scope in README; updated trust assumption docs |
+
 
 ## 4. README
 

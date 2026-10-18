@@ -1,6 +1,6 @@
 [package]
 name = "stellar-vrf-sdk"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
 description = "Rust SDK for the Stellar VRF Oracle — verifiable on-chain randomness for Stellar/Soroban, backed by drand and on-chain BLS12-381 pairing verification"
 license = "MIT"

@@ -52,7 +52,7 @@ Your dApp  ◀─derive_random_in_range()──┘
 ## Quick Start — JavaScript SDK
 
 Published on npm as
-[`stellar-vrf-sdk`](https://www.npmjs.com/package/stellar-vrf-sdk) (v2.0.0). Requires
+[`stellar-vrf-sdk`](https://www.npmjs.com/package/stellar-vrf-sdk) (v2.0.1). Requires
 **Node.js ≥ 22.12.0** (`@stellar/stellar-sdk` v17 `engines.node`).
 
 ```bash
@@ -114,7 +114,7 @@ shared test vectors.
 ## Quick Start — Rust SDK
 
 Published on crates.io as
-[`stellar-vrf-sdk`](https://crates.io/crates/stellar-vrf-sdk) (v2.0.0).
+[`stellar-vrf-sdk`](https://crates.io/crates/stellar-vrf-sdk) (v2.0.1).
 
 > **Read/verify only.** The Rust SDK queries state (`is_fulfilled`, `get_beta`,
 > `derive_random_in_range`, …), reads events and reproduces the derivations
