@@ -20,12 +20,14 @@ import type { OnChainConfig } from "./configCheck.js";
 export interface VrfRequestEvent {
   requestId: bigint;
   requester: string;
+  epochId?: number;
   requiredRound: bigint;
   ledger: number;
 }
 
 export interface PendingRequest {
   requestId: bigint;
+  epochId?: number;
   requiredRound: bigint;
 }
 
@@ -453,7 +455,15 @@ function parseRequestEvent(
     const native = scValToNative(val);
 
     // scValToNative returns the tuple as an array
-    if (Array.isArray(native) && native.length >= 3) {
+    if (Array.isArray(native) && native.length >= 4) {
+      return {
+        requestId: BigInt(native[0]),
+        requester: native[1].toString(),
+        epochId: Number(native[2]),
+        requiredRound: BigInt(native[3]),
+        ledger: event.ledger,
+      };
+    } else if (Array.isArray(native) && native.length >= 3) {
       return {
         requestId: BigInt(native[0]),
         requester: native[1].toString(),

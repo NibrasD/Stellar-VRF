@@ -21,7 +21,7 @@ import {
   BETA_DOMAIN,
   ORACLE_KEYPAIR,
 } from "./config.js";
-import { u64ToBeBytes, concat, hexToBytes, bytesToHex, log } from "./utils.js";
+import { u64ToBeBytes, u32ToBeBytes, concat, hexToBytes, bytesToHex, log } from "./utils.js";
 import type { DrandBeacon } from "./drand.js";
 
 export interface VrfProofData {
@@ -54,7 +54,8 @@ export function deriveBlsPublicKey(): Buffer {
 export function generateVrfProof(
   requestId: bigint,
   context: Buffer,
-  beacon: DrandBeacon
+  beacon: DrandBeacon,
+  epochId: number = 1
 ): VrfProofData {
   const drandRound = BigInt(beacon.round);
 
@@ -72,7 +73,8 @@ export function generateVrfProof(
     u64ToBeBytes(requestId),
     context,
     u64ToBeBytes(drandRound),
-    drandRandomness
+    drandRandomness,
+    u32ToBeBytes(epochId)
   );
   const alphaSeed = Buffer.from(sha256(alphaInput));
 

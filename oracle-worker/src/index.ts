@@ -213,7 +213,7 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
 
     // 4. Generate BLS-VRF proof
     log.info(`  Generating BLS-VRF proof…`);
-    const proof = generateVrfProof(event.requestId, context, beacon);
+    const proof = generateVrfProof(event.requestId, context, beacon, event.epochId ?? 1);
 
     // 5. Re-verify leadership immediately before spending money.
     //

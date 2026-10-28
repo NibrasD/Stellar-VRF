@@ -293,11 +293,15 @@ export class VrfClient {
       limit,
     });
     return (response.events || []).map((e) => {
-      const native = scValToNative(e.value) as [bigint, string, bigint];
+      const native = scValToNative(e.value) as unknown[];
+      const isV2 = Array.isArray(native) && native.length >= 4;
+      const epochId = isV2 ? Number(native[2]) : 1;
+      const requiredRound = isV2 ? BigInt(native[3] as any) : BigInt(native[2] as any);
       return {
-        requestId: BigInt(native[0]),
-        requester: native[1],
-        requiredRound: BigInt(native[2]),
+        requestId: BigInt(native[0] as any),
+        requester: String(native[1]),
+        epochId,
+        requiredRound,
         ledger: e.ledger,
         pagingToken: (e as any).pagingToken ?? "",
       };

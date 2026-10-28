@@ -1161,6 +1161,9 @@ fn parse_request_event_value(value_b64: &str) -> Result<(u64, String, u64), VrfE
     let val = decode_scval_b64(value_b64)?;
     match &val {
         ScVal::Vec(items) => match items.as_slice() {
+            [ScVal::U64(id), ScVal::Address(who), ScVal::U32(_epoch), ScVal::U64(round)] => {
+                Ok((*id, who.clone(), *round))
+            }
             [ScVal::U64(id), ScVal::Address(who), ScVal::U64(round)] => {
                 Ok((*id, who.clone(), *round))
             }
