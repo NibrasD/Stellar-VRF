@@ -124,11 +124,14 @@ account; worker started with the chain-config check passing against V2 state.
 | Request #3, worker stopped; early refund | — | rejected (window not reached) |
 | Refund #3 after the window | `8b5e22db077ca87567d0cf729b71aab3aa95df44db787878bda7c2812722fdfc` | fee returned to requester |
 | Propose rotation to epoch 2 (PoP from `v2_rotate.mjs`) | `721d0a5c11131a11a14676c32e9e340afc23413a70def123c1a0ccec321f974c` | accepted; execute before the timelock rejected |
+| Request #4 (worker stopped, before `execute`) | — | bound to epoch 1 |
+| Execute rotation after the timelock | `4a0bd8f543d944f155a228555ddfe69a39dfada2f47f0c4dec10457b030bbca0` | epoch 2 active, epoch 1 superseded |
+| Worker restarted with new keys as current, old as `ORACLE_PREVIOUS_*`; reconciliation fulfills #4 | `550e213678a9434168cd9048efad1b14b763c63394ee9a57e177d2fb66119129` | proof with the **previous** (epoch 1) keys; fee paid to the epoch-1 operator |
+| Request #5 → fulfill | `daf12772e6d28e6b0a94563c06424a4b8bfa193829aef3ec1baa36f1736bfffc` | bound to epoch 2, **current** keys, fee to the epoch-2 operator |
 
 Issues the run found (fixed on this branch): `@stellar/stellar-sdk` 17.1.0
 cannot parse protocol-30 ledger headers (now ^17.4.0); the constructor's
 operator authorization is non-root and must be simulated with
 `record_allow_nonroot`; `consumer-example` could not pay a non-zero fee.
 
-Not yet done: executing the rotation after its timelock (old-epoch request
-fulfilled with the previous keys), and an external audit.
+Not yet done: an external audit.
