@@ -28,14 +28,14 @@ const local: LocalChainConfig = {
   drandGenesisTime: 1692803367,
   drandPeriod: 3,
   drandPublicKeyHex: QUICKNET_PK,
-  oracleBlsPublicKey: oraclePk,
-  oracleAddress: ORACLE,
+  oracleKeys: [{ label: "current", blsPublicKey: oraclePk, address: ORACLE }],
 };
 
 const chain: OnChainConfig = {
   drandGenesis: 1692803367n,
   drandPeriod: 3n,
   drandPk: g2ToUncompressed(QUICKNET_PK),
+  activeEpochId: 1,
   oraclePk,
   oracleAddress: ORACLE,
 };
@@ -54,9 +54,9 @@ describe("compareChainConfig", () => {
     expect(compareChainConfig({ ...local, drandPeriod: 30 }, chain)[0]).toMatch(/DRAND_PERIOD/);
   });
 
-  it("flags a rotated drand key", () => {
-    const rotated = { ...chain, drandPk: bls12_381.G2.ProjectivePoint.BASE.multiply(3n).toRawBytes(false) };
-    expect(compareChainConfig(local, rotated)[0]).toMatch(/rotate_drand_pk/);
+  it("flags a different drand key", () => {
+    const other = { ...chain, drandPk: bls12_381.G2.ProjectivePoint.BASE.multiply(3n).toRawBytes(false) };
+    expect(compareChainConfig(local, other)[0]).toMatch(/DrandPK/);
   });
 
   it("flags an invalid local drand key", () => {
@@ -65,12 +65,35 @@ describe("compareChainConfig", () => {
 
   it("flags a rotated oracle BLS key", () => {
     const rotated = { ...chain, oraclePk: bls12_381.G2.ProjectivePoint.BASE.multiply(8n).toRawBytes(false) };
-    expect(compareChainConfig(local, rotated)[0]).toMatch(/OraclePK/);
+    expect(compareChainConfig(local, rotated)[0]).toMatch(/no configured key set matches the contract's active epoch 1/);
+  });
+
+  it("accepts a match on the PREVIOUS key set (rotation proposed, not yet executed)", () => {
+    const newPk = bls12_381.G2.ProjectivePoint.BASE.multiply(9n).toRawBytes(false);
+    const handover: LocalChainConfig = {
+      ...local,
+      oracleKeys: [
+        { label: "current", blsPublicKey: newPk, address: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7" },
+        { label: "previous", blsPublicKey: oraclePk, address: ORACLE },
+      ],
+    };
+    expect(compareChainConfig(handover, chain)).toEqual([]);
+  });
+
+  it("requires BLS key AND operator account of the same key set", () => {
+    const mixed: LocalChainConfig = {
+      ...local,
+      oracleKeys: [
+        { label: "current", blsPublicKey: oraclePk, address: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7" },
+        { label: "previous", blsPublicKey: bls12_381.G2.ProjectivePoint.BASE.multiply(9n).toRawBytes(false), address: ORACLE },
+      ],
+    };
+    expect(compareChainConfig(mixed, chain)).toHaveLength(1);
   });
 
   it("flags a different oracle address", () => {
     const other = { ...chain, oracleAddress: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7" };
-    expect(compareChainConfig(local, other)[0]).toMatch(/OracleAddr/);
+    expect(compareChainConfig(local, other)[0]).toMatch(/active epoch/);
   });
 
   it("reports every problem at once", () => {

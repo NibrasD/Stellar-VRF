@@ -44,7 +44,7 @@ const MAX_CONSECUTIVE_POLL_FAILURES = parseInt(
 );
 
 /** getLedgerEntries accepts at most 200 keys; 3 keys per request ID. */
-const RECONCILE_BATCH_IDS = 50;
+const RECONCILE_BATCH_IDS = 40;
 
 // Persistent cursor for event pagination
 let lastCursor: string | undefined;
@@ -157,13 +157,81 @@ export async function readChainConfig(server: rpc.Server): Promise<OnChainConfig
     if (!v) throw new Error(`${name} not found in contract instance storage`);
     return v;
   };
+  const activeEpochId = Number(scValToNative(need("ActiveEpochId")));
+  const active = await readEpoch(server, activeEpochId, { fresh: true });
+  if (!active) throw new Error(`Epoch(${activeEpochId}) not found in contract storage`);
   return {
     drandGenesis: BigInt(scValToNative(need("DrandGenesis")) as bigint | number),
     drandPeriod: BigInt(scValToNative(need("DrandPeriod")) as bigint | number),
     drandPk: new Uint8Array(scValToNative(need("DrandPK")) as Buffer),
-    oraclePk: new Uint8Array(scValToNative(need("OraclePK")) as Buffer),
-    oracleAddress: Address.fromScVal(need("OracleAddr")).toString(),
+    activeEpochId,
+    oraclePk: active.oraclePk,
+    oracleAddress: active.oracleAddress,
   };
+}
+
+/** A key epoch as stored in `DataKey::Epoch(id)`. */
+export interface EpochInfo {
+  oraclePk: Uint8Array;
+  oracleAddress: string;
+  status: "Active" | "Superseded" | "Revoked";
+}
+
+/** Ledger key for a contract persistent entry `name(u32 id)`, e.g. `Epoch(2)`. */
+function u32EntryKey(name: string, id: number): xdr.LedgerKey {
+  return xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: new Address(CONTRACT_ADDRESS).toScAddress(),
+      key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(name), xdr.ScVal.scvU32(id)]),
+      durability: xdr.ContractDataDurability.persistent,
+    })
+  );
+}
+
+/** Decode an `EpochData` ScVal. Exported for tests. */
+export function decodeEpoch(val: xdr.ScVal): EpochInfo {
+  const n = scValToNative(val) as {
+    oracle_bls_pk: Buffer;
+    oracle_address: string;
+    status: string | string[];
+  };
+  const status = (Array.isArray(n.status) ? n.status[0] : n.status) as EpochInfo["status"];
+  return { oraclePk: new Uint8Array(n.oracle_bls_pk), oracleAddress: String(n.oracle_address), status };
+}
+
+// Keys and operator of an epoch never change; only `status` does. Cache the
+// record but re-read it after EPOCH_CACHE_MS so a revocation is noticed.
+const EPOCH_CACHE_MS = 60_000;
+const epochCache = new Map<number, { at: number; info: EpochInfo }>();
+
+/** Read `Epoch(id)` (cached), or null if it does not exist. */
+export async function readEpoch(
+  server: rpc.Server,
+  epochId: number,
+  opts: { fresh?: boolean } = {}
+): Promise<EpochInfo | null> {
+  const hit = epochCache.get(epochId);
+  if (!opts.fresh && hit && Date.now() - hit.at < EPOCH_CACHE_MS) return hit.info;
+  const res = await server.getLedgerEntries(u32EntryKey("Epoch", epochId));
+  const entry = res.entries[0];
+  if (!entry) return null;
+  const info = decodeEpoch((entry.val as any).contractData.val);
+  epochCache.set(epochId, { at: Date.now(), info });
+  return info;
+}
+
+/** Key epoch a request is bound to (`RequestEpoch(id)`), or null if absent. */
+export async function readRequestEpoch(server: rpc.Server, id: bigint): Promise<number | null> {
+  const res = await server.getLedgerEntries(requestEntryKey("RequestEpoch", id));
+  const entry = res.entries[0];
+  if (!entry) return null;
+  return Number(scValToNative((entry.val as any).contractData.val));
+}
+
+/** True while a callback is registered for the request and not yet delivered. */
+export async function hasPendingCallback(server: rpc.Server, id: bigint): Promise<boolean> {
+  const res = await server.getLedgerEntries(requestEntryKey("CallbackContract", id));
+  return res.entries.length > 0;
 }
 
 /** Requester address of a request (`DataKey::Requester(id)`), or null if absent. */
@@ -204,7 +272,8 @@ function requestEntryKey(name: string, id: bigint): xdr.LedgerKey {
  *      `Fulfilled`, `Refunded` and `RequestRound` for each directly from ledger
  *      storage via batched `getLedgerEntries` — one RPC call per 50 IDs, no
  *      simulations, no oracle account lookup.
- *   3. A request is pending iff `Fulfilled == false` and `Refunded != true`.
+ *   3. A request is pending iff `Fulfilled != true` and `Refunded != true`
+ *      (V2 writes these markers only when they become true).
  *
  * Entries that no longer exist (TTL-expired / archived) are skipped: `fulfill()`
  * could not succeed on them anyway.
@@ -290,16 +359,19 @@ async function scanIdRange(
       ids.push(id);
     }
 
+    // 4 keys per id: stays within the RPC's getLedgerEntries key limit.
     const keys = ids.flatMap((id) => [
       requestEntryKey("Fulfilled", id),
       requestEntryKey("Refunded", id),
       requestEntryKey("RequestRound", id),
+      requestEntryKey("RequestEpoch", id),
     ]);
     const res = await server.getLedgerEntries(...keys);
 
     const fulfilled = new Map<bigint, boolean>();
     const refunded = new Map<bigint, boolean>();
     const rounds = new Map<bigint, bigint>();
+    const epochs = new Map<bigint, number>();
     for (const entry of res.entries) {
       const data = (entry.val as any).contractData;
       const key = scValToNative(data.key);
@@ -310,12 +382,16 @@ async function scanIdRange(
       if (name === "Fulfilled") fulfilled.set(id, value === true);
       else if (name === "Refunded") refunded.set(id, value === true);
       else if (name === "RequestRound") rounds.set(id, BigInt(value));
+      else if (name === "RequestEpoch") epochs.set(id, Number(value));
     }
 
     for (const id of ids) {
       const round = rounds.get(id);
-      if (fulfilled.get(id) === false && refunded.get(id) !== true && round !== undefined) {
-        pending.push({ requestId: id, requiredRound: round });
+      // V2 stores the Fulfilled / Refunded markers only once they become
+      // true, so "absent" means "not yet". RequestRound exists for every live
+      // request; if it is gone (archived) fulfill() cannot succeed anyway.
+      if (fulfilled.get(id) !== true && refunded.get(id) !== true && round !== undefined) {
+        pending.push({ requestId: id, requiredRound: round, epochId: epochs.get(id) });
       }
     }
   }
