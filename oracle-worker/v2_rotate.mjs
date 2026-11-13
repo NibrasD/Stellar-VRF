@@ -21,7 +21,7 @@
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { Address, Keypair, Networks, Operation, nativeToScVal, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
+import { Account, Address, Keypair, Networks, Operation, nativeToScVal, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
 import { blsPublicKey, newBuilder, popSignature, randomBlsSecret, simulateSignSubmit } from "./v2_lib.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -51,9 +51,10 @@ async function instance() {
 }
 
 async function adminCall(fn, args, authKeys = new Map()) {
-  const account = await server.getAccount(ADMIN);
+  const seq = (await server.getAccount(ADMIN)).sequenceNumber();
+  // build() increments the Account's sequence; start every build from the same one.
   const build = (auth) =>
-    newBuilder(account, PASSPHRASE)
+    newBuilder(new Account(ADMIN, seq), PASSPHRASE)
       .addOperation(Operation.invokeContractFunction({ contract: CONTRACT, function: fn, args, ...(auth ? { auth } : {}) }))
       .build();
   const out = await simulateSignSubmit(server, PASSPHRASE, build, authKeys, { label: fn });

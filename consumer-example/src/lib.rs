@@ -38,6 +38,7 @@
 #![allow(unknown_lints)]
 #![allow(deprecated)]
 
+use soroban_sdk::auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation};
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
     Symbol,
@@ -126,6 +127,35 @@ impl VrfSamplingContract {
         ));
 
         let self_addr = env.current_contract_address();
+
+        // The VRF contract escrows its fee by calling `transfer(self, vrf, fee)`
+        // on the fee token. That call is made by the VRF contract, not by us,
+        // so this contract must pre-authorize exactly that sub-invocation.
+        // Without it every request fails once the fee is non-zero.
+        let (fee_token, fee_amount): (Address, i128) = env.invoke_contract(
+            &vrf_contract,
+            &Symbol::new(&env, "fee"),
+            soroban_sdk::vec![&env],
+        );
+        if fee_amount > 0 {
+            env.authorize_as_current_contract(soroban_sdk::vec![
+                &env,
+                InvokerContractAuthEntry::Contract(SubContractInvocation {
+                    context: ContractContext {
+                        contract: fee_token,
+                        fn_name: Symbol::new(&env, "transfer"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            self_addr.clone().into_val(&env),
+                            vrf_contract.clone().into_val(&env),
+                            fee_amount.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }),
+            ]);
+        }
+
         let sample_id: u64 = env.invoke_contract(
             &vrf_contract,
             &Symbol::new(&env, "request_with_callback"),

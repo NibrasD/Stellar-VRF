@@ -88,7 +88,11 @@ export function adminSigners() {
  * @param authKeys  Map<G-address, Keypair>  keys for address-credential entries
  */
 export async function simulateSignSubmit(server, networkPassphrase, buildTx, authKeys, { label }) {
-  const sim1 = await server.simulateTransaction(buildTx(undefined));
+  // record_allow_nonroot: the operator's require_auth() in the constructor is
+  // not the root of the invocation (the root is the deployer's create-contract
+  // call). The network accepts such entries; plain recording mode refuses to
+  // record them. The entry signed below is bound to this exact invocation.
+  const sim1 = await server.simulateTransaction(buildTx(undefined), undefined, "record_allow_nonroot");
   if (rpc.Api.isSimulationError(sim1)) throw new Error(`${label}: simulation failed: ${sim1.error}`);
   const latest = (await server.getLatestLedger()).sequence;
   const validUntil = latest + 100;

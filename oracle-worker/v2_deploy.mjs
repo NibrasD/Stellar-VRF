@@ -26,7 +26,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { Address, Keypair, Networks, Operation, nativeToScVal, rpc } from "@stellar/stellar-sdk";
+import { Account, Address, Keypair, Networks, Operation, nativeToScVal, rpc } from "@stellar/stellar-sdk";
 import { blsPublicKey, newBuilder, simulateSignSubmit } from "./v2_lib.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -123,8 +123,10 @@ const constructorArgs = [
   nativeToScVal(UPG_TL, { type: "u32" }),
 ];
 const adminAccount = await server.getAccount(ADMIN);
+const adminSeq = adminAccount.sequenceNumber();
+// build() increments the Account's sequence; start every build from the same one.
 const build = (auth) =>
-  newBuilder(adminAccount, CFG.passphrase)
+  newBuilder(new Account(ADMIN, adminSeq), CFG.passphrase)
     .addOperation(
       Operation.createCustomContract({
         address: new Address(ADMIN),
