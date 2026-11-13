@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stellar VRF — Randomness Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: #060b18; color: #e0e6f0; min-height: 100vh; }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #0d1526 0%, #111827 100%);
+      border-bottom: 1px solid rgba(96,165,250,0.15);
+      padding: 18px 40px; display: flex; align-items: center; gap: 20px;
+    }
+    .header h1 {
+      font-size: 1.3rem; font-weight: 700; letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 0%, #93c5fd 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .header p { color: #475569; font-size: 0.83rem; margin-top: 4px; }
+
+    /* ── Layout ── */
+    .container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
+
+    /* ── Network switcher (header) ── */
+    #btn-testnet, #btn-mainnet {
+      font-family: 'Inter', sans-serif !important;
+      font-weight: 500 !important;
+      transition: all 0.2s !important;
+      cursor: pointer;
+    }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; padding: 4px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; width: fit-content; }
+    .tab {
+      padding: 8px 18px; border-radius: 8px; cursor: pointer;
+      font-size: 0.82rem; font-weight: 500; font-family: 'Inter', sans-serif;
+      border: none; background: transparent; color: #475569;
+      transition: all 0.2s;
+    }
+    .tab:hover { color: #94a3b8; background: rgba(255,255,255,0.05); }
+    .tab.active { background: linear-gradient(135deg, #1e40af, #2563eb); color: #fff; box-shadow: 0 2px 12px rgba(37,99,235,0.35); }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Cards ── */
+    .card {
+      background: linear-gradient(145deg, #111827 0%, #0d1a2e 100%);
+      border: 1px solid rgba(59,130,246,0.15);
+      border-radius: 16px; padding: 26px; margin-bottom: 20px;
+      position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(96,165,250,0.2), transparent);
+    }
+    .card h2 { color: #93c5fd; margin-bottom: 10px; font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+    .card p { color: #475569; font-size: 0.82rem; margin-bottom: 16px; line-height: 1.65; }
+
+    /* ── Info box ── */
+    .info-box {
+      background: rgba(30,58,95,0.3); border: 1px solid rgba(59,130,246,0.2);
+      border-radius: 10px; padding: 12px 16px;
+      color: #60a5fa; font-size: 0.8rem; margin-bottom: 16px; line-height: 1.6;
+    }
+
+    /* ── Form elements ── */
+    label { display: block; color: #64748b; font-size: 0.78rem; font-weight: 600; margin-bottom: 6px; margin-top: 14px; text-transform: uppercase; letter-spacing: 0.05em; }
+    input, select, textarea {
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.2);
+      color: #e0e6f0; padding: 10px 14px; border-radius: 10px;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; width: 100%;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input:focus, select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+
+    /* ── Buttons ── */
+    button.primary {
+      background: linear-gradient(135deg, #1e40af, #2563eb);
+      color: #fff; border: none; padding: 11px 24px;
+      border-radius: 10px; cursor: pointer;
+      font-family: 'Inter', sans-serif; font-size: 0.88rem; font-weight: 600;
+      margin-top: 16px; transition: all 0.2s;
+      box-shadow: 0 4px 14px rgba(37,99,235,0.3);
+    }
+    button.primary:hover { background: linear-gradient(135deg, #2563eb, #3b82f6); box-shadow: 0 6px 20px rgba(37,99,235,0.45); transform: translateY(-1px); }
+    button.primary:disabled { background: #1f2937; color: #374151; cursor: not-allowed; box-shadow: none; transform: none; }
+
+    /* ── Output / Results ── */
+    .output {
+      background: rgba(0,0,0,0.25); border: 1px solid rgba(59,130,246,0.15);
+      border-radius: 10px; padding: 16px; margin-top: 16px; min-height: 72px;
+    }
+    .result-big {
+      font-size: 2.8rem; font-weight: 700; text-align: center; padding: 20px 0 8px;
+      background: linear-gradient(135deg, #86efac, #34d399);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      font-family: 'JetBrains Mono', monospace; letter-spacing: -2px;
+    }
+    .result-label { color: #374151; font-size: 0.72rem; text-align: center; margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+
+    /* ── Log ── */
+    .log {
+      background: rgba(0,0,0,0.4); border: 1px solid rgba(59,130,246,0.1);
+      border-radius: 10px; padding: 12px 16px; margin-top: 12px;
+      font-size: 0.76rem; max-height: 200px; overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .log::-webkit-scrollbar { width: 4px; }
+    .log::-webkit-scrollbar-track { background: transparent; }
+    .log::-webkit-scrollbar-thumb { background: rgba(96,165,250,0.2); border-radius: 99px; }
+    .log-line { padding: 2px 0; }
+    .log-line.success { color: #34d399; }
+    .log-line.info { color: #60a5fa; }
+    .log-line.warn { color: #fbbf24; }
+    .log-line.error { color: #f87171; }
+
+    /* ── Proof grid ── */
+    .proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .pf {
+      background: rgba(0,0,0,0.3); border: 1px solid rgba(59,130,246,0.12);
+      border-radius: 10px; padding: 12px;
+    }
+    .pf .name { color: #60a5fa; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .pf .val { color: #34d399; font-size: 0.68rem; word-break: break-all; font-family: 'JetBrains Mono', monospace; }
+    .pf .desc { color: #374151; font-size: 0.65rem; margin-top: 4px; }
+
+    /* ── Spinner ── */
+    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(59,130,246,0.3); border-top-color: #60a5fa; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Links ── */
+    .tx-link { color: #60a5fa; text-decoration: none; font-size: 0.75rem; transition: color 0.15s; }
+    .tx-link:hover { color: #93c5fd; text-decoration: underline; }
+
+    /* ── Site Navigation ── */
+    .site-nav {
+      background: rgba(0,0,0,0.25); border-bottom: 1px solid rgba(255,255,255,0.04);
+      padding: 0 36px; display: flex; gap: 2px; align-items: center;
+    }
+    .nav-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 14px; font-size: 0.78rem; font-weight: 500;
+      color: #374151; text-decoration: none;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .nav-link:hover { color: #94a3b8; }
+    .nav-link.active { color: #60a5fa; border-bottom-color: #3b82f6; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div style="flex:1">
+      <h1>🔬 VRF Randomness Playground</h1>
+      <p id="header-desc">Submit real on-chain VRF requests and watch the oracle fulfill them live.</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="btn-testnet" onclick="switchNetwork('testnet')"
+        style="padding:7px 16px;border-radius:8px;border:1px solid #3b82f6;background:#1e40af;color:#fff;font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif">
+        Testnet
+      </button>
+      <button id="btn-mainnet" onclick="switchNetwork('mainnet')"
+        style="padding:7px 16px;border-radius:8px;border:1px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif">
+        Mainnet
+      </button>
+    </div>
+  </div>
+
+  <nav class="site-nav">
+    <a href="../dashboard/" class="nav-link">📊 Dashboard</a>
+    <a href="../playground/" class="nav-link active">🔬 Playground</a>
+    <a href="../example-dapp/" class="nav-link">📘 Integration Guide</a>
+  </nav>
+
+  <div class="container">
+
+    <div class="info-box" id="network-info-box">
+      ⚠️ Connected to <strong>Stellar Testnet</strong>. Keys are never sent to any server.
+      Need a funded testnet account?
+      <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>
+      <div style="margin-top:6px;font-size:0.75rem;color:#94a3b8">Note: Stellar Testnet is periodically reset by SDF. Contract addresses may change after resets, and the Testnet oracle runs on a best-effort basis.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:24px">
+      <h2 id="keypair-title">🔑 Connect a signer</h2>
+      <p style="margin-bottom:10px">Only needed to <em>submit</em> a request. Proof Explorer, Verify and Derivation work without any account.</p>
+      <button type="button" class="primary" id="freighter-btn" onclick="connectFreighter()">🦊 Connect Freighter wallet</button>
+      <div style="margin-top:6px">
+        <small style="color:#6b7280">Recommended. Your key stays in the wallet; you approve every transaction there.
+          <a class="tx-link" href="https://www.freighter.app/" target="_blank" rel="noopener noreferrer">Get Freighter ↗</a></small>
+      </div>
+      <!-- Secret-key entry exists ONLY for Testnet throwaway accounts. It is
+           hidden and refused in code on Mainnet. -->
+      <form onsubmit="return false;" id="testnet-key-form" style="margin-top:14px">
+        <label>Testnet-only: throwaway secret key (S...)</label>
+        <input type="password" id="secret-key" placeholder="S… Testnet throwaway key only (signs locally)" autocomplete="off" />
+        <div id="keypair-hint" style="margin-top:6px">
+          <small style="color:#6b7280">
+            Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>
+          </small>
+        </div>
+        <button type="button" class="primary" onclick="initClient()">🔗 Connect Testnet key</button>
+      </form>
+      <div id="connect-status" style="color:#6b7280;font-size:0.8rem;margin-top:10px"></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('random')">🔢 Random Number</div>
+      <div class="tab" onclick="switchTab('proof')">🔍 Proof Explorer</div>
+      <div class="tab" onclick="switchTab('verify')">✅ Verify On-Chain</div>
+    </div>
+
+    <!-- RANDOM NUMBER GENERATOR -->
+    <div class="panel active" id="panel-random">
+      <div class="card">
+        <h2>🔢 Verifiable Random Number</h2>
+        <p>Generates a publicly verifiable random number on-chain using a BLS12-381 VRF and drand. Useful for fair selection, audit sampling or NFT trait assignment. The proof is checked on-chain against the registered oracle and drand keys; the oracle operator remains a trusted party (it can rotate those keys; see the <a class="tx-link" href="https://github.com/NibrasD/Stellar-VRF/blob/main/docs/THREAT_MODEL.md#trust-assumptions" target="_blank" rel="noopener noreferrer">threat model ↗</a>).</p>
+        <label>From (inclusive)</label>
+        <input type="number" id="random-sides" value="1" min="1" />
+        <label>To (inclusive)</label>
+        <input type="number" id="random-max" value="1000" min="2" />
+        <label>Context / Purpose</label>
+        <input type="text" id="random-context" value="random-selection" placeholder="e.g. audit-sample, nft-trait, team-assignment" />
+        <button class="primary" id="random-btn" onclick="rollRandom()" disabled>🔢 Generate Random Number</button>
+        <div class="output" id="random-output" style="text-align:center;color:#374151">Connect a signer above first</div>
+        <div class="log" id="random-log" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- PROOF EXPLORER -->
+    <div class="panel" id="panel-proof">
+      <div class="card">
+        <h2>🔍 Proof Explorer</h2>
+        <p>Enter a fulfilled request ID to inspect its full BLS-VRF proof. Data is fetched live from the Soroban RPC — no keypair required.</p>
+        <label>Request ID</label>
+        <input type="number" id="proof-id" placeholder="e.g. 1" min="1" />
+        <button class="primary" onclick="exploreProof()">🔍 Fetch Proof</button>
+        <div id="proof-result"></div>
+      </div>
+    </div>
+
+    <!-- VERIFY -->
+    <div class="panel" id="panel-verify">
+      <div class="card">
+        <h2>✅ Verify On-Chain</h2>
+        <p>Check whether a request has been fulfilled and its BLS12-381 pairing proof verified on-chain. The proof stays in contract storage until <code>cleanup_proof()</code> removes it or Soroban storage TTL archives it; the <code>fulfill</code> transaction remains the permanent record. The <code>Fulfilled</code> flag and <code>beta</code> survive <code>cleanup_proof()</code>.</p>
+        <label>Request ID</label>
+        <input type="number" id="verify-id" placeholder="e.g. 1" />
+        <button class="primary" onclick="verifyOnChain()">✅ Check Fulfillment Status</button>
+        <div class="output" id="verify-output" style="text-align:center;color:#374151">Enter a request ID to check</div>
+      </div>
+      <div class="card">
+        <h2>🧮 Client-side Range Derivation</h2>
+        <p>Reproduces the contract's <code>derive_random_in_range(request_id, max)</code> (v2: <code>sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ request_id ‖ max ‖ beta)</code> with exact two-candidate rejection sampling) entirely in your browser. The range is inclusive: result = Min + derive_random_in_range(id, Max − Min + 1).
+        Use <em>Derive</em> for a purely offline result, or <em>Derive &amp; compare with on-chain</em> to load the beta of a fulfilled request from the contract and check that the browser and <code>derive_random_in_range()</code> return the same value.</p>
+        <label>Request ID</label>
+        <input type="number" id="cs-id" placeholder="e.g. 18" min="0" />
+        <label>Beta Output (hex, 64 chars — leave empty to load from chain)</label>
+        <input type="text" id="cs-beta" placeholder="7f3ea1b2…" maxlength="64" />
+        <label>Min</label>
+        <input type="number" id="cs-min" value="1" />
+        <label>Max</label>
+        <input type="number" id="cs-max" value="100" />
+        <button class="primary" onclick="deriveClientSide(false)">🧮 Derive</button>
+        <button class="primary" onclick="deriveClientSide(true)">🔗 Derive &amp; compare with on-chain</button>
+        <div class="output" id="cs-output" style="text-align:center;color:#374151">Enter beta output and range</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Stellar SDK is a UMD bundle: load via a classic <script> so it attaches
+       window.StellarSdk. (Dynamic import() of a UMD file returns an empty module
+       and breaks everything.) -->
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/stellar-sdk@17.0.1/dist/stellar-sdk.min.js" integrity="sha384-xu9WTQfOrZ6fbncrpbNZ+8GtGj/eDV/Bx8vAY1cWmrQ4d/JaND3JpjA7bJ4+cnu0" crossorigin="anonymous"></script>
+  <!-- Freighter wallet API (UMD, exposes window.freighterApi). Pinned + SRI. -->
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/freighter-api@6.0.1/build/index.min.js" integrity="sha384-PBwq0JVfqy16Z6jvKJPx93jpStXbwF2oWvsRTODkvE/3hOX5zmLvAuMiKgAaxe2b" crossorigin="anonymous"></script>
+    <script>
+    function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+    // -- Constants ──────────────────────────────────────────────────────────────
+    const NETWORKS = {
+      testnet: {
+        contract: "CD5K4NNYNG3ZFCET24F3SL6MSYYRD5I2BSWW5K3LFQVIKYHRY2ICVIVX",
+        soroban: "https://soroban-testnet.stellar.org",
+        explorer: "https://stellar.expert/explorer/testnet",
+        passphrase: "Test SDF Network ; September 2015",
+        friendbot: "https://friendbot.stellar.org",
+      },
+      mainnet: {
+        contract: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
+        soroban: "https://mainnet.sorobanrpc.com",
+        explorer: "https://stellar.expert/explorer/public",
+        passphrase: "Public Global Stellar Network ; September 2015",
+        friendbot: null,
+      },
+    };
+    let NETWORK = NETWORKS.testnet;
+    const CONTRACT   = () => NETWORK.contract;
+    const SOROBAN_RPC = () => NETWORK.soroban;
+    const EXPLORER   = () => NETWORK.explorer;
+
+    // ── Network Switcher ───────────────────────────────────────────────────────
+    window.switchNetwork = function(net) {
+      NETWORK = NETWORKS[net];
+      signer  = null;
+      server  = null;
+      document.getElementById("connect-status").textContent = "";
+      document.getElementById("secret-key").value = "";
+
+      const isMainnet = net === "mainnet";
+
+      // Update button styles
+      document.getElementById("btn-testnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMainnet?"#1e3a5f":"#3b82f6"};background:${isMainnet?"#111827":"#1e40af"};color:${isMainnet?"#94a3b8":"#fff"};font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif`;
+      document.getElementById("btn-mainnet").style.cssText =
+        `padding:7px 16px;border-radius:8px;border:1px solid ${isMainnet?"#dc2626":"#1e3a5f"};background:${isMainnet?"#7f1d1d":"#111827"};color:${isMainnet?"#fca5a5":"#94a3b8"};font-size:0.82rem;cursor:pointer;font-family:Inter,sans-serif`;
+
+      // Update info box
+      document.getElementById("network-info-box").innerHTML = isMainnet
+        ? `🔴 <strong>Stellar Mainnet</strong> — submitting a request spends real XLM (0.2 XLM fee plus network fee).
+           Mainnet transactions are signed <strong>only with the Freighter wallet</strong>; this page never accepts a Mainnet secret key.
+           Reading proofs and verifying results needs no account.
+           Contract: <code style="color:#86efac;font-size:0.78rem">CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX</code>`
+        : `⚠️ Connected to <strong>Stellar Testnet</strong>. Connect Freighter (set to Testnet), or use a throwaway Testnet key.
+           Need a funded testnet account?
+           <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a>
+           <div style="margin-top:6px;font-size:0.75rem;color:#94a3b8">Note: Stellar Testnet is periodically reset by SDF. Contract addresses may change after resets, and the Testnet oracle runs on a best-effort basis.</div>`;
+
+      // Update keypair section
+      // Secret-key entry is Testnet-only: hide it entirely on Mainnet.
+      document.getElementById("keypair-title").textContent = isMainnet ? "🔑 Connect a signer (Mainnet: Freighter only)" : "🔑 Connect a signer";
+      document.getElementById("testnet-key-form").style.display = isMainnet ? "none" : "block";
+      document.getElementById("keypair-hint").innerHTML =
+        `<small style="color:#6b7280">Throwaway Testnet keys only — never paste a key holding real funds into any web page. Need one? <a class="tx-link" href="https://laboratory.stellar.org/#account-creator?network=test" target="_blank" rel="noopener noreferrer">Create on Stellar Lab ↗</a></small>`;
+
+      // Disable action buttons until reconnected
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = true;
+    };
+
+    // ── Stellar SDK (UMD global loaded via <script> above) ─────────────────────
+    const SDK = window.StellarSdk;
+    const { Keypair, Account, TransactionBuilder, Operation, nativeToScVal, scValToNative,
+            xdr, rpc, Networks } = SDK;
+    // Browsers have no global Buffer; the UMD bundle doesn't reliably export it
+    // either. We only need a tiny shim for .isBuffer (used in one hex helper);
+    // everywhere else we pass Uint8Array directly to nativeToScVal.
+    const Buffer = (SDK && SDK.Buffer) || globalThis.Buffer || { isBuffer: () => false };
+
+    let server = null;
+    // The active signer: { kind, address, sign(tx) -> signed tx }. Either a
+    // Freighter wallet (any network) or a local Testnet-only throwaway Keypair.
+    let signer = null;
+    const isMainnetSelected = () => NETWORK === NETWORKS.mainnet;
+
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function addLog(logId, msg, type = "info", link = null) {
+      const el = document.getElementById(logId);
+      if (!el) return;
+      el.style.display = "block";
+      const line = document.createElement("div");
+      line.className = `log-line ${type}`;
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      if (link) {
+        const a = document.createElement("a");
+        a.href = link.href;
+        a.textContent = link.label || "view ↗";
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.style.cssText = "color:#86efac;margin-left:6px;text-decoration:underline";
+        line.appendChild(document.createTextNode(" "));
+        line.appendChild(a);
+      }
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function clearLog(logId) {
+      const el = document.getElementById(logId);
+      if (el) { el.innerHTML = ""; el.style.display = "none"; }
+    }
+
+    // Safely extract a contract call's return value across protocol versions.
+    // The RPC-decoded getTransaction result exposes `returnValue` directly;
+    // calling resultMetaXdr.v3() throws "v3 not set" on newer (v4) meta.
+    function extractReturnValue(txResult) {
+      try {
+        if (txResult.returnValue) return scValToNative(txResult.returnValue);
+        const meta = txResult.resultMetaXdr;
+        const sw = meta?.switch?.().value;
+        const sm = sw === 3 ? meta.v3().sorobanMeta() : meta?.v4?.().sorobanMeta?.();
+        const rv = sm?.returnValue?.();
+        return rv ? scValToNative(rv) : null;
+      } catch (_) { return null; }
+    }
+
+    // Read-only calls (is_fulfilled, get_proof, get_beta, derive_*) never touch the
+    // ledger state of the caller, and simulateTransaction does not require the
+    // source account to exist. So keyless sessions simulate from a throwaway,
+    // unfunded account: no secret key, no Friendbot (which doesn't exist on
+    // Mainnet), and no dependency on a previous "Connect".
+    const READ_ONLY_SOURCE = Keypair.random().publicKey();
+
+    // Lazily create the RPC client for the *currently selected* network.
+    // (SOROBAN_RPC is a function: it must be called.)
+    function ensureServer() {
+      if (!server) server = new rpc.Server(SOROBAN_RPC(), { allowHttp: false });
+      return server;
+    }
+
+    async function simulate(fnName, args) {
+      ensureServer();
+      const account = new Account(READ_ONLY_SOURCE, "0");
+      const tx = new TransactionBuilder(account, {
+        fee: "1000000", networkPassphrase: NETWORK.passphrase,
+      }).addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT(), function: fnName, args,
+      })).setTimeout(30).build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+      return sim.result?.retval ? scValToNative(sim.result.retval) : null;
+    }
+
+    async function submitTx(fnName, args, logId) {
+      ensureServer();
+      const account = await server.getAccount(signer.address);
+      const tx = new TransactionBuilder(account, {
+        fee: "2000000", networkPassphrase: NETWORK.passphrase,
+      }).addOperation(Operation.invokeContractFunction({
+        contract: CONTRACT(), function: fnName, args,
+      })).setTimeout(120).build();
+
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+
+      if (signer.kind === "Freighter") addLog(logId, "Approve the transaction in Freighter…", "info");
+      const prepared = await signer.sign(rpc.assembleTransaction(tx, sim).build());
+      const sent = await server.sendTransaction(prepared);
+      if (sent.status === "ERROR") throw new Error(JSON.stringify(sent.errorResult));
+
+      addLog(logId, `TX submitted: ${sent.hash}`, "info");
+
+      // Poll for confirmation
+      for (let i = 0; i < 60; i++) {
+        await sleep(2000);
+        const result = await server.getTransaction(sent.hash);
+        if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+          addLog(logId, `TX confirmed ✓`, "success", { href: `${EXPLORER()}/tx/${sent.hash}`, label: "view on stellar.expert ↗" });
+          return result;
+        }
+        if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
+          throw new Error(`TX failed: ${sent.hash}`);
+        }
+        addLog(logId, `Confirming… (${i * 2}s)`, "info");
+      }
+      throw new Error("TX confirmation timeout");
+    }
+
+    // ── Connect ────────────────────────────────────────────────────────────────
+    function setConnected(s) {
+      signer = s;
+      document.getElementById("connect-status").innerHTML =
+        `✅ Connected to <strong>${isMainnetSelected() ? "🔴 Mainnet" : "Testnet"}</strong> via ${esc(s.kind)}: <span style="color:#86efac">${esc(s.address.slice(0,20))}…</span>`;
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = false;
+      document.getElementById("random-output").textContent = "Ready! Click Generate.";
+    }
+    function connectFailed(e) {
+      signer = null;
+      const btn = document.getElementById("random-btn");
+      if (btn) btn.disabled = true;
+      document.getElementById("connect-status").innerHTML = `<span style="color:#fca5a5">❌ ${esc(e.message)}</span>`;
+    }
+
+    // Freighter: the key never leaves the wallet. Works on Testnet and Mainnet;
+    // the wallet must be set to the same network as the page.
+    window.connectFreighter = async function() {
+      try {
+        const fa = window.freighterApi;
+        if (!fa) throw new Error("Freighter API failed to load.");
+        const conn = await fa.isConnected();
+        if (!conn || !conn.isConnected) throw new Error("Freighter extension not detected. Install it from freighter.app and reload.");
+        const access = await fa.requestAccess();
+        if (access.error) throw new Error(access.error.message || String(access.error));
+        const net = await fa.getNetworkDetails();
+        if (net.error) throw new Error(net.error.message || String(net.error));
+        if (net.networkPassphrase !== NETWORK.passphrase)
+          throw new Error(`Freighter is set to "${net.network}". Switch Freighter to ${isMainnetSelected() ? "Mainnet" : "Testnet"} to match this page.`);
+        const address = access.address;
+        await ensureServer().getAccount(address);   // must exist / be funded
+        setConnected({
+          kind: "Freighter",
+          address,
+          async sign(tx) {
+            const res = await fa.signTransaction(tx.toXDR(), { networkPassphrase: NETWORK.passphrase, address });
+            if (res.error) throw new Error(res.error.message || String(res.error));
+            return TransactionBuilder.fromXDR(res.signedTxXdr, NETWORK.passphrase);
+          },
+        });
+      } catch(e) { connectFailed(e); }
+    };
+
+    // Local Keypair signing is refused on Mainnet, in code, not just hidden in the UI.
+    window.initClient = async function() {
+      const input = document.getElementById("secret-key");
+      const secret = input.value.trim();
+      try {
+        if (isMainnetSelected()) throw new Error("Secret keys are not accepted on Mainnet. Use the Freighter wallet.");
+        const kp = Keypair.fromSecret(secret);
+        input.value = "";                            // don't leave it in the DOM
+        await ensureServer().getAccount(kp.publicKey());
+        setConnected({ kind: "Testnet throwaway key", address: kp.publicKey(), async sign(tx) { tx.sign(kp); return tx; } });
+      } catch(e) { connectFailed(e); }
+    };
+
+    // ── Tab switch ─────────────────────────────────────────────────────────────
+    window.switchTab = function(name) {
+      const names = ["random","proof","verify"];
+      document.querySelectorAll(".tab").forEach((t, i) =>
+        t.classList.toggle("active", names[i] === name));
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      document.getElementById("panel-" + name).classList.add("active");
+    };
+
+    // ── Random Number Generator ────────────────────────────────────────────────
+    window.rollRandom = async function() {
+      if (!signer) return;
+      const minVal = BigInt(document.getElementById("random-sides").value || 1);
+      const maxEl = document.getElementById("random-max");
+      const maxVal = BigInt(maxEl ? maxEl.value || 1000 : 1000);
+      const ctx = document.getElementById("random-context").value || "random-selection";
+      const btn = document.getElementById("random-btn");
+      const output = document.getElementById("random-output");
+      clearLog("random-log");
+      btn.disabled = true;
+      output.innerHTML = `<span class="spinner"></span> Submitting request to network…`;
+
+      try {
+        const contextBytes = new TextEncoder().encode(ctx);
+        addLog("random-log", `Submitting request(context="${ctx}") to VRF contract…`, "info");
+
+        // request()  (contextBytes is a Uint8Array — nativeToScVal accepts it directly)
+        const txResult = await submitTx("request", [
+          nativeToScVal(contextBytes, { type: "bytes" }),
+          nativeToScVal(signer.address, { type: "address" }),
+        ], "random-log");
+
+        // Extract request ID from return value
+        const rv = extractReturnValue(txResult);
+        const requestId = rv != null ? BigInt(rv) : 1n;
+        addLog("random-log", `Request ID: ${requestId}`, "success");
+        output.innerHTML = `<span class="spinner"></span> Request #${esc(String(requestId))} submitted. Waiting for oracle…`;
+
+        // Poll is_fulfilled — show a single, updating "waiting" status rather
+        // than spamming raw boolean results.
+        addLog("random-log", "Waiting for oracle to generate the BLS-VRF proof…", "info");
+        let fulfilled = false;
+        for (let i = 0; i < 40; i++) {
+          await sleep(3000);
+          fulfilled = await simulate("is_fulfilled", [nativeToScVal(requestId, { type: "u64" })]);
+          if (fulfilled) break;
+          output.innerHTML = `<span class="spinner"></span> Request #${esc(String(requestId))} — waiting for oracle… (${(i + 1) * 3}s)`;
+        }
+
+        if (!fulfilled) throw new Error("Oracle did not fulfill within timeout");
+        addLog("random-log", `Oracle fulfilled request #${requestId} ✓`, "success");
+
+        // derive_random_in_range(request_id, max) → [0, max), exactly uniform.
+        // The context was bound at request() time; there is no
+        // derivation-time context (it could be ground after the result is
+        // known). We shift by minVal to map onto [minVal, maxVal].
+        if (maxVal < minVal) throw new Error("max must be >= min");
+        const span = maxVal - minVal + 1n;
+        const raw = await simulate("derive_random_in_range", [
+          nativeToScVal(requestId, { type: "u64" }),
+          nativeToScVal(span, { type: "u64" }),
+        ]);
+        const resultNum = Number(BigInt(raw) + minVal);
+        addLog("random-log", `derive_random_in_range → ${resultNum} ∈ [${minVal}, ${esc(String(maxVal))}]`, "success");
+
+        output.innerHTML = `
+          <div class="result-big">${esc(String(resultNum))}</div>
+          <div class="result-label">Range [${esc(String(minVal))} – ${esc(String(maxVal))}] — verified on Stellar</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:8px">Request ID: #${esc(String(requestId))} | Context: ${esc(ctx)}</div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">⚠️  ${esc(e.message)}</div>`;
+        addLog("random-log", `Error: ${esc(e.message)}`, "error");
+      } finally { btn.disabled = false; }
+    };
+
+    // ── Proof Explorer ─────────────────────────────────────────────────────────
+    window.exploreProof = async function() {
+      const id = BigInt(document.getElementById("proof-id").value || 1);
+      const result = document.getElementById("proof-result");
+      result.innerHTML = `<div style="color:#93c5fd;margin-top:12px"><span class="spinner"></span> Fetching proof #${esc(String(id))} from Soroban RPC…</div>`;
+      try {
+        const proof = await simulate("get_proof", [nativeToScVal(id, { type: "u64" })]);
+        if (!proof) throw new Error("Request not found or not yet fulfilled");
+
+        const toHex = v => {
+          if (v instanceof Uint8Array || Buffer.isBuffer(v))
+            return Array.from(v).map(b => b.toString(16).padStart(2,"0")).join("");
+          if (Array.isArray(v))
+            return v.map(b => b.toString(16).padStart(2,"0")).join("");
+          return String(v);
+        };
+
+        result.innerHTML = `
+          <div class="proof-grid">
+            <div class="pf"><div class="name">Alpha Seed (32 bytes)</div>
+              <div class="val">${esc(toHex(proof.alpha_seed))}</div>
+              <div class="desc">sha256(request_id ‖ context ‖ drand_round ‖ sha256(drand_sig))</div></div>
+            <div class="pf"><div class="name">Beta Output (32 bytes)</div>
+              <div class="val">${esc(toHex(proof.beta_output))}</div>
+              <div class="desc">The verifiable random output: sha256(BETA_DOMAIN ‖ gamma)</div></div>
+            <div class="pf"><div class="name">Gamma Point G1 (96 bytes)</div>
+              <div class="val">${esc(toHex(proof.gamma_point).slice(0,40))}…</div>
+              <div class="desc">sk × H(alpha) — oracle's VRF output point</div></div>
+            <div class="pf"><div class="name">drand Round</div>
+              <div class="val">${esc(String(proof.drand_round))}</div>
+              <div class="desc">BLS12-381 quicknet beacon round used</div></div>
+            <div class="pf"><div class="name">Oracle Public Key (192 bytes)</div>
+              <div class="val">${esc(toHex(proof.public_key).slice(0,40))}…</div>
+              <div class="desc">G2 point — verifiable identity of oracle</div></div>
+            <div class="pf"><div class="name">drand Signature (96 bytes)</div>
+              <div class="val">${esc(toHex(proof.drand_signature).slice(0,40))}…</div>
+              <div class="desc">BLS signature from drand quicknet chain</div></div>
+          </div>
+          <div style="color:#86efac;font-size:0.78rem;margin-top:12px">
+            ✅ Pairing check e(γ, G2) == e(H(α), PK) verified on-chain by Soroban host
+          </div>`;
+      } catch(e) {
+        result.innerHTML = `<div style="color:#fca5a5;margin-top:12px">❌ ${esc(e.message)}</div>`;
+      }
+    };
+
+    // ── Verify (on-chain via is_fulfilled + get_proof) ─────────────────────────
+    window.verifyOnChain = async function() {
+      const id = BigInt(document.getElementById("verify-id").value || 1);
+      const output = document.getElementById("verify-output");
+      output.innerHTML = `<span class="spinner"></span> Checking request #${esc(String(id))}…`;
+      try {
+        const fulfilled = await simulate("is_fulfilled", [nativeToScVal(id, { type: "u64" })]);
+        if (!fulfilled) {
+          output.innerHTML = `<div style="color:#fbbf24">⏳ Request #${esc(String(id))} is not yet fulfilled</div>`;
+          return;
+        }
+        output.innerHTML = `<div style="color:#86efac;font-size:1rem">✅ Request #${esc(String(id))} is fulfilled</div>
+          <div style="color:#6b7280;font-size:0.78rem;margin-top:8px">
+            The BLS12-381 pairing check e(γ, G2) == e(H(α), PK) was verified on-chain at fulfillment time.
+            While it is still in contract storage (until cleanup_proof() or TTL archival), the proof can be retrieved with get_proof(${esc(String(id))}); the fulfill transaction keeps it permanently.
+          </div>`;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${esc(e.message)}</div>`;
+      }
+    };
+
+    // ── Client-side derivation ─────────────────────────────────────────────────
+    // Mirrors sdk/js `deriveRangeFromBeta` / `reduceUniform` and the contract's
+    // `derive_random_in_range` + `reduce_uniform` byte for byte.
+    const U64_MAX = (1n << 64n) - 1n;
+    const TWO_128 = 1n << 128n;
+    const DERIVE_DOMAIN = new TextEncoder().encode("VREP_DERIVE_V2");
+    const DERIVE_TAG_RANGE = 0x02;
+
+    function hexToBytes(hex) {
+      if (!/^([0-9a-fA-F]{2})*$/.test(hex)) throw new Error("beta must be hex");
+      const out = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+      return out;
+    }
+    function bytesToHex(b) {
+      return Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+    }
+    function bytesToBig(b) {
+      return b.length === 0 ? 0n : BigInt("0x" + bytesToHex(b));
+    }
+    function be64(v) {
+      const b = new Uint8Array(8);
+      new DataView(b.buffer).setBigUint64(0, v);
+      return b;
+    }
+
+    // Exact-uniform reduction of a 32-byte hash into [0, max): two 128-bit
+    // big-endian candidates, each accepted iff c < 2^128 - (2^128 mod max).
+    function reduceUniform(hash, max) {
+      const limit = TWO_128 - (TWO_128 % max);
+      for (const half of [hash.subarray(0, 16), hash.subarray(16, 32)]) {
+        const c = bytesToBig(half);
+        if (c < limit) return c % max;
+      }
+      throw new Error("range derivation failed: both candidates rejected");
+    }
+
+    // == contract derive_random_in_range(request_id, max), computed locally.
+    async function deriveRangeFromBeta(beta, requestId, max) {
+      if (beta.length !== 32) throw new Error("beta must be exactly 32 bytes (64 hex chars)");
+      if (requestId < 0n || requestId > U64_MAX) throw new Error("request ID must be a u64");
+      if (max <= 0n || max > U64_MAX) throw new Error("max must be in [1, 2^64 - 1]");
+      if (max === 1n) return 0n;
+      const input = new Uint8Array(DERIVE_DOMAIN.length + 1 + 8 + 8 + 32);
+      let o = 0;
+      input.set(DERIVE_DOMAIN, o); o += DERIVE_DOMAIN.length;
+      input[o++] = DERIVE_TAG_RANGE;
+      input.set(be64(requestId), o); o += 8;
+      input.set(be64(max), o); o += 8;
+      input.set(beta, o);
+      if (!(window.crypto && window.crypto.subtle))
+        throw new Error("WebCrypto unavailable (a secure https:// context is required)");
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input));
+      return reduceUniform(digest, max);
+    }
+    window.deriveRangeFromBeta = deriveRangeFromBeta;
+
+    window.deriveClientSide = async function(compare) {
+      const output = document.getElementById("cs-output");
+      output.innerHTML = `<span class="spinner"></span> Deriving…`;
+      try {
+        const idRaw = document.getElementById("cs-id").value.trim();
+        if (idRaw === "") throw new Error("Enter the request ID (it is bound into the derivation hash)");
+        const requestId = BigInt(idRaw);
+        const min = BigInt(document.getElementById("cs-min").value || 1);
+        const max = BigInt(document.getElementById("cs-max").value || 100);
+        if (max < min) throw new Error("max must be >= min");
+        const span = max - min + 1n;
+        if (span > U64_MAX) throw new Error("range [0, 2^64 - 1] cannot be expressed as the contract's exclusive u64 bound");
+
+        let betaHex = document.getElementById("cs-beta").value.trim().replace(/^0x/, "");
+        if (!betaHex) {
+          // Keyless on-chain read of the verified beta.
+          const raw = await simulate("get_beta", [nativeToScVal(requestId, { type: "u64" })]);
+          betaHex = bytesToHex(new Uint8Array(raw));
+          document.getElementById("cs-beta").value = betaHex;
+        }
+        if (betaHex.length !== 64) throw new Error("Beta must be exactly 32 bytes (64 hex chars)");
+
+        const local = min + await deriveRangeFromBeta(hexToBytes(betaHex), requestId, span);
+        let html = `<div class="result-big">${esc(local.toString())}</div>
+          <div class="result-label">Browser-derived, range [${esc(String(min))} – ${esc(String(max))}]</div>
+          <div style="color:#6b7280;font-size:0.72rem;margin-top:6px">
+            ${esc(String(min))} + derive_random_in_range(#${esc(String(requestId))}, ${esc(String(span))}) — sha256("VREP_DERIVE_V2" ‖ 0x02 ‖ id ‖ max ‖ beta) with exact rejection sampling
+          </div>`;
+
+        if (compare) {
+          const onchainRaw = await simulate("derive_random_in_range", [
+            nativeToScVal(requestId, { type: "u64" }),
+            nativeToScVal(span, { type: "u64" }),
+          ]);
+          const onchain = min + BigInt(onchainRaw);
+          const ok = onchain === local;
+          html += `<div style="margin-top:12px;color:${ok ? "#86efac" : "#fca5a5"}">
+              ${ok ? "✅ MATCH" : "❌ MISMATCH"} — on-chain derive_random_in_range(${esc(String(requestId))}, ${esc(String(span))}) = ${esc(onchainRaw.toString())}
+              → ${esc(onchain.toString())}
+            </div>`;
+        }
+        output.innerHTML = html;
+      } catch(e) {
+        output.innerHTML = `<div style="color:#fca5a5">❌ ${esc(e.message)}</div>`;
+      }
+    };
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Default to Mainnet on load. This is a production oracle, so the live
+    // contract is what visitors should see first. Calling switchNetwork() (rather
+    // than only setting NETWORK) keeps the button highlighting and the network
+    // warning banner in sync with the actually selected network.
+    switchNetwork("mainnet");
+  </script>
+</body>
+</html>
