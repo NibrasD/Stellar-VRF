@@ -1,1482 +1,1315 @@
 #![cfg(test)]
+//! V2 test suite.
+//!
+//! Every success-path test uses **real** cryptography: a real drand quicknet
+//! beacon (round 32 427 720) and oracle proofs produced with `@noble/curves`
+//! (the library the worker uses). `test_noble_vector_matches_host_computation`
+//! recomputes the same proof with the Soroban host, so worker and contract are
+//! checked against each other byte for byte.
+extern crate std;
 
-extern crate alloc;
-use alloc::format;
-
-use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger as _, Address, Bytes, BytesN, Env, Symbol,
-};
-
-use crate::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3, TEST_G2_TIMES_5};
+use crate::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
 use crate::{
-    EpochData, EpochStatus, PendingRotation, VRFOracleContract, VRFOracleContractClient,
-    MIN_ROTATION_TIMELOCK_LEDGERS, MIN_UPGRADE_TIMELOCK_LEDGERS,
+    BlsVrfProof, DataKey, EpochStatus, VRFOracleContract, VRFOracleContractClient,
+    BLS12_381_G2_GENERATOR, EXPIRY_ROUNDS, MIN_ROTATION_TIMELOCK_LEDGERS,
+    MIN_UPGRADE_TIMELOCK_LEDGERS, POP_BLS_DST, TIMEOUT_ROUNDS, VRF_DST,
 };
+use soroban_sdk::crypto::bls12_381::{Bls12381Fr, Bls12381G2Affine};
+use soroban_sdk::testutils::storage::Persistent as _;
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
+use soroban_sdk::token::{StellarAssetClient, TokenClient};
+use soroban_sdk::{Address, Bytes, BytesN, Env, Symbol, TryFromVal, Val};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TEST SETUP
+// FIXTURE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// V2 setup: constructor now requires admin (separate from operator) + timelocks.
-fn setup() -> (
-    Env,
-    VRFOracleContractClient<'static>,
-    Address, // admin
-    Address, // oracle_addr (operator)
-    BytesN<192>, // oracle_pk
-    BytesN<32>,  // oracle_ed25519
-    BytesN<192>, // drand_pk
-) {
+const GENESIS: u64 = 1_692_803_367;
+const PERIOD: u32 = 3;
+const OFFSET: u32 = 4;
+const ROUND: u64 = 32_427_720;
+const CONTEXT: &[u8] = b"Nonzero-fee Mainnet CPU Profiling 2026";
+const FEE: i128 = 2_000_000;
+
+struct T {
+    env: Env,
+    client: VRFOracleContractClient<'static>,
+    admin: Address,
+    operator: Address,
+    token: Address,
+}
+
+/// Ledger timestamp at which a new request is bound to `ROUND`.
+fn request_ts() -> u64 {
+    GENESIS + (ROUND - OFFSET as u64 - 1) * PERIOD as u64
+}
+
+/// Timestamp at which drand round `round` is current.
+fn ts_of_round(round: u64) -> u64 {
+    GENESIS + (round - 1) * PERIOD as u64
+}
+
+fn setup_with_fee(fee: i128) -> T {
     let env = Env::default();
     env.mock_all_auths();
+    env.ledger().set_timestamp(request_ts());
+    env.ledger().set_sequence_number(1_000);
 
     let admin = Address::generate(&env);
-    let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
-    let fee_token = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token = sac.address();
 
-    let contract_id = env.register(
+    let id = env.register(
         VRFOracleContract,
         (
             &admin,
-            &oracle_pk,
-            &oracle_addr,
-            &oracle_ed25519,
-            &drand_pk,
-            &1_692_803_367u64,  // drand genesis
-            &3u32,              // drand period
-            &2u32,              // round offset
-            &fee_token,
-            &0i128,             // fee-free for tests
+            &BytesN::from_array(&env, &E1_PK),
+            &operator,
+            &BytesN::from_array(&env, &FIX_DRAND_PK),
+            &GENESIS,
+            &PERIOD,
+            &OFFSET,
+            &token,
+            &fee,
             &MIN_ROTATION_TIMELOCK_LEDGERS,
             &MIN_UPGRADE_TIMELOCK_LEDGERS,
         ),
     );
-    let client = VRFOracleContractClient::new(&env, &contract_id);
-
-    (
+    let client = VRFOracleContractClient::new(&env, &id);
+    T {
         env,
         client,
         admin,
-        oracle_addr,
-        oracle_pk,
-        oracle_ed25519,
-        drand_pk,
-    )
+        operator,
+        token,
+    }
+}
+
+fn setup() -> T {
+    setup_with_fee(0)
+}
+
+fn funded_requester(t: &T) -> Address {
+    let r = Address::generate(&t.env);
+    StellarAssetClient::new(&t.env, &t.token).mint(&r, &(FEE * 10));
+    r
+}
+
+fn balance(t: &T, who: &Address) -> i128 {
+    TokenClient::new(&t.env, &t.token).balance(who)
+}
+
+fn ctx(env: &Env) -> Bytes {
+    Bytes::from_slice(env, CONTEXT)
+}
+
+fn proof(env: &Env, alpha: &[u8; 32], gamma: &[u8; 96], beta: &[u8; 32]) -> BlsVrfProof {
+    BlsVrfProof {
+        alpha_seed: BytesN::from_array(env, alpha),
+        gamma_point: BytesN::from_array(env, gamma),
+        beta_output: BytesN::from_array(env, beta),
+        drand_round: ROUND,
+        drand_signature: BytesN::from_array(env, &FIX_DRAND_SIG),
+    }
+}
+
+/// Valid proof for request #1 in epoch 1.
+fn e1_proof(env: &Env) -> BlsVrfProof {
+    proof(env, &E1_ALPHA, &E1_GAMMA, &E1_BETA)
+}
+
+/// Valid proof for request #2 in epoch 2.
+fn e2_proof(env: &Env) -> BlsVrfProof {
+    proof(env, &E2_ALPHA, &E2_GAMMA, &E2_BETA)
+}
+
+fn fr(env: &Env, sk: &[u8; 32]) -> Bls12381Fr {
+    Bls12381Fr::from_bytes(BytesN::from_array(env, sk))
+}
+
+/// Proof of possession for `pk` as epoch `epoch_id` of `t`'s contract.
+fn pop(t: &T, epoch_id: u32, sk: &[u8; 32], pk: &[u8; 192]) -> BytesN<96> {
+    pop_for(&t.env, &t.client.address, epoch_id, sk, pk)
+}
+
+fn pop_for(
+    env: &Env,
+    contract: &Address,
+    epoch_id: u32,
+    sk: &[u8; 32],
+    pk: &[u8; 192],
+) -> BytesN<96> {
+    let pk = BytesN::from_array(env, pk);
+    let msg = env.as_contract(contract, || crate::pop_message(env, epoch_id, &pk));
+    let bls = env.crypto().bls12_381();
+    let h = bls.hash_to_g1(&msg, &Bytes::from_slice(env, POP_BLS_DST));
+    bls.g1_mul(&h, &fr(env, sk)).to_bytes()
+}
+
+/// Propose + wait + execute a rotation to epoch 2 with the E2 key.
+fn rotate_to_e2(t: &T) -> Address {
+    let op2 = Address::generate(&t.env);
+    let sig = pop(t, 2, &E2_SK, &E2_PK);
+    t.client
+        .propose_key_rotation(&t.admin, &BytesN::from_array(&t.env, &E2_PK), &op2, &sig);
+    advance_ledgers(&t.env, MIN_ROTATION_TIMELOCK_LEDGERS);
+    t.client.execute_key_rotation(&t.admin);
+    op2
+}
+
+fn advance_ledgers(env: &Env, n: u32) {
+    let seq = env.ledger().sequence();
+    env.ledger().set_sequence_number(seq + n);
+}
+
+/// Data of the last event emitted by the VRF contract.
+fn last_event_data(t: &T) -> Val {
+    let evs = t.env.events().all().filter_by_contract(&t.client.address);
+    let e = evs.events().last().expect("no event").clone();
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = e.body;
+    Val::try_from_val(&t.env, &body.data).unwrap()
+}
+
+fn seed_beta(t: &T, id: u64, beta: [u8; 32]) {
+    t.env.as_contract(&t.client.address, || {
+        let ps = t.env.storage().persistent();
+        ps.set(&DataKey::Fulfilled(id), &true);
+        ps.set(&DataKey::Beta(id), &BytesN::from_array(&t.env, &beta));
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CONSTRUCTOR TESTS
+// TEST CONSUMERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod good_consumer {
+    use soroban_sdk::{contract, contractimpl, BytesN, Env};
+
+    #[contract]
+    pub struct GoodConsumer;
+
+    #[contractimpl]
+    impl GoodConsumer {
+        pub fn on_vrf(env: Env, request_id: u64, beta: BytesN<32>, _alpha: BytesN<32>) {
+            env.storage().instance().set(&request_id, &beta);
+        }
+        pub fn got(env: Env, request_id: u64) -> Option<BytesN<32>> {
+            env.storage().instance().get(&request_id)
+        }
+    }
+}
+
+mod bad_consumer {
+    use soroban_sdk::{contract, contractimpl, BytesN, Env};
+
+    #[contract]
+    pub struct PanicConsumer;
+
+    #[contractimpl]
+    impl PanicConsumer {
+        pub fn on_vrf(_env: Env, _request_id: u64, _beta: BytesN<32>, _alpha: BytesN<32>) {
+            panic!("consumer failure");
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CRYPTO CROSS-CHECK
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_init_stores_oracle_pk() {
-    let (_env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    assert_eq!(client.oracle_pk(), oracle_pk);
+fn test_noble_vector_matches_host_computation() {
+    let env = Env::default();
+    let bls = env.crypto().bls12_381();
+    let g2 = Bls12381G2Affine::from_bytes(BytesN::from_array(&env, &BLS12_381_G2_GENERATOR));
+    for (sk, pk, alpha, gamma) in [
+        (&E1_SK, &E1_PK, &E1_ALPHA, &E1_GAMMA),
+        (&E2_SK, &E2_PK, &E2_ALPHA, &E2_GAMMA),
+    ] {
+        assert_eq!(bls.g2_mul(&g2, &fr(&env, sk)).to_bytes().to_array(), *pk);
+        let h = bls.hash_to_g1(
+            &Bytes::from_slice(&env, alpha),
+            &Bytes::from_slice(&env, VRF_DST),
+        );
+        assert_eq!(bls.g1_mul(&h, &fr(&env, sk)).to_bytes().to_array(), *gamma);
+    }
 }
 
-#[test]
-fn test_init_stores_oracle_address() {
-    let (_env, client, _admin, oracle_addr, _pk, _ed, _drand_pk) = setup();
-    assert_eq!(client.oracle_address(), oracle_addr);
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSTRUCTOR
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_init_stores_admin() {
-    let (_env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    assert_eq!(client.admin(), admin);
+fn test_init_getters() {
+    let t = setup_with_fee(FEE);
+    assert_eq!(t.client.admin(), t.admin);
+    assert_eq!(t.client.oracle_address(), t.operator);
+    assert_eq!(t.client.oracle_pk(), BytesN::from_array(&t.env, &E1_PK));
+    assert_eq!(
+        t.client.drand_pk(),
+        BytesN::from_array(&t.env, &FIX_DRAND_PK)
+    );
+    assert_eq!(t.client.drand_genesis_time(), GENESIS);
+    assert_eq!(t.client.drand_period(), PERIOD);
+    assert_eq!(t.client.round_offset(), OFFSET);
+    assert_eq!(t.client.fee(), (t.token.clone(), FEE));
+    assert_eq!(t.client.current_epoch_id(), 1);
+    assert_eq!(t.client.epoch_status(&1), EpochStatus::Active);
+    assert_eq!(t.client.contract_version(), 2);
+    assert_eq!(t.client.timeout_rounds(), TIMEOUT_ROUNDS);
+    assert_eq!(t.client.expiry_rounds(), EXPIRY_ROUNDS);
+    assert!(t.client.pending_rotation().is_none());
+    assert!(t.client.pending_upgrade().is_none());
 }
 
-#[test]
-fn test_init_creates_epoch_1() {
-    let (_env, client, _admin, _addr, oracle_pk, _ed, drand_pk) = setup();
-    assert_eq!(client.current_epoch_id(), 1);
-    let epoch = client.epoch_data(&1);
-    assert_eq!(epoch.oracle_bls_pk, oracle_pk);
-    assert_eq!(epoch.drand_pk, drand_pk);
-    assert_eq!(epoch.status, EpochStatus::Active);
-    assert_eq!(epoch.pending_count, 0);
+fn try_construct(
+    admin_is_operator: bool,
+    oracle_pk: [u8; 192],
+    drand_pk: [u8; 192],
+    offset: u32,
+    rot: u32,
+    upg: u32,
+) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let operator = if admin_is_operator {
+        admin.clone()
+    } else {
+        Address::generate(&env)
+    };
+    env.register(
+        VRFOracleContract,
+        (
+            &admin,
+            &BytesN::from_array(&env, &oracle_pk),
+            &operator,
+            &BytesN::from_array(&env, &drand_pk),
+            &GENESIS,
+            &PERIOD,
+            &offset,
+            &Address::generate(&env),
+            &0i128,
+            &rot,
+            &upg,
+        ),
+    );
 }
 
-#[test]
-fn test_init_version_and_getters() {
-    let (_env, client, _admin, _addr, _pk, _ed, drand_pk) = setup();
-    assert_eq!(client.contract_version(), 2);
-    assert_eq!(client.drand_pk(), drand_pk);
-    assert_eq!(client.drand_genesis_time(), 1_692_803_367);
-    assert_eq!(client.drand_period(), 3);
-    assert_eq!(client.timeout_rounds(), 20);
-}
+const ROT: u32 = MIN_ROTATION_TIMELOCK_LEDGERS;
+const UPG: u32 = MIN_UPGRADE_TIMELOCK_LEDGERS;
 
 #[test]
 #[should_panic(expected = "admin must differ from oracle operator")]
 fn test_init_rejects_admin_eq_operator() {
-    let env = Env::default();
-    env.mock_all_auths();
+    try_construct(true, E1_PK, FIX_DRAND_PK, OFFSET, ROT, UPG);
+}
 
-    let same_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
-    let fee_token = Address::generate(&env);
-
-    env.register(
-        VRFOracleContract,
-        (
-            &same_addr,        // admin = operator → must panic
-            &oracle_pk,
-            &same_addr,
-            &oracle_ed25519,
-            &drand_pk,
-            &1_692_803_367u64,
-            &3u32,
-            &2u32,
-            &fee_token,
-            &0i128,
-            &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
-        ),
-    );
+#[test]
+#[should_panic(expected = "round_offset below minimum")]
+fn test_init_rejects_low_round_offset() {
+    try_construct(false, E1_PK, FIX_DRAND_PK, 3, ROT, UPG);
 }
 
 #[test]
 #[should_panic(expected = "rotation timelock below minimum")]
 fn test_init_rejects_low_rotation_timelock() {
-    let env = Env::default();
-    env.mock_all_auths();
+    try_construct(false, E1_PK, FIX_DRAND_PK, OFFSET, ROT - 1, UPG);
+}
 
-    let admin = Address::generate(&env);
-    let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
-    let fee_token = Address::generate(&env);
+#[test]
+#[should_panic(expected = "upgrade timelock below minimum")]
+fn test_init_rejects_low_upgrade_timelock() {
+    try_construct(false, E1_PK, FIX_DRAND_PK, OFFSET, ROT, UPG - 1);
+}
 
-    env.register(
-        VRFOracleContract,
-        (
-            &admin,
-            &oracle_pk,
-            &oracle_addr,
-            &oracle_ed25519,
-            &drand_pk,
-            &1_692_803_367u64,
-            &3u32,
-            &2u32,
-            &fee_token,
-            &0i128,
-            &100u32,  // below MIN_ROTATION_TIMELOCK_LEDGERS
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
-        ),
+#[test]
+#[should_panic(expected = "oracle pk must differ from drand pk")]
+fn test_init_rejects_identical_keys() {
+    try_construct(false, TEST_G2_TIMES_2, TEST_G2_TIMES_2, OFFSET, ROT, UPG);
+}
+
+#[test]
+#[should_panic(expected = "oracle pk must not be the G2 generator")]
+fn test_init_rejects_generator_key() {
+    try_construct(
+        false,
+        BLS12_381_G2_GENERATOR,
+        FIX_DRAND_PK,
+        OFFSET,
+        ROT,
+        UPG,
     );
 }
 
 #[test]
-#[should_panic(expected = "round_offset must be >= 2")]
-fn test_init_rejects_zero_round_offset() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
-    let fee_token = Address::generate(&env);
-
-    env.register(
-        VRFOracleContract,
-        (
-            &admin,
-            &oracle_pk,
-            &oracle_addr,
-            &oracle_ed25519,
-            &drand_pk,
-            &1_692_803_367u64,
-            &3u32,
-            &0u32,  // must panic
-            &fee_token,
-            &0i128,
-            &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
-        ),
-    );
+#[should_panic(expected = "drand pk is the point at infinity")]
+fn test_init_rejects_infinity_drand_key() {
+    let mut inf = [0u8; 192];
+    inf[0] = 0x40;
+    try_construct(false, E1_PK, inf, OFFSET, ROT, UPG);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// REQUEST TESTS — EPOCH BINDING (S1, S7)
+// REQUEST
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_request_returns_incremented_ids() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let ctx1 = Bytes::from_slice(&env, b"ctx_one");
-    let ctx2 = Bytes::from_slice(&env, b"ctx_two");
-
-    assert_eq!(client.request(&ctx1, &requester), 1);
-    assert_eq!(client.request(&ctx2, &requester), 2);
+fn test_request_binds_round_epoch_and_escrows_fee() {
+    let t = setup_with_fee(FEE);
+    let r = funded_requester(&t);
+    let before = balance(&t, &r);
+    let id = t.client.request(&ctx(&t.env), &r);
+    assert_eq!(id, 1);
+    assert_eq!(t.client.request_round(&id), ROUND);
+    assert_eq!(t.client.request_epoch(&id), 1);
+    assert_eq!(t.client.requester_of(&id), r);
+    assert_eq!(t.client.get_context(&id), ctx(&t.env));
+    assert!(!t.client.is_fulfilled(&id));
+    assert!(!t.client.is_refunded(&id));
+    assert!(t.client.callback_of(&id).is_none());
+    assert_eq!(balance(&t, &r), before - FEE);
+    assert_eq!(balance(&t, &t.client.address), FEE);
+    assert_eq!(t.client.request(&ctx(&t.env), &r), 2);
 }
 
 #[test]
-fn test_request_stores_epoch_id() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"test_context");
-
-    let id = client.request(&context, &requester);
-    assert_eq!(client.request_epoch(&id), 1); // bound to epoch 1
+fn test_request_does_not_write_default_flags() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.env.as_contract(&t.client.address, || {
+        assert!(!t.env.storage().persistent().has(&DataKey::Fulfilled(id)));
+        assert!(!t.env.storage().persistent().has(&DataKey::Refunded(id)));
+    });
 }
 
 #[test]
-fn test_request_increments_pending_count() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let ctx = Bytes::from_slice(&env, b"ctx");
-
-    assert_eq!(client.epoch_data(&1).pending_count, 0);
-
-    client.request(&ctx, &requester);
-    assert_eq!(client.epoch_data(&1).pending_count, 1);
-
-    let ctx2 = Bytes::from_slice(&env, b"ctx2");
-    client.request(&ctx2, &requester);
-    assert_eq!(client.epoch_data(&1).pending_count, 2);
-}
-
-#[test]
-fn test_request_is_initially_unfulfilled() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"test_context");
-
-    let id = client.request(&context, &requester);
-    assert!(!client.is_fulfilled(&id));
-    assert!(!client.is_refunded(&id));
-}
-
-#[test]
-fn test_request_stores_requester() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-
-    let id = client.request(&context, &requester);
-    assert_eq!(client.requester_of(&id), requester);
-}
-
-#[test]
-fn test_request_locks_expected_round() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"round_lock_context");
-
-    let id = client.request(&context, &requester);
-    let round = client.request_round(&id);
-    // Default test env timestamp (0) is before genesis → current round 0, so round = 0+2 = 2
-    assert_eq!(round, 2);
+fn test_request_event_carries_epoch_and_round() {
+    let t = setup();
+    let r = Address::generate(&t.env);
+    let id = t.client.request(&ctx(&t.env), &r);
+    let data = last_event_data(&t);
+    let (eid, who, epoch, round): (u64, Address, u32, u64) =
+        <(u64, Address, u32, u64)>::try_from_val(&t.env, &data).unwrap();
+    assert_eq!((eid, who, epoch, round), (id, r, 1, ROUND));
 }
 
 #[test]
 #[should_panic(expected = "context exceeds maximum length")]
 fn test_request_oversized_context_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let buf = [0u8; 1025];
-    let context = Bytes::from_slice(&env, &buf);
-    client.request(&context, &requester);
+    let t = setup();
+    let big = Bytes::from_slice(&t.env, &[0u8; 1025]);
+    t.client.request(&big, &Address::generate(&t.env));
 }
 
 #[test]
-fn test_request_counter_sequential() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-
-    for expected_id in 1u64..=5 {
-        let context = Bytes::from_slice(&env, format!("ctx_{}", expected_id).as_bytes());
-        let id = client.request(&context, &requester);
-        assert_eq!(id, expected_id);
-    }
-}
-
-#[test]
-fn test_request_with_callback_stores_callback() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let callback_contract = Address::generate(&env);
-    let callback_fn = Symbol::new(&env, "on_vrf");
-    let context = Bytes::from_slice(&env, b"callback_context");
-
-    let id = client.request_with_callback(
-        &context,
-        &callback_contract,
-        &callback_contract,
-        &callback_fn,
+#[should_panic(expected = "callback_contract must be the requester")]
+fn test_request_with_callback_requester_mismatch_rejected() {
+    let t = setup();
+    t.client.request_with_callback(
+        &ctx(&t.env),
+        &Address::generate(&t.env),
+        &Address::generate(&t.env),
+        &Symbol::new(&t.env, "on_vrf"),
     );
-    let cb = client.callback_of(&id);
-    assert!(cb.is_some());
-    let (stored_contract, stored_fn) = cb.unwrap();
-    assert_eq!(stored_contract, callback_contract);
-    assert_eq!(stored_fn, callback_fn);
 }
 
 #[test]
-fn test_timeout_rounds_constant() {
-    let (_env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    assert_eq!(client.timeout_rounds(), 20);
+#[should_panic(expected = "callback_fn must be 'on_vrf'")]
+fn test_request_with_callback_wrong_fn_rejected() {
+    let t = setup();
+    let r = Address::generate(&t.env);
+    t.client
+        .request_with_callback(&ctx(&t.env), &r, &r, &Symbol::new(&t.env, "steal"));
 }
 
 #[test]
-fn test_is_fulfilled_nonexistent_returns_false() {
-    let (_env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    assert!(!client.is_fulfilled(&999u64));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EPOCH REVOCATION TESTS (S8, S9, S16, S20)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_revoke_epoch_sets_revoked() {
-    let (_env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    client.revoke_epoch(&admin, &1);
-    assert_eq!(client.epoch_status(&1), EpochStatus::Revoked);
-}
-
-#[test]
-#[should_panic(expected = "epoch already revoked")]
-fn test_revoke_epoch_idempotent_rejected() {
-    let (_env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    client.revoke_epoch(&admin, &1);
-    client.revoke_epoch(&admin, &1); // second call must panic
+fn test_requests_paused_while_upgrade_pending() {
+    let t = setup();
+    let r = Address::generate(&t.env);
+    t.client
+        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
+    assert!(t.client.try_request(&ctx(&t.env), &r).is_err());
+    t.client.cancel_upgrade(&t.admin);
+    assert_eq!(t.client.request(&ctx(&t.env), &r), 1);
 }
 
 #[test]
 #[should_panic(expected = "active epoch not accepting requests")]
-fn test_revoke_active_blocks_new_requests() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    client.revoke_epoch(&admin, &1);
-
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"should_fail");
-    client.request(&context, &requester); // must panic — active epoch is revoked
+fn test_revoked_active_epoch_blocks_requests() {
+    let t = setup();
+    t.client.revoke_epoch(&t.admin, &1);
+    t.client.request(&ctx(&t.env), &Address::generate(&t.env));
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: not admin")]
-fn test_revoke_epoch_requires_admin() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let impostor = Address::generate(&env);
-    client.revoke_epoch(&impostor, &1); // must panic
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EMERGENCY REFUND TESTS (S9, S10)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_emergency_refund_on_revoked_epoch() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"emergency_ctx");
-
-    let id = client.request(&context, &requester);
-    assert_eq!(client.epoch_data(&1).pending_count, 1);
-
-    client.revoke_epoch(&admin, &1);
-    client.emergency_refund(&id);
-
-    assert!(client.is_refunded(&id));
-    assert!(!client.is_fulfilled(&id));
-    assert_eq!(client.epoch_data(&1).pending_count, 0);
-    // RequestEpoch should still be queryable
-    assert_eq!(client.request_epoch(&id), 1);
-}
-
-#[test]
-#[should_panic(expected = "emergency refund only for revoked epochs")]
-fn test_emergency_refund_on_active_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-    client.emergency_refund(&id); // epoch is Active, must panic
-}
-
-#[test]
-#[should_panic(expected = "already refunded")]
-fn test_emergency_refund_double_rejected() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-    client.revoke_epoch(&admin, &1);
-    client.emergency_refund(&id);
-    client.emergency_refund(&id); // must panic
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EPOCH LIFECYCLE TESTS (S6, S12)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-#[should_panic(expected = "cannot retire active epoch")]
-fn test_retire_active_epoch_rejected() {
-    let (_env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    client.retire_epoch(&1); // epoch 1 is active
-}
-
-#[test]
-#[should_panic(expected = "epoch still has pending requests")]
-fn test_retire_epoch_with_pending_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    client.request(&context, &requester); // pending_count = 1 on epoch 1
-
-    // Simulate epoch 2 being active so epoch 1 is not the active epoch
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage().instance().set(&DataKey::ActiveEpochId, &2u32);
-    });
-
-    client.retire_epoch(&1);
-}
-
-#[test]
-fn test_retire_epoch_success() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage().instance().set(&DataKey::ActiveEpochId, &2u32);
-        env.storage().instance().set(&DataKey::RetainedEpochCount, &2u32);
-    });
-
-    assert_eq!(client.retained_epoch_count(), 2);
-    client.retire_epoch(&1);
-    assert_eq!(client.retained_epoch_count(), 1);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// KEY ROTATION GOVERNANCE & REVOCATION SURVIVAL (CRITICAL — S16, S20)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_revocation_survives_rotation() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let req_id = client.request(&context, &requester);
-
-    // 1. Revoke epoch 1
-    client.revoke_epoch(&admin, &1);
-    assert_eq!(client.epoch_status(&1), EpochStatus::Revoked);
-
-    // 2. Set up pending rotation to epoch 2
-    let new_oracle_addr = Address::generate(&env);
-    let new_epoch_data = EpochData {
-        oracle_bls_pk: BytesN::from_array(&env, &TEST_G2_TIMES_5),
-        oracle_ed25519_pk: BytesN::from_array(&env, &[0x22; 32]),
-        oracle_address: new_oracle_addr,
-        drand_pk: BytesN::from_array(&env, &TEST_G2_TIMES_3),
-        status: EpochStatus::Active,
-        pending_count: 0,
-        created_ledger: env.ledger().sequence(),
+fn test_epoch_ttl_is_extended_by_requests() {
+    let t = setup();
+    let r = Address::generate(&t.env);
+    let ttl = |t: &T| {
+        t.env.as_contract(&t.client.address, || {
+            t.env.storage().persistent().get_ttl(&DataKey::Epoch(1))
+        })
     };
-    let pending = PendingRotation {
-        new_epoch: new_epoch_data,
-        new_epoch_id: 2,
-        source_epoch_id: 1,
-        proposed_ledger: env.ledger().sequence(),
-        execute_after_ledger: env.ledger().sequence() + MIN_ROTATION_TIMELOCK_LEDGERS,
-    };
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingRot, &Some(pending));
-    });
-
-    // 3. Advance ledger past timelock
-    env.ledger().with_mut(|li| {
-        li.sequence_number += MIN_ROTATION_TIMELOCK_LEDGERS + 1;
-    });
-
-    // 4. Execute rotation
-    client.execute_key_rotation(&admin);
-
-    // 5. Invariant S16: epoch 1 MUST REMAIN Revoked (NEVER overridden to Superseded)
-    assert_eq!(client.epoch_status(&1), EpochStatus::Revoked);
-    assert_eq!(client.current_epoch_id(), 2);
-    assert_eq!(client.epoch_status(&2), EpochStatus::Active);
-
-    // 6. Emergency refund for epoch 1 request still succeeds
-    client.emergency_refund(&req_id);
-    assert!(client.is_refunded(&req_id));
-
-    // 7. Active epoch 2 receives new requests normally
-    let req2 = client.request(&context, &requester);
-    assert_eq!(client.request_epoch(&req2), 2);
-}
-
-#[test]
-fn test_revoke_source_cancels_pending_rotation() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-
-    let new_oracle_addr = Address::generate(&env);
-    let new_epoch_data = EpochData {
-        oracle_bls_pk: BytesN::from_array(&env, &TEST_G2_TIMES_5),
-        oracle_ed25519_pk: BytesN::from_array(&env, &[0x22; 32]),
-        oracle_address: new_oracle_addr,
-        drand_pk: BytesN::from_array(&env, &TEST_G2_TIMES_3),
-        status: EpochStatus::Active,
-        pending_count: 0,
-        created_ledger: env.ledger().sequence(),
-    };
-    let pending = PendingRotation {
-        new_epoch: new_epoch_data,
-        new_epoch_id: 2,
-        source_epoch_id: 1,
-        proposed_ledger: env.ledger().sequence(),
-        execute_after_ledger: env.ledger().sequence() + MIN_ROTATION_TIMELOCK_LEDGERS,
-    };
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingRot, &Some(pending));
-    });
-
-    assert!(client.pending_rotation().is_some());
-    // Invariant S20: revoking source epoch auto-cancels the pending rotation
-    client.revoke_epoch(&admin, &1);
-    assert!(client.pending_rotation().is_none());
-}
-
-#[test]
-#[should_panic(expected = "rotation timelock not elapsed")]
-fn test_execute_key_rotation_before_timelock_rejected() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-
-    let new_oracle_addr = Address::generate(&env);
-    let new_epoch_data = EpochData {
-        oracle_bls_pk: BytesN::from_array(&env, &TEST_G2_TIMES_5),
-        oracle_ed25519_pk: BytesN::from_array(&env, &[0x22; 32]),
-        oracle_address: new_oracle_addr,
-        drand_pk: BytesN::from_array(&env, &TEST_G2_TIMES_3),
-        status: EpochStatus::Active,
-        pending_count: 0,
-        created_ledger: env.ledger().sequence(),
-    };
-    let pending = PendingRotation {
-        new_epoch: new_epoch_data,
-        new_epoch_id: 2,
-        source_epoch_id: 1,
-        proposed_ledger: env.ledger().sequence(),
-        execute_after_ledger: env.ledger().sequence() + MIN_ROTATION_TIMELOCK_LEDGERS,
-    };
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingRot, &Some(pending));
-    });
-
-    client.execute_key_rotation(&admin); // must panic: timelock not elapsed
-}
-
-#[test]
-fn test_cancel_key_rotation() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-
-    let new_oracle_addr = Address::generate(&env);
-    let new_epoch_data = EpochData {
-        oracle_bls_pk: BytesN::from_array(&env, &TEST_G2_TIMES_5),
-        oracle_ed25519_pk: BytesN::from_array(&env, &[0x22; 32]),
-        oracle_address: new_oracle_addr,
-        drand_pk: BytesN::from_array(&env, &TEST_G2_TIMES_3),
-        status: EpochStatus::Active,
-        pending_count: 0,
-        created_ledger: env.ledger().sequence(),
-    };
-    let pending = PendingRotation {
-        new_epoch: new_epoch_data,
-        new_epoch_id: 2,
-        source_epoch_id: 1,
-        proposed_ledger: env.ledger().sequence(),
-        execute_after_ledger: env.ledger().sequence() + MIN_ROTATION_TIMELOCK_LEDGERS,
-    };
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingRot, &Some(pending));
-    });
-
-    assert!(client.pending_rotation().is_some());
-    client.cancel_key_rotation(&admin);
-    assert!(client.pending_rotation().is_none());
-}
-
-#[test]
-#[should_panic(expected = "epoch revoked")]
-fn test_fulfill_revoked_epoch_rejected() {
-    let (env, client, admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-
-    client.revoke_epoch(&admin, &1);
-
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 2,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &dummy_proof, &dummy_sig);
-}
-// UPGRADE GOVERNANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_propose_upgrade_stores_proposal() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let wasm_hash = BytesN::from_array(&env, &[0xAA; 32]);
-
-    assert!(client.pending_upgrade().is_none());
-    client.propose_upgrade(&admin, &wasm_hash);
-    let pending = client.pending_upgrade();
-    assert!(pending.is_some());
-    let p = pending.unwrap();
-    assert_eq!(p.wasm_hash, wasm_hash);
-}
-
-#[test]
-#[should_panic(expected = "unauthorized: not admin")]
-fn test_propose_upgrade_requires_admin() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let impostor = Address::generate(&env);
-    let wasm_hash = BytesN::from_array(&env, &[0xAA; 32]);
-    client.propose_upgrade(&impostor, &wasm_hash);
-}
-
-#[test]
-#[should_panic(expected = "pending upgrade already exists")]
-fn test_propose_upgrade_blocked_if_pending() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let wasm1 = BytesN::from_array(&env, &[0xAA; 32]);
-    let wasm2 = BytesN::from_array(&env, &[0xBB; 32]);
-    client.propose_upgrade(&admin, &wasm1);
-    client.propose_upgrade(&admin, &wasm2); // must panic
-}
-
-#[test]
-fn test_cancel_upgrade_clears_proposal() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let wasm_hash = BytesN::from_array(&env, &[0xAA; 32]);
-
-    client.propose_upgrade(&admin, &wasm_hash);
-    assert!(client.pending_upgrade().is_some());
-
-    client.cancel_upgrade(&admin);
-    assert!(client.pending_upgrade().is_none());
-}
-
-#[test]
-#[should_panic(expected = "upgrade timelock not elapsed")]
-fn test_execute_upgrade_before_timelock_rejected() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let wasm_hash = BytesN::from_array(&env, &[0xAA; 32]);
-    client.propose_upgrade(&admin, &wasm_hash);
-    // Don't advance ledger → timelock not elapsed
-    client.execute_upgrade(&admin); // must panic
+    // Let the epoch entry age past the extension threshold, then request.
+    advance_ledgers(&t.env, 518_400 - 17_000);
+    let aged = ttl(&t);
+    assert!(aged < 17_280, "precondition: entry is below the threshold");
+    t.client.request(&ctx(&t.env), &r);
+    assert!(ttl(&t) >= 518_400 - 1, "request must extend the epoch TTL");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ADMIN TRANSFER GOVERNANCE TESTS
+// FULFILL
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_propose_admin_transfer() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let new_admin = Address::generate(&env);
+fn test_fulfill_real_proof_succeeds_and_pays_operator() {
+    let t = setup_with_fee(FEE);
+    let r = funded_requester(&t);
+    let id = t.client.request(&ctx(&t.env), &r);
+    t.client.fulfill(&id, &e1_proof(&t.env));
 
-    assert!(client.pending_admin_transfer().is_none());
-    client.propose_admin_transfer(&admin, &new_admin);
-    let pending = client.pending_admin_transfer();
-    assert!(pending.is_some());
-    assert_eq!(pending.unwrap().new_admin, new_admin);
+    // Events are those of the last invocation: check them first.
+    let data = last_event_data(&t);
+    let (eid, beta, epoch): (u64, BytesN<32>, u32) =
+        <(u64, BytesN<32>, u32)>::try_from_val(&t.env, &data).unwrap();
+    assert_eq!((eid, epoch), (id, 1));
+    assert_eq!(beta, BytesN::from_array(&t.env, &E1_BETA));
+
+    assert!(t.client.is_fulfilled(&id));
+    assert_eq!(t.client.get_beta(&id), BytesN::from_array(&t.env, &E1_BETA));
+    assert_eq!(t.client.get_proof(&id), e1_proof(&t.env));
+    assert_eq!(balance(&t, &t.operator), FEE);
+    assert_eq!(balance(&t, &t.client.address), 0);
 }
 
 #[test]
-#[should_panic(expected = "new admin must differ from operator")]
-fn test_propose_admin_transfer_rejects_operator_as_admin() {
-    let (_env, client, admin, oracle_addr, _pk, _ed, _drand_pk) = setup();
-    // Trying to set the oracle operator as the new admin must fail
-    client.propose_admin_transfer(&admin, &oracle_addr);
+fn test_fulfill_requires_operator_auth() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.env.set_auths(&[]);
+    assert!(t.client.try_fulfill(&id, &e1_proof(&t.env)).is_err());
+    assert!(!t.client.is_fulfilled(&id));
 }
 
 #[test]
-fn test_execute_admin_transfer_after_timelock() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let new_admin = Address::generate(&env);
-
-    client.propose_admin_transfer(&admin, &new_admin);
-
-    // Advance ledger past the timelock
-    env.ledger().with_mut(|li| {
-        li.sequence_number += MIN_UPGRADE_TIMELOCK_LEDGERS + 1;
-    });
-
-    client.execute_admin_transfer(&admin);
-    assert_eq!(client.admin(), new_admin);
-    assert!(client.pending_admin_transfer().is_none());
+fn test_fulfill_records_operator_auth() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    let auths = t.env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(auths[0].0, t.operator);
 }
-
-#[test]
-#[should_panic(expected = "admin transfer timelock not elapsed")]
-fn test_execute_admin_transfer_before_timelock_rejected() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let new_admin = Address::generate(&env);
-
-    client.propose_admin_transfer(&admin, &new_admin);
-    // Don't advance ledger
-    client.execute_admin_transfer(&admin);
-}
-
-#[test]
-fn test_cancel_admin_transfer() {
-    let (env, client, admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let new_admin = Address::generate(&env);
-
-    client.propose_admin_transfer(&admin, &new_admin);
-    assert!(client.pending_admin_transfer().is_some());
-
-    client.cancel_admin_transfer(&admin);
-    assert!(client.pending_admin_transfer().is_none());
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TIMEOUT REFUND TESTS (epoch-aware)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_timeout_refund_decrements_pending_count() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"timeout_ctx");
-
-    let id = client.request(&context, &requester);
-    assert_eq!(client.epoch_data(&1).pending_count, 1);
-
-    // Advance past timeout window
-    // round = 2, TIMEOUT_ROUNDS = 20, need current_round > 22
-    // genesis = 1692803367, period = 3
-    env.ledger().with_mut(|li| {
-        li.timestamp = 1_692_803_367 + 100;
-    });
-
-    client.timeout_refund(&id);
-    assert!(client.is_refunded(&id));
-    assert_eq!(client.epoch_data(&1).pending_count, 0);
-    // RequestEpoch still available
-    assert_eq!(client.request_epoch(&id), 1);
-}
-
-#[test]
-#[should_panic(expected = "timeout window not reached")]
-fn test_timeout_refund_too_early() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-    // Don't advance time
-    client.timeout_refund(&id);
-}
-
-#[test]
-#[should_panic(expected = "already fulfilled")]
-fn test_timeout_refund_fulfilled_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-    });
-
-    client.timeout_refund(&id);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CONSTRUCTOR VALIDATION & CRYPTOGRAPHIC GUARDS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-fn try_construct(env: &Env, oracle_pk: [u8; 192], drand_pk: [u8; 192], ed: [u8; 32]) {
-    let admin = Address::generate(env);
-    let oracle_addr = Address::generate(env);
-    let fee_token = Address::generate(env);
-    env.register(
-        VRFOracleContract,
-        (
-            &admin,
-            &BytesN::from_array(env, &oracle_pk),
-            &oracle_addr,
-            &BytesN::from_array(env, &ed),
-            &BytesN::from_array(env, &drand_pk),
-            &1_692_803_367u64,
-            &3u32,
-            &2u32,
-            &fee_token,
-            &0i128,
-            &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
-        ),
-    );
-}
-
-fn g2_infinity() -> [u8; 192] {
-    let mut p = [0u8; 192];
-    p[0] = 0x40;
-    p
-}
-
-#[test]
-#[should_panic(expected = "round_offset must be >= 2")]
-fn test_init_rejects_round_offset_one() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let oracle_addr = Address::generate(&env);
-    let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
-    let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
-    let fee_token = Address::generate(&env);
-    env.register(
-        VRFOracleContract,
-        (
-            &admin,
-            &oracle_pk,
-            &oracle_addr,
-            &oracle_ed25519,
-            &drand_pk,
-            &1_692_803_367u64,
-            &3u32,
-            &1u32, // < 2 must panic
-            &fee_token,
-            &0i128,
-            &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
-        ),
-    );
-}
-
-#[test]
-#[should_panic(expected = "oracle pk is the point at infinity")]
-fn test_constructor_rejects_infinity_oracle_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(&env, g2_infinity(), TEST_G2_TIMES_3, [0x11; 32]);
-}
-
-#[test]
-#[should_panic(expected = "drand pk is the point at infinity")]
-fn test_constructor_rejects_infinity_drand_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(&env, TEST_G2_TIMES_2, g2_infinity(), [0x11; 32]);
-}
-
-#[test]
-#[should_panic(expected = "oracle pk must not be the G2 generator")]
-fn test_constructor_rejects_generator_as_oracle_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(
-        &env,
-        crate::BLS12_381_G2_GENERATOR,
-        TEST_G2_TIMES_3,
-        [0x11; 32],
-    );
-}
-
-#[test]
-#[should_panic(expected = "drand pk must not be the G2 generator")]
-fn test_constructor_rejects_generator_as_drand_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(
-        &env,
-        TEST_G2_TIMES_2,
-        crate::BLS12_381_G2_GENERATOR,
-        [0x11; 32],
-    );
-}
-
-#[test]
-#[should_panic]
-fn test_constructor_rejects_non_point_oracle_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(&env, [0x02; 192], TEST_G2_TIMES_3, [0x11; 32]);
-}
-
-#[test]
-#[should_panic]
-fn test_constructor_rejects_off_curve_oracle_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let mut p = TEST_G2_TIMES_2;
-    p[191] ^= 0x01;
-    try_construct(&env, p, TEST_G2_TIMES_3, [0x11; 32]);
-}
-
-#[test]
-#[should_panic(expected = "oracle pk must differ from drand pk")]
-fn test_constructor_rejects_identical_oracle_and_drand_pk() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(&env, TEST_G2_TIMES_2, TEST_G2_TIMES_2, [0x11; 32]);
-}
-
-#[test]
-#[should_panic(expected = "oracle ed25519 key must not be all zero")]
-fn test_constructor_rejects_zero_ed25519() {
-    let env = Env::default();
-    env.mock_all_auths();
-    try_construct(&env, TEST_G2_TIMES_2, TEST_G2_TIMES_3, [0u8; 32]);
-}
-
-#[test]
-fn test_canonical_generator_and_test_keys_are_valid() {
-    let env = Env::default();
-    use soroban_sdk::crypto::bls12_381::Bls12381G2Affine;
-    let _gen = Bls12381G2Affine::from_bytes(BytesN::from_array(&env, &crate::BLS12_381_G2_GENERATOR));
-    crate::validate_g2_public_key(&env, &BytesN::from_array(&env, &TEST_G2_TIMES_2), "test key 2");
-    crate::validate_g2_public_key(&env, &BytesN::from_array(&env, &TEST_G2_TIMES_3), "test key 3");
-    crate::validate_g2_public_key(&env, &BytesN::from_array(&env, &TEST_G2_TIMES_5), "test key 5");
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// REQUEST & CALLBACK VALIDATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-#[should_panic(expected = "callback_contract must be the requester")]
-fn test_request_with_callback_mismatched_requester_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let different = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    client.request_with_callback(
-        &context,
-        &requester,
-        &different,
-        &soroban_sdk::Symbol::new(&env, "on_vrf"),
-    );
-}
-
-#[test]
-fn test_is_refunded_initially_false() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-    assert!(!client.is_refunded(&id));
-}
-
-#[test]
-fn test_property_empty_context_allowed() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::new(&env);
-    let id = client.request(&context, &requester);
-    assert_eq!(id, 1);
-}
-
-#[test]
-fn test_property_exact_max_context_boundary_allowed() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let buf = [0x55u8; 1024];
-    let context = Bytes::from_slice(&env, &buf);
-    let id = client.request(&context, &requester);
-    assert_eq!(id, 1);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FULFILL VALIDATION & REPLAY DEFENSE
-// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 #[should_panic(expected = "already fulfilled")]
 fn test_fulfill_duplicate_rejected() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"dup_test");
-    let id = client.request(&context, &requester);
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+}
 
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-    });
-
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 2,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &dummy_proof, &dummy_sig);
+#[test]
+#[should_panic(expected = "request not found")]
+fn test_fulfill_unknown_request_rejected() {
+    let t = setup();
+    t.client.fulfill(&9, &e1_proof(&t.env));
 }
 
 #[test]
 #[should_panic(expected = "drand round mismatch")]
 fn test_fulfill_wrong_round_rejected() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"wrong_round");
-    let id = client.request(&context, &requester);
-
-    let wrong_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 9999, // mismatch
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &wrong_proof, &dummy_sig);
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let mut p = e1_proof(&t.env);
+    p.drand_round = ROUND + 1;
+    t.client.fulfill(&id, &p);
 }
 
 #[test]
-#[should_panic(expected = "oracle key mismatch")]
-fn test_fulfill_wrong_pk_rejected() {
-    let (env, client, _admin, _addr, _oracle_pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"wrong_pk");
-    let id = client.request(&context, &requester);
-
-    let wrong_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: BytesN::from_array(&env, &TEST_G2_TIMES_5), // wrong key
-        drand_round: 2,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &wrong_proof, &dummy_sig);
+#[should_panic(expected = "drand signature verification failed")]
+fn test_fulfill_forged_drand_signature_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let mut p = e1_proof(&t.env);
+    // A valid G1 point that is not drand's signature (the alpha-derived gamma).
+    p.drand_signature = BytesN::from_array(&t.env, &E2_GAMMA);
+    t.client.fulfill(&id, &p);
 }
 
 #[test]
-#[should_panic(expected = "request epoch missing")]
-fn test_fulfill_nonexistent_request_rejected() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 0,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&9999u64, &dummy_proof, &dummy_sig);
+#[should_panic(expected = "alpha seed mismatch")]
+fn test_fulfill_tampered_alpha_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let mut a = E1_ALPHA;
+    a[0] ^= 1;
+    t.client
+        .fulfill(&id, &proof(&t.env, &a, &E1_GAMMA, &E1_BETA));
+}
+
+#[test]
+#[should_panic(expected = "alpha seed mismatch")]
+fn test_fulfill_other_request_proof_rejected() {
+    // A valid proof for request #1 cannot be replayed on request #2.
+    let t = setup();
+    let r = Address::generate(&t.env);
+    t.client.request(&ctx(&t.env), &r);
+    let id2 = t.client.request(&ctx(&t.env), &r);
+    t.client.fulfill(&id2, &e1_proof(&t.env));
+}
+
+#[test]
+#[should_panic(expected = "bls vrf verification failed")]
+fn test_fulfill_gamma_from_wrong_key_rejected() {
+    // Correct alpha, but gamma computed with the epoch-2 key.
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let env = &t.env;
+    let bls = env.crypto().bls12_381();
+    let h = bls.hash_to_g1(
+        &Bytes::from_slice(env, &E1_ALPHA),
+        &Bytes::from_slice(env, VRF_DST),
+    );
+    let wrong_gamma = bls.g1_mul(&h, &fr(env, &E2_SK)).to_bytes().to_array();
+    t.client
+        .fulfill(&id, &proof(env, &E1_ALPHA, &wrong_gamma, &E1_BETA));
+}
+
+#[test]
+#[should_panic(expected = "beta output mismatch")]
+fn test_fulfill_tampered_beta_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let mut b = E1_BETA;
+    b[31] ^= 1;
+    t.client
+        .fulfill(&id, &proof(&t.env, &E1_ALPHA, &E1_GAMMA, &b));
+}
+
+#[test]
+#[should_panic(expected = "epoch revoked")]
+fn test_fulfill_revoked_epoch_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.revoke_epoch(&t.admin, &1);
+    t.client.fulfill(&id, &e1_proof(&t.env));
 }
 
 #[test]
 #[should_panic(expected = "request refunded")]
-fn test_property_fulfill_after_timeout_refund_rejected() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"refund_replay");
-    let id = client.request(&context, &requester);
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Refunded(id), &true);
-    });
-
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 2,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &dummy_proof, &dummy_sig);
+fn test_fulfill_after_refund_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
+    t.client.timeout_refund(&id);
+    t.client.fulfill(&id, &e1_proof(&t.env));
 }
 
 #[test]
-#[should_panic(expected = "request epoch missing")]
-fn test_property_fulfill_request_id_zero_rejected() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 0,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&0u64, &dummy_proof, &dummy_sig);
-}
-
-#[test]
-#[should_panic(expected = "request epoch missing")]
-fn test_property_fulfill_request_id_max_rejected() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 0,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&u64::MAX, &dummy_proof, &dummy_sig);
-}
-
-#[test]
-#[should_panic(expected = "fulfill already in progress")]
-fn test_property_fulfilling_guard_blocks_concurrent_fulfill() {
-    let (env, client, _admin, _addr, oracle_pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"reentrancy_test");
-    let id = client.request(&context, &requester);
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilling(id), &true);
-    });
-
-    let dummy_proof = crate::BlsVrfProof {
-        alpha_seed: BytesN::from_array(&env, &[0u8; 32]),
-        gamma_point: BytesN::from_array(&env, &[0u8; 96]),
-        beta_output: BytesN::from_array(&env, &[0u8; 32]),
-        public_key: oracle_pk,
-        drand_round: 2,
-        drand_signature: BytesN::from_array(&env, &[0u8; 96]),
-    };
-    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-    client.fulfill(&id, &dummy_proof, &dummy_sig);
+fn test_fulfill_core_budget() {
+    let t = setup_with_fee(FEE);
+    let id = t.client.request(&ctx(&t.env), &funded_requester(&t));
+    t.env.cost_estimate().budget().reset_unlimited();
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    let cpu = t.env.cost_estimate().budget().cpu_instruction_cost();
+    std::println!("fulfill CPU instructions (with fee transfer): {}", cpu);
+    assert!(cpu < 75_000_000, "fulfill used {} CPU instructions", cpu);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TIMEOUT REFUND BOUNDARIES
+// CALLBACK DELIVERY
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[should_panic(expected = "already refunded")]
-fn test_timeout_refund_double_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
+fn test_fulfill_does_not_run_callback_and_deliver_does() {
+    let t = setup();
+    let consumer = t.env.register(good_consumer::GoodConsumer, ());
+    let cc = good_consumer::GoodConsumerClient::new(&t.env, &consumer);
+    let id = t.client.request_with_callback(
+        &ctx(&t.env),
+        &consumer,
+        &consumer,
+        &Symbol::new(&t.env, "on_vrf"),
+    );
+    assert!(t.client.callback_of(&id).is_some());
 
-    env.ledger().with_mut(|li| {
-        li.timestamp = 1_692_803_367 + 100;
-    });
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    assert!(cc.got(&id).is_none(), "fulfill must not run consumer code");
+    assert!(t.client.callback_of(&id).is_some());
 
-    client.timeout_refund(&id);
-    client.timeout_refund(&id); // second refund must panic
+    t.client.deliver(&id);
+    assert_eq!(cc.got(&id), Some(BytesN::from_array(&t.env, &E1_BETA)));
+    assert!(t.client.callback_of(&id).is_none());
+    assert!(t.client.try_deliver(&id).is_err(), "delivered only once");
 }
 
 #[test]
-#[should_panic(expected = "request not found")]
-fn test_property_timeout_refund_request_id_zero_rejected() {
-    let (_env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    client.timeout_refund(&0u64);
+fn test_failing_callback_cannot_undo_result_and_stays_retryable() {
+    let t = setup();
+    let consumer = t.env.register(bad_consumer::PanicConsumer, ());
+    let id = t.client.request_with_callback(
+        &ctx(&t.env),
+        &consumer,
+        &consumer,
+        &Symbol::new(&t.env, "on_vrf"),
+    );
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    assert!(t.client.try_deliver(&id).is_err());
+    assert!(t.client.is_fulfilled(&id));
+    assert_eq!(t.client.get_beta(&id), BytesN::from_array(&t.env, &E1_BETA));
+    assert!(t.client.callback_of(&id).is_some(), "still pending");
+    // The request is final: it can no longer be refunded.
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + EXPIRY_ROUNDS + 1));
+    assert!(t.client.try_timeout_refund(&id).is_err());
 }
-
-#[test]
-#[should_panic(expected = "request not found")]
-fn test_property_timeout_refund_request_id_max_rejected() {
-    let (_env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    client.timeout_refund(&u64::MAX);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CLEANUP PROOF TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 #[should_panic(expected = "request not yet fulfilled")]
-fn test_cleanup_proof_unfulfilled_rejected() {
-    let (env, client, _admin, oracle_addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"cleanup_unfulfilled");
-    let id = client.request(&context, &requester);
+fn test_deliver_before_fulfill_rejected() {
+    let t = setup();
+    let consumer = t.env.register(good_consumer::GoodConsumer, ());
+    let id = t.client.request_with_callback(
+        &ctx(&t.env),
+        &consumer,
+        &consumer,
+        &Symbol::new(&t.env, "on_vrf"),
+    );
+    t.client.deliver(&id);
+}
 
-    client.cleanup_proof(&id, &oracle_addr);
+#[test]
+fn test_cleanup_waits_for_delivery_and_keeps_beta() {
+    let t = setup();
+    let consumer = t.env.register(good_consumer::GoodConsumer, ());
+    let id = t.client.request_with_callback(
+        &ctx(&t.env),
+        &consumer,
+        &consumer,
+        &Symbol::new(&t.env, "on_vrf"),
+    );
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    // The operator cannot cancel delivery by cleaning up first.
+    assert!(t.client.try_cleanup_proof(&id, &t.operator).is_err());
+    t.client.deliver(&id);
+    t.client.cleanup_proof(&id, &t.operator);
+    assert!(t.client.try_get_proof(&id).is_err());
+    assert!(t.client.is_fulfilled(&id));
+    assert_eq!(t.client.get_beta(&id), BytesN::from_array(&t.env, &E1_BETA));
 }
 
 #[test]
 #[should_panic(expected = "only requester or oracle can cleanup")]
-fn test_cleanup_proof_unauthorized_rejected() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let attacker = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"cleanup_unauth");
-    let id = client.request(&context, &requester);
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-    });
-
-    client.cleanup_proof(&id, &attacker);
-}
-
-#[test]
-fn test_cleanup_proof_retains_fulfilled_flag() {
-    let (env, client, _admin, oracle_addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"cleanup_preserve");
-    let id = client.request(&context, &requester);
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-    });
-
-    client.cleanup_proof(&id, &oracle_addr);
-    assert!(client.is_fulfilled(&id));
-    assert_eq!(client.request_epoch(&id), 1);
+fn test_cleanup_by_stranger_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    t.client.cleanup_proof(&id, &Address::generate(&t.env));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// RANDOMNESS DERIVATION & UNIFORM REJECTION SAMPLING
+// REFUNDS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn pow128_mod(max: u64) -> u128 {
-    0u128.wrapping_sub(max as u128) % (max as u128)
-}
-
-fn hash_from_halves(c1: u128, c2: u128) -> [u8; 32] {
-    let mut h = [0u8; 32];
-    h[..16].copy_from_slice(&c1.to_be_bytes());
-    h[16..].copy_from_slice(&c2.to_be_bytes());
-    h
+#[test]
+#[should_panic(expected = "timeout window not reached")]
+fn test_timeout_refund_too_early() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS));
+    t.client.timeout_refund(&id);
 }
 
 #[test]
-#[should_panic(expected = "request not yet fulfilled")]
-fn test_derive_random_requires_fulfillment() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-    client.derive_random(&id);
+fn test_timeout_refund_needs_requester_before_expiry() {
+    let t = setup_with_fee(FEE);
+    let r = funded_requester(&t);
+    let before = balance(&t, &r);
+    let id = t.client.request(&ctx(&t.env), &r);
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
+    t.client.timeout_refund(&id);
+    assert!(t.env.auths().iter().any(|(a, _)| *a == r));
+    assert!(t.client.is_refunded(&id));
+    assert_eq!(balance(&t, &r), before);
 }
 
 #[test]
-#[should_panic(expected = "request not yet fulfilled")]
-fn test_get_beta_requires_fulfillment() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-    client.get_beta(&id);
+fn test_timeout_refund_permissionless_after_expiry() {
+    let t = setup_with_fee(FEE);
+    let r = funded_requester(&t);
+    let before = balance(&t, &r);
+    let id = t.client.request(&ctx(&t.env), &r);
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + EXPIRY_ROUNDS + 1));
+    t.client.timeout_refund(&id);
+    assert!(
+        !t.env.auths().iter().any(|(a, _)| *a == r),
+        "requester authorization not required after expiry"
+    );
+    assert_eq!(balance(&t, &r), before, "fee goes back to the requester");
 }
 
 #[test]
-fn test_derive_random_in_range_bounds() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
+fn test_timeout_refund_before_expiry_fails_without_requester_auth() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
+    t.env.set_auths(&[]);
+    assert!(t.client.try_timeout_refund(&id).is_err());
+}
 
-    for i in 0u64..3 {
-        let context = Bytes::from_slice(&env, format!("range_ctx_{}", i).as_bytes());
-        let id = client.request(&context, &requester);
+#[test]
+#[should_panic(expected = "already refunded")]
+fn test_timeout_refund_double_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
+    t.client.timeout_refund(&id);
+    t.client.timeout_refund(&id);
+}
 
-        use crate::DataKey;
-        env.as_contract(&client.address, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Fulfilled(id), &true);
-            env.storage().persistent().set(
-                &DataKey::Beta(id),
-                &BytesN::from_array(&env, &[i as u8 * 31; 32]),
-            );
-        });
-        let max: u64 = 100;
-        let result = client.derive_random_in_range(&id, &max);
-        assert!(result < max);
+#[test]
+#[should_panic(expected = "already fulfilled")]
+fn test_timeout_refund_after_fulfill_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    t.env
+        .ledger()
+        .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
+    t.client.timeout_refund(&id);
+}
+
+#[test]
+fn test_emergency_refund_on_revoked_epoch() {
+    let t = setup_with_fee(FEE);
+    let r = funded_requester(&t);
+    let before = balance(&t, &r);
+    let id = t.client.request(&ctx(&t.env), &r);
+    t.client.revoke_epoch(&t.admin, &1);
+    t.client.emergency_refund(&id);
+    assert!(t.client.is_refunded(&id));
+    assert_eq!(balance(&t, &r), before);
+    assert!(t.client.try_emergency_refund(&id).is_err());
+}
+
+#[test]
+#[should_panic(expected = "emergency refund only for revoked epochs")]
+fn test_emergency_refund_on_active_epoch_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.emergency_refund(&id);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KEY ROTATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_rotation_keeps_pending_requests_on_their_epoch() {
+    let t = setup();
+    let r = Address::generate(&t.env);
+    // Request #1 is bound to epoch 1 before the rotation.
+    let id1 = t.client.request(&ctx(&t.env), &r);
+    let op2 = rotate_to_e2(&t);
+    assert_eq!(t.client.current_epoch_id(), 2);
+    assert_eq!(t.client.epoch_status(&1), EpochStatus::Superseded);
+    assert_eq!(t.client.oracle_address(), op2);
+
+    // Request #2 is bound to epoch 2.
+    let id2 = t.client.request(&ctx(&t.env), &r);
+    assert_eq!(t.client.request_epoch(&id2), 2);
+
+    // #1 is still verified against the epoch-1 key and paid by its operator...
+    t.client.fulfill(&id1, &e1_proof(&t.env));
+    assert_eq!(t.env.auths()[0].0, t.operator);
+    // ...and #2 against the epoch-2 key.
+    t.client.fulfill(&id2, &e2_proof(&t.env));
+    assert_eq!(t.env.auths()[0].0, op2);
+    assert_eq!(
+        t.client.get_beta(&id2),
+        BytesN::from_array(&t.env, &E2_BETA)
+    );
+}
+
+#[test]
+fn test_new_key_cannot_fulfill_old_epoch_request() {
+    // The heart of the epoch design: rotating keys cannot change the output
+    // of a request created before the rotation.
+    let t = setup();
+    let id1 = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    rotate_to_e2(&t);
+    let env = &t.env;
+    let bls = env.crypto().bls12_381();
+    let h = bls.hash_to_g1(
+        &Bytes::from_slice(env, &E1_ALPHA),
+        &Bytes::from_slice(env, VRF_DST),
+    );
+    let gamma = bls.g1_mul(&h, &fr(env, &E2_SK)).to_bytes().to_array();
+    let mut beta_in = Bytes::from_slice(env, b"VREP_BETA_V1");
+    beta_in.append(&Bytes::from_slice(env, &gamma));
+    let beta = env.crypto().sha256(&beta_in).to_array();
+    assert!(t
+        .client
+        .try_fulfill(&id1, &proof(env, &E1_ALPHA, &gamma, &beta))
+        .is_err());
+}
+
+#[test]
+#[should_panic(expected = "rotation timelock not elapsed")]
+fn test_rotation_before_timelock_rejected() {
+    let t = setup();
+    let sig = pop(&t, 2, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+    advance_ledgers(&t.env, MIN_ROTATION_TIMELOCK_LEDGERS - 1);
+    t.client.execute_key_rotation(&t.admin);
+}
+
+#[test]
+#[should_panic(expected = "BLS proof of possession failed")]
+fn test_rotation_pop_for_other_epoch_rejected() {
+    let t = setup();
+    let sig = pop(&t, 3, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+}
+
+#[test]
+#[should_panic(expected = "BLS proof of possession failed")]
+fn test_rotation_pop_from_other_contract_rejected() {
+    let t = setup();
+    // A second instance in the same environment.
+    let other = t.env.register(
+        VRFOracleContract,
+        (
+            &t.admin,
+            &BytesN::from_array(&t.env, &E1_PK),
+            &t.operator,
+            &BytesN::from_array(&t.env, &FIX_DRAND_PK),
+            &GENESIS,
+            &PERIOD,
+            &OFFSET,
+            &t.token,
+            &0i128,
+            &MIN_ROTATION_TIMELOCK_LEDGERS,
+            &MIN_UPGRADE_TIMELOCK_LEDGERS,
+        ),
+    );
+    assert_ne!(other, t.client.address);
+    // Same epoch id, same key, but signed for the other instance.
+    let sig = pop_for(&t.env, &other, 2, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+}
+
+#[test]
+#[should_panic(expected = "new operator must differ from admin")]
+fn test_rotation_operator_eq_admin_rejected() {
+    let t = setup();
+    let sig = pop(&t, 2, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &t.admin,
+        &sig,
+    );
+}
+
+#[test]
+#[should_panic(expected = "unauthorized: not admin")]
+fn test_rotation_by_operator_rejected() {
+    let t = setup();
+    let sig = pop(&t, 2, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.operator,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+}
+
+#[test]
+#[should_panic(expected = "pending rotation already exists")]
+fn test_concurrent_rotation_rejected() {
+    let t = setup();
+    let sig = pop(&t, 2, &E2_SK, &E2_PK);
+    let pk = BytesN::from_array(&t.env, &E2_PK);
+    t.client
+        .propose_key_rotation(&t.admin, &pk, &Address::generate(&t.env), &sig);
+    t.client
+        .propose_key_rotation(&t.admin, &pk, &Address::generate(&t.env), &sig);
+}
+
+#[test]
+fn test_cancel_rotation() {
+    let t = setup();
+    let sig = pop(&t, 2, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+    t.client.cancel_key_rotation(&t.admin);
+    assert!(t.client.pending_rotation().is_none());
+    assert_eq!(t.client.current_epoch_id(), 1);
+}
+
+#[test]
+fn test_many_rotations_with_abandoned_requests() {
+    // Regression: abandoned (never fulfilled, never refunded) requests must not
+    // be able to block key rotation.
+    let t = setup();
+    let r = Address::generate(&t.env);
+    let keys = [&TEST_G2_TIMES_2, &TEST_G2_TIMES_3, &E2_PK];
+    let sks: [[u8; 32]; 3] = [
+        {
+            let mut s = [0u8; 32];
+            s[31] = 2;
+            s
+        },
+        {
+            let mut s = [0u8; 32];
+            s[31] = 3;
+            s
+        },
+        E2_SK,
+    ];
+    for round in 0..6u32 {
+        t.client.request(&ctx(&t.env), &r); // abandoned on purpose
+        let epoch_id = round + 2;
+        let i = (round as usize) % 3;
+        let sig = pop(&t, epoch_id, &sks[i], keys[i]);
+        t.client.propose_key_rotation(
+            &t.admin,
+            &BytesN::from_array(&t.env, keys[i]),
+            &Address::generate(&t.env),
+            &sig,
+        );
+        advance_ledgers(&t.env, MIN_ROTATION_TIMELOCK_LEDGERS);
+        t.client.execute_key_rotation(&t.admin);
+        assert_eq!(t.client.current_epoch_id(), epoch_id);
     }
 }
 
 #[test]
-fn test_derive_random_in_range_is_deterministic() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
+fn test_revocation_survives_rotation_and_cancels_pending() {
+    let t = setup();
+    let sig = pop(&t, 2, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+    t.client.revoke_epoch(&t.admin, &1);
+    assert!(t.client.pending_rotation().is_none(), "source revoked");
+    assert!(t.client.try_revoke_epoch(&t.admin, &1).is_err());
 
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(
-            &DataKey::Beta(id),
-            &BytesN::from_array(&env, &[0x42; 32]),
-        );
-    });
+    // A fresh proposal (epoch 3) from the revoked epoch restores service.
+    let sig = pop(&t, 3, &E2_SK, &E2_PK);
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &sig,
+    );
+    advance_ledgers(&t.env, MIN_ROTATION_TIMELOCK_LEDGERS);
+    t.client.execute_key_rotation(&t.admin);
+    assert_eq!(t.client.epoch_status(&1), EpochStatus::Revoked);
+    assert_eq!(t.client.current_epoch_id(), 3);
+    t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+}
 
-    let res1 = client.derive_random_in_range(&id, &1000);
-    let res2 = client.derive_random_in_range(&id, &1000);
-    assert_eq!(res1, res2);
+// ═══════════════════════════════════════════════════════════════════════════════
+// UPGRADE / ADMIN
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+#[should_panic(expected = "unauthorized: not admin")]
+fn test_propose_upgrade_requires_admin() {
+    let t = setup();
+    t.client
+        .propose_upgrade(&t.operator, &BytesN::from_array(&t.env, &[0xAA; 32]));
 }
 
 #[test]
-fn test_derive_range_for_domain_separates_draws() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
+#[should_panic(expected = "pending upgrade already exists")]
+fn test_double_upgrade_proposal_rejected() {
+    let t = setup();
+    t.client
+        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
+    t.client
+        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xBB; 32]));
+}
 
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(
-            &DataKey::Beta(id),
-            &BytesN::from_array(&env, &[0x33; 32]),
+#[test]
+#[should_panic(expected = "upgrade timelock not elapsed")]
+fn test_execute_upgrade_before_timelock_rejected() {
+    let t = setup();
+    t.client
+        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
+    advance_ledgers(&t.env, MIN_UPGRADE_TIMELOCK_LEDGERS - 1);
+    t.client.execute_upgrade(&t.admin);
+}
+
+#[test]
+fn test_admin_transfer_after_timelock() {
+    let t = setup();
+    let new_admin = Address::generate(&t.env);
+    t.client.propose_admin_transfer(&t.admin, &new_admin);
+    assert!(t.client.try_execute_admin_transfer(&t.admin).is_err());
+    advance_ledgers(&t.env, MIN_UPGRADE_TIMELOCK_LEDGERS);
+    t.client.execute_admin_transfer(&t.admin);
+    assert_eq!(t.client.admin(), new_admin);
+}
+
+#[test]
+#[should_panic(expected = "new admin must differ from operator")]
+fn test_admin_transfer_to_operator_rejected() {
+    let t = setup();
+    t.client.propose_admin_transfer(&t.admin, &t.operator);
+}
+
+#[test]
+fn test_cancel_admin_transfer() {
+    let t = setup();
+    t.client
+        .propose_admin_transfer(&t.admin, &Address::generate(&t.env));
+    t.client.cancel_admin_transfer(&t.admin);
+    assert!(t.client.pending_admin_transfer().is_none());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DERIVATION (unchanged from V1; vectors shared with the SDKs)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub(crate) const VEC_REQUEST_ID: u64 = 7;
+pub(crate) const VEC_U64: u64 = 17_155_214_937_666_214_782;
+pub(crate) const VEC_RANGE: [(u64, u64); 3] = [
+    (6, 4),
+    (1_000_000, 889_164),
+    (u64::MAX, 11_798_261_183_955_500_607),
+];
+pub(crate) const VEC_DOMAIN_CARD1_1000: u64 = 595;
+
+#[test]
+fn test_derive_vectors_shared_with_sdks() {
+    let t = setup();
+    let r = Address::generate(&t.env);
+    let mut id = 0;
+    while id < VEC_REQUEST_ID {
+        id = t.client.request(&Bytes::from_slice(&t.env, b"vec"), &r);
+    }
+    let mut beta = [0u8; 32];
+    for (i, b) in beta.iter_mut().enumerate() {
+        *b = i as u8;
+    }
+    seed_beta(&t, id, beta);
+    assert_eq!(t.client.derive_random(&id), VEC_U64);
+    for (max, want) in VEC_RANGE {
+        assert_eq!(
+            t.client.derive_random_in_range(&id, &max),
+            want,
+            "max={}",
+            max
         );
-    });
+    }
+    let d = t
+        .client
+        .derive_range_for_domain(&id, &Bytes::from_slice(&t.env, b"card-1"), &1000u64);
+    assert_eq!(d, VEC_DOMAIN_CARD1_1000);
+}
 
-    let max = 1_000_000u64;
-    let d1 = Bytes::from_slice(&env, b"loot_roll");
-    let d2 = Bytes::from_slice(&env, b"damage_roll");
-    let r1 = client.derive_range_for_domain(&id, &d1, &max);
-    let r2 = client.derive_range_for_domain(&id, &d2, &max);
-    assert_ne!(r1, r2);
+#[test]
+fn test_derive_from_real_fulfillment() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    for max in [1u64, 2, 6, 1000, u64::MAX] {
+        let v = t.client.derive_random_in_range(&id, &max);
+        assert!(v < max);
+        assert_eq!(v, t.client.derive_random_in_range(&id, &max));
+    }
+    let d1 =
+        t.client
+            .derive_range_for_domain(&id, &Bytes::from_slice(&t.env, b"card-1"), &u64::MAX);
+    let d2 =
+        t.client
+            .derive_range_for_domain(&id, &Bytes::from_slice(&t.env, b"card-2"), &u64::MAX);
+    assert_ne!(d1, d2);
+}
+
+#[test]
+#[should_panic(expected = "request not yet fulfilled")]
+fn test_derive_requires_fulfillment() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.derive_random(&id);
 }
 
 #[test]
 #[should_panic(expected = "max must be > 0")]
-fn test_derive_range_for_domain_rejects_zero_max() {
-    let (env, client, _admin, _addr, _pk, _ed, _drand_pk) = setup();
-    let requester = Address::generate(&env);
-    let context = Bytes::from_slice(&env, b"ctx");
-    let id = client.request(&context, &requester);
-
-    use crate::DataKey;
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Fulfilled(id), &true);
-        env.storage().persistent().set(
-            &DataKey::Beta(id),
-            &BytesN::from_array(&env, &[0x33; 32]),
-        );
-    });
-
-    let d = Bytes::from_slice(&env, b"test");
-    client.derive_range_for_domain(&id, &d, &0u64);
+fn test_derive_zero_max_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    seed_beta(&t, id, [1; 32]);
+    t.client.derive_random_in_range(&id, &0);
 }
 
 #[test]
-fn test_reduce_uniform_uses_first_candidate_when_accepted() {
-    let max = 1_000_003u64;
-    let h = hash_from_halves(123_456_789, 42);
-    assert_eq!(
-        crate::reduce_uniform(&h, max),
-        (123_456_789u128 % max as u128) as u64
-    );
+#[should_panic(expected = "domain exceeds maximum length")]
+fn test_derive_long_domain_rejected() {
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    seed_beta(&t, id, [1; 32]);
+    let domain = Bytes::from_slice(&t.env, &[0x41u8; crate::MAX_DERIVE_DOMAIN_LEN as usize + 1]);
+    t.client.derive_range_for_domain(&id, &domain, &10);
 }
 
 #[test]
-fn test_reduce_uniform_falls_back_to_second_candidate() {
-    let max = (1u64 << 63) + 1;
-    assert!(pow128_mod(max) > 0);
-    let h = hash_from_halves(u128::MAX, 7);
-    assert_eq!(crate::reduce_uniform(&h, max), 7);
+fn test_reduce_uniform_rejection_boundary() {
+    // max = 2^64 - 1: rem = 2^128 mod max = 1, so only u128::MAX is rejected.
+    let max = u64::MAX;
+    let mut h = [0xffu8; 32];
+    h[31] = 0x00; // second half != u128::MAX
+    let v = crate::reduce_uniform(&h, max);
+    let second = u128::from_be_bytes(h[16..32].try_into().unwrap());
+    assert_eq!(v as u128, second % max as u128);
 }
 
-#[test]
-fn test_reduce_uniform_limit_boundary() {
-    let max = 3u64;
-    let rem = pow128_mod(max);
-    assert_eq!(rem, 1);
-    let last_accepted = u128::MAX - rem;
-    let h = hash_from_halves(last_accepted, 0);
-    assert_eq!(crate::reduce_uniform(&h, max), (last_accepted % 3) as u64);
-    let h = hash_from_halves(u128::MAX, 5);
-    assert_eq!(
-        crate::reduce_uniform(&h, max),
-        2,
-        "limit rejected, second half used"
-    );
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// GENERATED FIXTURES (see header)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-#[test]
-#[should_panic(expected = "range derivation failed: both candidates rejected")]
-fn test_reduce_uniform_both_rejected_panics() {
-    let h = hash_from_halves(u128::MAX, u128::MAX);
-    crate::reduce_uniform(&h, (1u64 << 63) + 1);
-}
+const FIX_DRAND_PK: [u8; 192] = [
+    0x03, 0xcf, 0x0f, 0x28, 0x96, 0xad, 0xee, 0x7e, 0xb8, 0xb5, 0xf0, 0x1f, 0xca, 0xd3, 0x91, 0x22,
+    0x12, 0xc4, 0x37, 0xe0, 0x07, 0x3e, 0x91, 0x1f, 0xb9, 0x00, 0x22, 0xd3, 0xe7, 0x60, 0x18, 0x3c,
+    0x8c, 0x4b, 0x45, 0x0b, 0x6a, 0x0a, 0x6c, 0x3a, 0xc6, 0xa5, 0x77, 0x6a, 0x2d, 0x10, 0x64, 0x51,
+    0x0d, 0x1f, 0xec, 0x75, 0x8c, 0x92, 0x1c, 0xc2, 0x2b, 0x0e, 0x17, 0xe6, 0x3a, 0xaf, 0x4b, 0xcb,
+    0x5e, 0xd6, 0x63, 0x04, 0xde, 0x9c, 0xf8, 0x09, 0xbd, 0x27, 0x4c, 0xa7, 0x3b, 0xab, 0x4a, 0xf5,
+    0xa6, 0xe9, 0xc7, 0x6a, 0x4b, 0xc0, 0x9e, 0x76, 0xea, 0xe8, 0x99, 0x1e, 0xf5, 0xec, 0xe4, 0x5a,
+    0x01, 0xa7, 0x14, 0xf2, 0xed, 0xb7, 0x41, 0x19, 0xa2, 0xf2, 0xb0, 0xd5, 0xa7, 0xc7, 0x5b, 0xa9,
+    0x02, 0xd1, 0x63, 0x70, 0x0a, 0x61, 0xbc, 0x22, 0x4e, 0xde, 0xdd, 0x8e, 0x63, 0xae, 0xf7, 0xbe,
+    0x1a, 0xaf, 0x8e, 0x93, 0xd7, 0xa9, 0x71, 0x8b, 0x04, 0x7c, 0xcd, 0xdb, 0x3e, 0xb5, 0xd6, 0x8b,
+    0x0e, 0x5d, 0xb2, 0xb6, 0xbf, 0xbb, 0x01, 0xc8, 0x67, 0x74, 0x9c, 0xad, 0xff, 0xca, 0x88, 0xb3,
+    0x6c, 0x24, 0xf3, 0x01, 0x2b, 0xa0, 0x9f, 0xc4, 0xd3, 0x02, 0x2c, 0x5c, 0x37, 0xdc, 0xe0, 0xf9,
+    0x77, 0xd3, 0xad, 0xb5, 0xd1, 0x83, 0xc7, 0x47, 0x7c, 0x44, 0x2b, 0x1f, 0x04, 0x51, 0x52, 0x73,
+];
 
-#[test]
-fn test_reduce_uniform_power_of_two_never_rejects() {
-    for shift in [1u32, 7, 32, 63] {
-        let max = 1u64 << shift;
-        assert_eq!(pow128_mod(max), 0);
-        let h = hash_from_halves(u128::MAX, u128::MAX);
-        assert_eq!(
-            crate::reduce_uniform(&h, max),
-            (u128::MAX % max as u128) as u64
-        );
-    }
-}
+const FIX_DRAND_SIG: [u8; 96] = [
+    0x04, 0xd8, 0x55, 0xb2, 0xde, 0x9c, 0x5c, 0x21, 0xee, 0x03, 0x90, 0xb2, 0xb9, 0x18, 0x02, 0x96,
+    0xa9, 0x19, 0xa1, 0xaf, 0x43, 0x51, 0xca, 0xc6, 0xfd, 0x20, 0x00, 0x7b, 0xa1, 0xc6, 0x10, 0xe0,
+    0x1e, 0x5b, 0xd0, 0xeb, 0x7d, 0xc5, 0x6a, 0x79, 0x3c, 0x60, 0x2d, 0x79, 0x42, 0xbc, 0x0b, 0x3d,
+    0x15, 0x76, 0x22, 0x83, 0xeb, 0x6a, 0x04, 0x5c, 0x59, 0xc0, 0xb7, 0x88, 0xae, 0x34, 0xea, 0xfc,
+    0xdd, 0x6d, 0xd0, 0x87, 0x7a, 0xa5, 0x24, 0xf1, 0x8c, 0xab, 0x25, 0x84, 0x4d, 0xf9, 0x7b, 0x09,
+    0xb0, 0x66, 0x0c, 0x2a, 0x92, 0xca, 0x2a, 0x28, 0x83, 0x0a, 0x94, 0x81, 0x96, 0xbb, 0xeb, 0x92,
+];
 
-#[test]
-fn test_reduce_uniform_model_is_exactly_uniform() {
-    for max in 2u32..=97 {
-        let rem = 256 % max;
-        let limit = 256 - rem;
-        let mut counts = alloc::vec![0u32; max as usize];
-        for c in 0..limit {
-            counts[(c % max) as usize] += 1;
-        }
-        assert!(
-            counts.iter().all(|&n| n == counts[0]),
-            "bias for max={}",
-            max
-        );
-        assert_eq!(limit % max, 0);
-    }
-}
+const E1_SK: [u8; 32] = [
+    0x4e, 0x82, 0x79, 0x6b, 0xf7, 0x17, 0x2e, 0x57, 0x1e, 0xc8, 0x8c, 0x62, 0x41, 0xf2, 0xe0, 0x97,
+    0x95, 0x6e, 0xba, 0x56, 0x9a, 0x3f, 0xf9, 0xbf, 0x60, 0xb1, 0x70, 0x38, 0xb4, 0x33, 0xf4, 0x49,
+];
+
+const E1_PK: [u8; 192] = [
+    0x08, 0xc8, 0x2b, 0xc4, 0x98, 0x8f, 0x2d, 0x2f, 0x0f, 0xf3, 0x1e, 0x4a, 0x95, 0x3a, 0xe4, 0xff,
+    0x24, 0x22, 0xdd, 0x70, 0x47, 0x27, 0xc5, 0x9d, 0x88, 0x8e, 0x80, 0x88, 0x30, 0xeb, 0x17, 0x16,
+    0x68, 0x48, 0x01, 0x46, 0xcd, 0x07, 0x38, 0x45, 0x06, 0xf3, 0xfd, 0x07, 0x80, 0xd0, 0xb0, 0x74,
+    0x09, 0xc9, 0x9d, 0xb1, 0x29, 0x35, 0xbd, 0xae, 0x81, 0xc6, 0x2a, 0x95, 0x00, 0x7f, 0xe2, 0x48,
+    0x34, 0x51, 0xf0, 0x8c, 0xed, 0x4f, 0x73, 0x6f, 0x39, 0x70, 0xc6, 0xab, 0xdd, 0x13, 0x58, 0x1f,
+    0x71, 0x40, 0x2b, 0xa4, 0xd8, 0x7e, 0xf0, 0xa2, 0xf7, 0x49, 0x4d, 0x11, 0xdd, 0x19, 0x04, 0x6f,
+    0x15, 0xd8, 0x69, 0xb4, 0xaf, 0x6e, 0x79, 0x9e, 0x90, 0x7d, 0x34, 0x28, 0x03, 0xf5, 0x4d, 0x8d,
+    0x9b, 0x7b, 0xfb, 0x87, 0xfc, 0xe5, 0x0c, 0xda, 0x1d, 0x3c, 0x6a, 0x00, 0x7d, 0xde, 0x8e, 0x0c,
+    0x57, 0x2b, 0x88, 0x3b, 0xc3, 0x97, 0xc9, 0x2c, 0x2e, 0xfd, 0x28, 0x2a, 0x73, 0xab, 0x64, 0xcd,
+    0x15, 0xda, 0x2f, 0x31, 0x0c, 0xaf, 0x09, 0xe8, 0x21, 0xbb, 0x49, 0x50, 0x73, 0xa6, 0xbd, 0x08,
+    0x0e, 0x1a, 0x6e, 0xaf, 0x88, 0xe6, 0xb3, 0xb7, 0x7e, 0x1a, 0x5c, 0x57, 0x05, 0x50, 0x00, 0xc1,
+    0x44, 0xf9, 0xc5, 0xde, 0x48, 0x97, 0x8f, 0x2d, 0xa4, 0xc1, 0xfd, 0x6a, 0x18, 0xc9, 0xf1, 0xd7,
+];
+
+const E1_ALPHA: [u8; 32] = [
+    0xc6, 0x38, 0x94, 0x7f, 0x19, 0xb7, 0x9c, 0x1b, 0xed, 0xfa, 0xc2, 0x67, 0x19, 0x43, 0x8f, 0xaa,
+    0xf5, 0xa9, 0xc5, 0x71, 0x9f, 0x14, 0xa1, 0xf2, 0x26, 0x3d, 0xa3, 0x96, 0x93, 0x10, 0x31, 0x47,
+];
+
+const E1_GAMMA: [u8; 96] = [
+    0x06, 0xda, 0xe2, 0xf6, 0x71, 0x60, 0x13, 0x81, 0xad, 0xfd, 0x0c, 0xa9, 0x54, 0x8e, 0xcc, 0x6b,
+    0x32, 0x6c, 0x1a, 0xe7, 0x2b, 0x32, 0x7c, 0xaa, 0xa4, 0xb7, 0xea, 0x12, 0x9f, 0x9f, 0xc3, 0xa6,
+    0xe0, 0x39, 0xa9, 0x17, 0xd4, 0x9d, 0x32, 0x52, 0x45, 0x56, 0xdb, 0xc6, 0x98, 0x6c, 0x72, 0x83,
+    0x0c, 0x51, 0x25, 0x63, 0x1e, 0x2e, 0x11, 0xd9, 0x7f, 0x03, 0xa5, 0x96, 0xd7, 0x3c, 0x89, 0x18,
+    0x5e, 0x40, 0x13, 0x03, 0x58, 0x4e, 0x17, 0xb7, 0xb8, 0xa7, 0x0b, 0xde, 0x56, 0x3c, 0x71, 0xae,
+    0x2a, 0x03, 0xb6, 0x83, 0xb9, 0x61, 0xeb, 0xe8, 0x3c, 0x71, 0xad, 0x54, 0x7a, 0x46, 0xf8, 0xf0,
+];
+
+const E1_BETA: [u8; 32] = [
+    0x2e, 0x74, 0x91, 0x7f, 0xce, 0xb2, 0x38, 0x51, 0xc8, 0xe7, 0x6a, 0xe1, 0x7b, 0x19, 0x59, 0xa7,
+    0x2e, 0x2d, 0xc9, 0x12, 0x86, 0xc1, 0xdb, 0xed, 0x71, 0x6a, 0x65, 0x84, 0x7c, 0x6d, 0xda, 0xf9,
+];
+
+const E2_SK: [u8; 32] = [
+    0x15, 0xf0, 0xea, 0xe9, 0xa1, 0x5c, 0x85, 0xa0, 0x0e, 0xc1, 0x65, 0x53, 0xce, 0xd0, 0x0c, 0x16,
+    0x65, 0x04, 0x6a, 0x2f, 0x5b, 0xa9, 0xc6, 0xfe, 0x1f, 0x9a, 0x80, 0x2a, 0x37, 0xce, 0x20, 0xc9,
+];
+
+const E2_PK: [u8; 192] = [
+    0x17, 0x84, 0xe8, 0xd7, 0x59, 0x34, 0x34, 0x75, 0x39, 0x2e, 0xd4, 0xa9, 0xa2, 0x2f, 0x30, 0x68,
+    0xab, 0xb6, 0xd4, 0x4a, 0x1c, 0x83, 0x91, 0x61, 0x5c, 0xd1, 0xec, 0x91, 0x36, 0xf7, 0xa5, 0xd2,
+    0x6b, 0xb5, 0xaa, 0x2e, 0xb6, 0xbc, 0x61, 0xf9, 0x47, 0x26, 0xf2, 0x87, 0xc9, 0xae, 0x87, 0xb5,
+    0x08, 0x83, 0x83, 0x26, 0x5e, 0x93, 0x7b, 0xe2, 0x16, 0x0a, 0xcd, 0x91, 0x78, 0x14, 0xcf, 0x3a,
+    0x6b, 0xa6, 0x03, 0xb0, 0x9b, 0xd9, 0x8d, 0x57, 0x71, 0x79, 0x54, 0x26, 0x6e, 0x56, 0x3b, 0x76,
+    0x2f, 0x73, 0x1d, 0xb5, 0x1c, 0xff, 0xa2, 0x65, 0xfe, 0x37, 0x6c, 0x04, 0x5c, 0x1f, 0x9b, 0xd8,
+    0x0b, 0x77, 0x5a, 0xc5, 0x6e, 0x90, 0xaa, 0xc3, 0x80, 0xc9, 0x24, 0x60, 0x2c, 0x8b, 0x2d, 0x98,
+    0xc3, 0x8e, 0x47, 0xa6, 0x8e, 0x9a, 0xf3, 0xc8, 0xd1, 0x0f, 0xfc, 0x16, 0x22, 0x62, 0xcd, 0xa7,
+    0xd6, 0xe0, 0x73, 0xe2, 0x7c, 0x1c, 0x75, 0x82, 0x7f, 0x46, 0xb5, 0x14, 0x02, 0xcc, 0xba, 0x63,
+    0x0a, 0x5e, 0x62, 0xf2, 0xc4, 0x8d, 0xa0, 0xf6, 0xe9, 0xab, 0xc0, 0x4e, 0x23, 0x21, 0x16, 0x52,
+    0x2b, 0xb2, 0x8e, 0x0b, 0xcb, 0x6e, 0x0d, 0x90, 0xf7, 0x75, 0x8b, 0x46, 0xfb, 0x07, 0x03, 0x33,
+    0x5b, 0x5b, 0xda, 0x41, 0x91, 0x40, 0x1a, 0x3d, 0x24, 0x71, 0x6c, 0xb3, 0x9b, 0x40, 0xde, 0xfa,
+];
+
+const E2_ALPHA: [u8; 32] = [
+    0x6e, 0x30, 0x93, 0x0b, 0x9f, 0x38, 0x5b, 0x5c, 0x64, 0x81, 0x84, 0x4e, 0xd4, 0x6b, 0x8d, 0x77,
+    0x0f, 0x30, 0xb1, 0xf9, 0xad, 0xb0, 0x10, 0x0e, 0x82, 0xfe, 0xde, 0x46, 0x30, 0x51, 0xc6, 0x26,
+];
+
+const E2_GAMMA: [u8; 96] = [
+    0x09, 0x69, 0xc9, 0x43, 0x75, 0x40, 0x62, 0x04, 0x19, 0x45, 0x73, 0x69, 0x28, 0x12, 0x87, 0x98,
+    0xb6, 0x5f, 0x7f, 0xa9, 0xe2, 0xf0, 0x3f, 0xa3, 0xbe, 0xb6, 0x11, 0x11, 0x21, 0xc8, 0x7e, 0xc1,
+    0xa2, 0xa4, 0xf8, 0x7a, 0xe8, 0x7d, 0x4b, 0x26, 0x08, 0xf9, 0xd8, 0xd4, 0x1a, 0x76, 0xfa, 0xed,
+    0x08, 0x24, 0x74, 0xfb, 0x3d, 0xdf, 0xc3, 0xef, 0xb3, 0xee, 0x05, 0x8e, 0x3c, 0x40, 0x41, 0x08,
+    0xc3, 0xb0, 0x6a, 0x04, 0x4c, 0x7d, 0xd6, 0xb9, 0x22, 0xe9, 0x8d, 0xbb, 0x05, 0xb1, 0x9c, 0x7a,
+    0x5e, 0x90, 0x4d, 0x15, 0xb5, 0xfa, 0xb3, 0xa9, 0x0c, 0x74, 0xc1, 0x33, 0x83, 0xb8, 0x51, 0x7e,
+];
+
+const E2_BETA: [u8; 32] = [
+    0x76, 0xb5, 0xf6, 0x44, 0x02, 0x6c, 0x1f, 0xc4, 0x14, 0xe1, 0xc2, 0xc8, 0x60, 0x27, 0x6c, 0xfb,
+    0x88, 0x40, 0xeb, 0x90, 0x45, 0xd2, 0x82, 0x7b, 0x9e, 0x70, 0x4a, 0x79, 0xbe, 0x5b, 0x86, 0xd9,
+];

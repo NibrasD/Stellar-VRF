@@ -10,10 +10,15 @@
 //! ```text
 //! 1. Consumer calls: request_sample(requester, range_max) → sample_id
 //! 2. Internally:     VRF.request_with_callback(ctx, self_address, Symbol::new("on_vrf"))
-//! 3. Oracle fulfills: VRF.fulfill(sample_id, proof, sig)
-//! 4. VRF calls back: Consumer.on_vrf(sample_id, beta_output, alpha_seed)
+//! 3. Oracle fulfills: VRF.fulfill(sample_id, proof)       (result is now final)
+//! 4. Anyone delivers: VRF.deliver(sample_id)
+//!    → VRF calls:     Consumer.on_vrf(sample_id, beta_output, alpha_seed)
 //! 5. Consumer stores: random_value ∈ [0, range_max)
 //! ```
+//!
+//! `fulfill()` never runs consumer code, so nothing `on_vrf` does can undo or
+//! block the result. If `on_vrf` fails, `deliver()` reverts and can be retried;
+//! the result is always readable with the VRF contract's `get_beta()`.
 //!
 //! ## Authorization model
 //!
@@ -25,6 +30,9 @@
 //! - Validate `sample_id` belongs to a pending request your contract initiated.
 //! - Implement idempotency: reject duplicate on_vrf calls for the same sample_id.
 //! - The `beta_output` is deterministic given the same `alpha_seed` and oracle key.
+//! - Never request new randomness for the same event after a refund. Whoever
+//!   withheld the first result would otherwise get a re-roll. Cancel the event
+//!   instead (this example drops the pending sample in `refund_sample`).
 
 #![no_std]
 #![allow(unknown_lints)]
@@ -251,11 +259,11 @@ impl VrfSamplingContract {
 
     /// Reclaim the escrowed fee of a sample the oracle never fulfilled.
     ///
-    /// The VRF contract's `timeout_refund()` requires the *requester's*
-    /// authorization, and the requester of a callback request is this
-    /// contract. So only this contract can trigger the refund: without an
-    /// entrypoint like this one, a timed-out fee would stay locked in the VRF
-    /// contract. Admin-only, and it fails until the timeout window has passed.
+    /// Before the expiry window the VRF contract's `timeout_refund()` requires
+    /// the *requester's* authorization, and the requester of a callback
+    /// request is this contract, hence this entrypoint. (After expiry anyone
+    /// can trigger the refund; the fee still comes back here.) Admin-only, and
+    /// it fails until the timeout window has passed.
     pub fn refund_sample(env: Env, caller: Address, sample_id: u64) {
         caller.require_auth();
         let admin: Address = env

@@ -23,7 +23,6 @@ fuzz_target!(|data: &[u8]| {
     env.mock_all_auths();
     let oracle_addr = Address::generate(&env);
     let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
     let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
@@ -32,15 +31,17 @@ fuzz_target!(|data: &[u8]| {
     let contract_id = env.register(
         VRFOracleContract,
         (
+            &Address::generate(&env),
             &oracle_pk,
             &oracle_addr,
-            &oracle_ed25519,
             &drand_pk,
             &1_692_803_367u64,
             &3u32,
-            &2u32,
+            &4u32,
             &fee_token,
             &0i128,
+            &2_880u32,
+            &8_640u32,
         ),
     );
     let client = VRFOracleContractClient::new(&env, &contract_id);
