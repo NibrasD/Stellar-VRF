@@ -47,8 +47,12 @@ import {
   DRAND_PUBLIC_KEY,
   ORACLE_KEYS,
   AUTO_DELIVER,
-  DELIVER_MAX_FEE_STROOPS,
+  DELIVER_MAX_RESOURCE_FEE_STROOPS,
+  CONTRACT_ADDRESS,
+  TIMEOUT_ROUNDS,
+  WORKER_CONCURRENCY,
 } from "./config.js";
+import { KeyedMutex, mapLimit } from "./concurrency.js";
 import { Networks } from "@stellar/stellar-sdk";
 import { generateVrfProof } from "./vrf.js";
 import { selectKeySet } from "./keys.js";
@@ -126,6 +130,21 @@ const sendAttempts = new SendAttemptTracker(sendAttemptOptionsFromEnv());
  */
 const RECONCILE_INTERVAL_MS = parseInt(process.env.RECONCILE_INTERVAL_MS || "120000", 10);
 
+/** Serializes on-chain submissions per signing account (sequence numbers). */
+const accountLocks = new KeyedMutex();
+
+/**
+ * The contract rejects fulfill() once the current drand round is past
+ * `required_round + TIMEOUT_ROUNDS` (after that the request can only be
+ * refunded). Stop two rounds early: the transaction still has to reach a
+ * ledger, and a doomed send only costs fees.
+ */
+const WINDOW_MARGIN_ROUNDS = 2;
+function fulfillWindowClosed(requiredRound: bigint): boolean {
+  const now = BigInt(computeCurrentRound(Date.now() / 1000));
+  return now > requiredRound + BigInt(TIMEOUT_ROUNDS - WINDOW_MARGIN_ROUNDS);
+}
+
 async function handleRequest(event: VrfRequestEvent): Promise<void> {
   // Double-check leadership before every request
   if (!isLeader()) {
@@ -157,6 +176,16 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     if (fulfilled) {
       sendAttempts.clear(event.requestId);
       log.info(`Request ${event.requestId} already fulfilled, skipping.`);
+      return;
+    }
+
+    // 1·. Fulfillment window: an expired request can only be refunded.
+    if (fulfillWindowClosed(event.requiredRound)) {
+      recordTerminalFailure("fulfill_window_closed");
+      log.warn(
+        `Request ${event.requestId} is past its fulfillment window (round ${event.requiredRound} + ` +
+          `${TIMEOUT_ROUNDS}); not fulfilling. It can be refunded with timeout_refund().`
+      );
       return;
     }
 
@@ -255,7 +284,7 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
       );
     }
     log.info(`  Generating BLS-VRF proof (epoch ${epochId}, ${keys.label} keys)…`);
-    const proof = generateVrfProof(event.requestId, context, beacon, epochId, keys);
+    const proof = generateVrfProof(event.requestId, context, beacon, epochId, keys, CONTRACT_ADDRESS);
 
     // 5. Re-verify leadership immediately before spending money.
     //
@@ -284,7 +313,17 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     // ambiguous timeouts count against the budget. A FulfillAbortedError is
     // terminal — withFulfillRetry does not retry it.
     const sendFunding = funding;
-    const txHash = await withFulfillRetry(
+    // One submission at a time per signing account. Re-check the window once
+    // the lock is held: the request may have waited behind others.
+    const txHash = await accountLocks.run(keys.stellar.publicKey(), () => {
+      if (fulfillWindowClosed(event.requiredRound)) {
+        throw new FulfillTerminalError(
+          `request ${event.requestId} passed its fulfillment window while queued`,
+          "fulfill_window_closed",
+          true
+        );
+      }
+      return withFulfillRetry(
       `fulfill(${event.requestId})`,
       () =>
         submitFulfillment(server, event.requestId, proof, keys.stellar, isLeader, async (maxFee, sendId) => {
@@ -309,7 +348,8 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
               : undefined,
           };
         })
-    );
+      );
+    });
     sendAttempts.clear(event.requestId);
 
     const durationMs = Date.now() - startMs;
@@ -326,7 +366,10 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     if (AUTO_DELIVER && isLeader()) {
       const pendingCb = await hasPendingCallback(server, event.requestId).catch(() => false);
       if (pendingCb) {
-        await deliverBestEffort(server, event.requestId, ORACLE_KEYS[0].stellar, DELIVER_MAX_FEE_STROOPS);
+        const payer = ORACLE_KEYS[0].stellar;
+        await accountLocks.run(payer.publicKey(), () =>
+          deliverBestEffort(server, event.requestId, payer, DELIVER_MAX_RESOURCE_FEE_STROOPS)
+        );
       }
     }
   } catch (err) {
@@ -391,8 +434,8 @@ async function reconcile(server: rpc.Server, isCurrent: () => boolean): Promise<
     }
   }
   const pending = await findPendingRequests(server);
-  for (const p of pending) {
-    if (!isCurrent()) break;
+  await mapLimit(pending, WORKER_CONCURRENCY, async (p) => {
+    if (!isCurrent()) return;
     await handleRequest({
       requestId: p.requestId,
       requester: "(recovered by reconciliation)",
@@ -400,7 +443,7 @@ async function reconcile(server: rpc.Server, isCurrent: () => boolean): Promise<
       requiredRound: p.requiredRound,
       ledger: 0,
     });
-  }
+  });
 }
 
 /** One listener session: reconcile, then poll events (with periodic reconcile). */

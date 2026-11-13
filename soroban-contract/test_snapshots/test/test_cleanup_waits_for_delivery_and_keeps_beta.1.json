@@ -169,7 +169,7 @@
                         "symbol": "alpha_seed"
                       },
                       "val": {
-                        "bytes": "c638947f19b79c1bedfac26719438faaf5a9c5719f14a1f2263da39693103147"
+                        "bytes": "7beb6ec732b9ac655bdaed2a71f98dad0a02b03f2a577e858d2d80c9fa847dcb"
                       }
                     },
                     {
@@ -177,7 +177,7 @@
                         "symbol": "beta_output"
                       },
                       "val": {
-                        "bytes": "2e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf9"
+                        "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
                       }
                     },
                     {
@@ -201,7 +201,7 @@
                         "symbol": "gamma_point"
                       },
                       "val": {
-                        "bytes": "06dae2f671601381adfd0ca9548ecc6b326c1ae72b327caaa4b7ea129f9fc3a6e039a917d49d32524556dbc6986c72830c5125631e2e11d97f03a596d73c89185e401303584e17b7b8a70bde563c71ae2a03b683b961ebe83c71ad547a46f8f0"
+                        "bytes": "0baf7be530b5c4aa4d35a2cc07780cafe13c7c4e0a975a1685d4b0c30b82f13f146a31ea7e8d16338e48f808ba492b5f03d22b8ab3490799fe2883f951708207dacc86cf04bcd9ea27431d1d2377ca71132b4da7352cf34df28677abd4654693"
                       }
                     }
                   ]
@@ -391,7 +391,7 @@
               },
               "durability": "persistent",
               "val": {
-                "bytes": "2e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf9"
+                "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
               }
             }
           },
@@ -783,7 +783,7 @@
                         "u64": "1"
                       },
                       "val": {
-                        "bytes": "2e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf9"
+                        "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
                       }
                     }
                   ]

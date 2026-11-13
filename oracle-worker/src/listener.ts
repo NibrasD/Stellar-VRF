@@ -12,7 +12,9 @@ import {
   POLL_INTERVAL_MS,
   ORACLE_PUBLIC_KEY,
   NETWORK_PASSPHRASE,
+  WORKER_CONCURRENCY,
 } from "./config.js";
+import { mapLimit } from "./concurrency.js";
 import { log, sleep } from "./utils.js";
 import { recordListenerHeartbeat } from "./metrics.js";
 import type { OnChainConfig } from "./configCheck.js";
@@ -674,8 +676,10 @@ export async function startListenerLoop(
       );
     }
 
-    for (const event of events) {
-      if (isActive && !isActive()) break;
+    // Handle a poll's events concurrently (bounded). The handler serializes
+    // its own on-chain sends; see concurrency.ts for why this is not a queue.
+    await mapLimit(events, WORKER_CONCURRENCY, async (event) => {
+      if (isActive && !isActive()) return;
       try {
         await handler(event);
       } catch (err) {
@@ -685,7 +689,7 @@ export async function startListenerLoop(
           }`
         );
       }
-    }
+    });
 
     if (
       options.periodic &&

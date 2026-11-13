@@ -9,7 +9,8 @@
  *   - simulation succeeds (a failing `on_vrf` is the consumer's problem: the
  *     result is final and readable with `get_beta()` either way), and
  *   - the simulated cost stays within the resource guard and
- *     DELIVER_MAX_FEE_STROOPS (the oracle pays for this transaction).
+ *     DELIVER_MAX_RESOURCE_FEE_STROOPS (the oracle pays for this transaction,
+ *     and the consumer controls what `on_vrf` costs).
  *
  * Nothing here can affect the random output, so failures are logged, never
  * retried in a loop.
@@ -36,7 +37,7 @@ export async function submitDelivery(
   server: rpc.Server,
   requestId: bigint,
   signer: Keypair,
-  maxFeeStroops: bigint
+  maxResourceFeeStroops: bigint
 ): Promise<DeliverOutcome> {
   try {
     const account = await server.getAccount(signer.publicKey());
@@ -62,10 +63,12 @@ export async function submitDelivery(
     const resources = simulatedResourcesOf(sim, BigInt(prepared.fee));
     const bounded = checkSimulatedResources(resources, RESOURCE_GUARD);
     if (!bounded.ok) return { delivered: false, reason: bounded.reason };
-    if (BigInt(prepared.fee) > maxFeeStroops) {
+    if (resources.resourceFeeStroops > maxResourceFeeStroops) {
       return {
         delivered: false,
-        reason: `max fee ${prepared.fee} stroops exceeds DELIVER_MAX_FEE_STROOPS=${maxFeeStroops}`,
+        reason:
+          `resource fee ${resources.resourceFeeStroops} stroops exceeds ` +
+          `DELIVER_MAX_RESOURCE_FEE_STROOPS=${maxResourceFeeStroops}`,
       };
     }
 
@@ -87,9 +90,9 @@ export async function deliverBestEffort(
   server: rpc.Server,
   requestId: bigint,
   signer: Keypair,
-  maxFeeStroops: bigint
+  maxResourceFeeStroops: bigint
 ): Promise<void> {
-  const out = await submitDelivery(server, requestId, signer, maxFeeStroops);
+  const out = await submitDelivery(server, requestId, signer, maxResourceFeeStroops);
   if (out.delivered) {
     log.success(`  Callback delivered for request ${requestId}: ${out.hash}`);
   } else {

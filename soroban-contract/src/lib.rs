@@ -47,6 +47,8 @@ const VRF_DST: &[u8] = b"SOROBAN_VRF_BLS12381G1_XMD:SHA-256_SSWU_RO_";
 const POP_BLS_DST: &[u8] = b"SOROBAN_VRF_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_";
 /// Prefix of the proof-of-possession message. See [`pop_message`].
 pub const POP_DOMAIN: &[u8] = b"STELLAR_VRF_BLS_POP_V2";
+/// Prefix of the alpha pre-image. See [`derive_expected_alpha`].
+pub const ALPHA_DOMAIN: &[u8] = b"STELLAR_VRF_ALPHA_V2";
 const BETA_DOMAIN: &[u8] = b"VREP_BETA_V1";
 /// Domain tag for every value derived from a stored beta.
 const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V2";
@@ -58,8 +60,15 @@ const DERIVE_TAG_RANGE_DOMAIN: u8 = 0x03;
 /// round. With quicknet (3 s) and offset 4 the beacon is published 9–12 s after
 /// the request ledger's close time, which leaves room for close-time drift.
 pub const MIN_ROUND_OFFSET: u32 = 4;
-/// After this many rounds past the bound round the **requester** may refund.
-pub const TIMEOUT_ROUNDS: u64 = 20;
+/// The fulfillment window: `fulfill()` is accepted only until this many rounds
+/// past the bound round (100 rounds = 5 min on quicknet). After it the request
+/// can only be refunded, and the **requester** may refund.
+///
+/// The two windows are disjoint on purpose. If a late `fulfill()` were still
+/// accepted while the requester could already refund, the requester could
+/// watch the pending fulfill transaction (its arguments contain the output)
+/// and refund first whenever it dislikes the result: a veto over outcomes.
+pub const TIMEOUT_ROUNDS: u64 = 100;
 /// After this many rounds past the bound round **anyone** may trigger the
 /// refund (the fee always goes back to the requester). 28 800 rounds = 24 h on
 /// quicknet. This guarantees every unfulfilled request can be closed out even
@@ -360,6 +369,11 @@ impl VRFOracleContract {
         if proof.drand_round != required_round {
             panic!("drand round mismatch");
         }
+        // Hard deadline: exactly the complement of the refund condition in
+        // `timeout_refund`, so in any ledger at most one of the two can succeed.
+        if current_round(&env) > required_round.saturating_add(TIMEOUT_ROUNDS) {
+            panic!("fulfillment window closed");
+        }
 
         let drand_pk: BytesN<192> = inst_get(&env, &DataKey::DrandPK, "drand pk missing");
         if !verify_drand_signature(&env, &proof, &drand_pk) {
@@ -601,6 +615,10 @@ impl VRFOracleContract {
             .unwrap_or_else(|| panic!("no pending rotation"));
         if env.ledger().sequence() < pending.execute_after_ledger {
             panic!("rotation timelock not elapsed");
+        }
+        // The admin may have changed since the proposal (admin transfer).
+        if pending.new_epoch.oracle_address == admin {
+            panic!("new operator must differ from admin");
         }
 
         let old_epoch_id: u32 = inst_get(&env, &DataKey::ActiveEpochId, "active epoch missing");
@@ -1325,7 +1343,14 @@ pub(crate) fn reduce_uniform(hash: &[u8; 32], max: u64) -> u64 {
     panic!("range derivation failed: both candidates rejected");
 }
 
-/// `alpha = sha256(request_id_be ‖ context ‖ round_be ‖ sha256(drand_sig) ‖ epoch_id_be)`.
+/// `alpha = sha256(ALPHA_DOMAIN ‖ xdr(ScVal::Address(this contract)) ‖
+/// request_id_be ‖ context ‖ round_be ‖ sha256(drand_sig) ‖ epoch_id_be)`.
+///
+/// The contract address (which itself commits to the network) is part of
+/// alpha, so a proof for one deployment is never valid for another, even if
+/// an operator reuses a BLS key on two contracts or networks. `context` is the
+/// only variable-length field and sits between fixed-length fields, so the
+/// encoding is unambiguous.
 fn derive_expected_alpha(
     env: &Env,
     request_id: u64,
@@ -1338,7 +1363,8 @@ fn derive_expected_alpha(
         .persistent()
         .get(&DataKey::RequestContext(request_id))
         .unwrap_or_else(|| panic!("context missing"));
-    let mut input = Bytes::new(env);
+    let mut input = Bytes::from_slice(env, ALPHA_DOMAIN);
+    input.append(&env.current_contract_address().to_xdr(env));
     input.append(&u64_be_bytes(env, request_id));
     input.append(&context);
     input.append(&u64_be_bytes(env, drand_round));

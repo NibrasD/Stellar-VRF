@@ -6,7 +6,9 @@
  * epoch).
  *
  * Pipeline:
- *   1. alpha = sha256(request_id ‖ context ‖ round ‖ sha256(drand_sig) ‖ epoch_id)
+ *   1. alpha = sha256("STELLAR_VRF_ALPHA_V2" ‖ xdr(ScVal::Address(contract)) ‖
+ *                     request_id ‖ context ‖ round ‖ sha256(drand_sig) ‖ epoch_id)
+ *      (bound to the contract, so a proof is valid for one deployment only)
  *   2. H     = hash_to_g1(alpha, VRF_DST)
  *   3. gamma = sk · H
  *   4. beta  = sha256(BETA_DOMAIN ‖ gamma_bytes)
@@ -18,7 +20,8 @@
 
 import { bls12_381 } from "@noble/curves/bls12-381";
 import { sha256 } from "@noble/hashes/sha256";
-import { VRF_DST, BETA_DOMAIN } from "./config.js";
+import { Address } from "@stellar/stellar-sdk";
+import { VRF_DST, BETA_DOMAIN, ALPHA_DOMAIN } from "./config.js";
 import { u64ToBeBytes, u32ToBeBytes, concat, bytesToHex, log } from "./utils.js";
 import type { DrandBeacon } from "./drand.js";
 import type { OracleKeySet } from "./keys.js";
@@ -39,13 +42,15 @@ export interface VrfProofData {
  * @param beacon    - drand beacon of the request's bound round
  * @param epochId   - Key epoch the request is bound to (`RequestEpoch(id)`)
  * @param keys      - The key set registered for that epoch
+ * @param contractId - The VRF contract the request belongs to (C…)
  */
 export function generateVrfProof(
   requestId: bigint,
   context: Buffer,
   beacon: DrandBeacon,
   epochId: number,
-  keys: OracleKeySet
+  keys: OracleKeySet,
+  contractId: string
 ): VrfProofData {
   const drandRound = BigInt(beacon.round);
 
@@ -58,6 +63,8 @@ export function generateVrfProof(
   const alphaSeed = Buffer.from(
     sha256(
       concat(
+        Buffer.from(ALPHA_DOMAIN, "utf-8"),
+        Buffer.from(new Address(contractId).toScVal().toXDR()),
         u64ToBeBytes(requestId),
         context,
         u64ToBeBytes(drandRound),

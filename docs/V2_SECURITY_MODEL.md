@@ -45,12 +45,21 @@ answer; it cannot pick an answer.
 3. `deliver(id)` — anyone; calls `on_vrf(id, beta, alpha)` on the requester.
    If `on_vrf` fails, only the delivery reverts and can be retried. The result
    is always readable with `get_beta()`.
-4. Unfulfilled requests: `timeout_refund(id)` by the requester after 20 rounds
-   (60 s), by anyone after 28 800 rounds (24 h); `emergency_refund(id)` by
+4. `fulfill()` is accepted only until 100 rounds (5 min) past the bound round.
+   After that the request can only be refunded: `timeout_refund(id)` by the
+   requester, or by anyone after 28 800 rounds (24 h); `emergency_refund(id)` by
    anyone once the request's epoch is revoked. The fee always goes back to the
    requester.
 
 ## Rules for consumers
+
+- **Freeze everything the outcome depends on before calling `request()`.** The
+  output becomes public at `fulfill()`, and `on_vrf` runs later, in
+  `deliver()`. A consumer that still accepts bets, entries or withdrawals in
+  between can be exploited by anyone who reads the output.
+- `on_vrf` cannot call back into the VRF contract (Soroban prohibits
+  re-entry). Derive values locally and request the next draw in a separate
+  transaction.
 
 - **Never request new randomness for the same event after a refund.** Whoever
   withheld the first result would get a re-roll. Cancel or void the event.
@@ -92,9 +101,14 @@ pending request must always find its keys). The active epoch entry is extended
 on every request and fulfillment, and `ttl_extend.mjs` keeps it alive together
 with the instance and code entries when there is no traffic.
 
+## Security review
+
+Findings, fixes and verified properties: [`SECURITY_REVIEW_V2.md`](SECURITY_REVIEW_V2.md)
+(internal review, not an independent audit).
+
 ## Evidence
 
-- `soroban-contract/src/test.rs`: 71 tests. Every success path uses a real
+- `soroban-contract/src/test.rs`: 76 tests. Every success path uses a real
   drand quicknet beacon (round 32 427 720) and proofs generated with
   `@noble/curves`, recomputed on the Soroban host
   (`test_noble_vector_matches_host_computation`). Rotation keeps old requests
@@ -108,6 +122,10 @@ with the instance and code entries when there is no traffic.
   accepted by the contract.
 
 ## Testnet run (2026-11-13)
+
+This run used the build **before** the security review. The review changed
+the fulfillment window and `alpha`; the re-deployed contract and the checks of
+those fixes are in [`SECURITY_REVIEW_V2.md`](SECURITY_REVIEW_V2.md).
 
 Contract `CDKQ3BGCJ3VRLYEHZB4QYE2RCLVQFPWALTXPC6N6VQIU2IG7NPPN7VGC`
 (WASM `269f040c…1442d36`), deployed with `v2_deploy.mjs` by a separate admin
@@ -134,4 +152,5 @@ cannot parse protocol-30 ledger headers (now ^17.4.0); the constructor's
 operator authorization is non-root and must be simulated with
 `record_allow_nonroot`; `consumer-example` could not pay a non-zero fee.
 
-Not yet done: an external audit.
+Not yet done: an independent audit (an internal review is in
+`SECURITY_REVIEW_V2.md`; its finding M-3 is open).

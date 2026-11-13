@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from "vitest";
 import { xdr, scValToNative } from "@stellar/stellar-sdk";
 
 vi.mock("./config.js", () => ({
+  WORKER_CONCURRENCY: 4,
   SOROBAN_RPC_URL: "https://rpc.test",
   CONTRACT_ADDRESS: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   POLL_INTERVAL_MS: 1,

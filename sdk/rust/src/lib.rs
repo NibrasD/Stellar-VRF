@@ -1437,12 +1437,12 @@ mod tests {
                 32_427_720
             )
         );
-        let ful = unhex("0000001000000001000000030000000500000000000000010000000d000000202e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf90000000300000001");
+        let ful = unhex("0000001000000001000000030000000500000000000000010000000d00000020e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab480000000300000001");
         let (id, beta) = parse_fulfill_event_value(&to_base64(&ful)).unwrap();
         assert_eq!(id, 1);
         assert_eq!(
             to_hex(&beta),
-            "2e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf9"
+            "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
         );
     }
 
