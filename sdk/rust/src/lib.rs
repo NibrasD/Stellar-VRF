@@ -90,7 +90,6 @@ pub struct VrfProof {
     pub alpha_seed: Vec<u8>,
     pub gamma_point: Vec<u8>,
     pub beta_output: Vec<u8>,
-    pub public_key: Vec<u8>,
     pub drand_round: u64,
     pub drand_signature: Vec<u8>,
 }
@@ -1175,13 +1174,15 @@ fn parse_request_event_value(value_b64: &str) -> Result<(u64, String, u64), VrfE
 }
 
 /// Parse the value of a `fulfill` event: an `ScVec`
-/// `(request_id: u64, beta: BytesN<32>)`.
+/// `(request_id: u64, beta: BytesN<32>, epoch_id: u32)` (V2), or the V1
+/// layout without the epoch id.
 fn parse_fulfill_event_value(value_b64: &str) -> Result<(u64, [u8; 32]), VrfError> {
     let bad = |v: &ScVal| VrfError::Rpc(format!("unexpected fulfill event value: {v:?}"));
     let val = decode_scval_b64(value_b64)?;
     match &val {
         ScVal::Vec(items) => match items.as_slice() {
-            [ScVal::U64(id), ScVal::Bytes(beta)] => {
+            [ScVal::U64(id), ScVal::Bytes(beta)]
+            | [ScVal::U64(id), ScVal::Bytes(beta), ScVal::U32(_)] => {
                 let beta: [u8; 32] = beta.as_slice().try_into().map_err(|_| bad(&val))?;
                 Ok((*id, beta))
             }
@@ -1419,6 +1420,29 @@ mod tests {
         assert_eq!(
             to_hex(&beta),
             "98c612abed13163147239f4323d4973cb68df7302564fc791e17c1aae95a6c9d"
+        );
+    }
+
+    /// V2 layouts (epoch id added). `FUL` is the exact XDR the V2 contract
+    /// emits for its real-crypto fixture (asserted in soroban-contract's
+    /// `test_fulfill_event_wire_format_v2`); both built with stellar-sdk JS.
+    #[test]
+    fn test_parse_v2_event_vectors() {
+        let req = unhex("00000010000000010000000400000005000000000000000100000012000000000000000011111111111111111111111111111111111111111111111111111111111111110000000300000001000000050000000001eecec8");
+        assert_eq!(
+            parse_request_event_value(&to_base64(&req)).unwrap(),
+            (
+                1,
+                "GAIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCEIRCF6M".to_string(),
+                32_427_720
+            )
+        );
+        let ful = unhex("0000001000000001000000030000000500000000000000010000000d000000202e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf90000000300000001");
+        let (id, beta) = parse_fulfill_event_value(&to_base64(&ful)).unwrap();
+        assert_eq!(id, 1);
+        assert_eq!(
+            to_hex(&beta),
+            "2e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf9"
         );
     }
 

@@ -30,6 +30,9 @@ import {
   readFeeToken,
   readOracleBalance,
   readRequester,
+  readEpoch,
+  readRequestEpoch,
+  hasPendingCallback,
 } from "./listener.js";
 import { FeeGuard, feeGuardOptionsFromEnv, formatXlm, type Funding } from "./feeGuard.js";
 import { createSpendLedger, createPaidExposureLedger } from "./spendLedger.js";
@@ -42,10 +45,14 @@ import { readChainConfig } from "./listener.js";
 import {
   DRAND_GENESIS_TIME,
   DRAND_PUBLIC_KEY,
-  ORACLE_PUBLIC_KEY,
+  ORACLE_KEYS,
+  AUTO_DELIVER,
+  DELIVER_MAX_FEE_STROOPS,
 } from "./config.js";
 import { Networks } from "@stellar/stellar-sdk";
-import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
+import { generateVrfProof } from "./vrf.js";
+import { selectKeySet } from "./keys.js";
+import { deliverBestEffort } from "./deliver.js";
 import { submitFulfillment } from "./fulfiller.js";
 import { log, bytesToHex, sleep } from "./utils.js";
 import {
@@ -211,9 +218,44 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     );
     log.info(`  Context: ${bytesToHex(context).slice(0, 32)}… (${context.length} bytes)`);
 
-    // 4. Generate BLS-VRF proof
-    log.info(`  Generating BLS-VRF proof…`);
-    const proof = generateVrfProof(event.requestId, context, beacon, event.epochId ?? 1);
+    // 4. Generate the BLS-VRF proof with the keys of the request's epoch.
+    // The epoch comes from the request event, or from storage for requests
+    // recovered by reconciliation. Never assume an epoch: a wrong one makes
+    // alpha differ and the proof is rejected.
+    const epochId =
+      event.epochId ??
+      (await withRetry(`request_epoch(${event.requestId})`, () =>
+        readRequestEpoch(server, event.requestId)
+      ));
+    if (epochId === null) {
+      throw new FulfillTerminalError(
+        `request ${event.requestId} has no RequestEpoch entry`,
+        "request_missing",
+        false
+      );
+    }
+    const epoch = await withRetry(`epoch(${epochId})`, () => readEpoch(server, epochId));
+    if (!epoch) {
+      throw new FulfillTerminalError(`Epoch(${epochId}) not found`, "epoch_missing", false);
+    }
+    if (epoch.status === "Revoked") {
+      throw new FulfillTerminalError(
+        `epoch ${epochId} is revoked; request ${event.requestId} can only be emergency_refund()ed`,
+        "epoch_revoked",
+        true
+      );
+    }
+    const keys = selectKeySet(ORACLE_KEYS, epoch);
+    if (!keys) {
+      throw new FulfillTerminalError(
+        `no configured key set serves epoch ${epochId} (operator ${epoch.oracleAddress}); ` +
+          `configure it as ORACLE_PREVIOUS_* to fulfill this request`,
+        "no_key_for_epoch",
+        false
+      );
+    }
+    log.info(`  Generating BLS-VRF proof (epoch ${epochId}, ${keys.label} keys)…`);
+    const proof = generateVrfProof(event.requestId, context, beacon, epochId, keys);
 
     // 5. Re-verify leadership immediately before spending money.
     //
@@ -245,7 +287,7 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     const txHash = await withFulfillRetry(
       `fulfill(${event.requestId})`,
       () =>
-        submitFulfillment(server, event.requestId, proof, isLeader, async (maxFee, sendId) => {
+        submitFulfillment(server, event.requestId, proof, keys.stellar, isLeader, async (maxFee, sendId) => {
           // Per-request send cap first: it is free to check and never reserves
           // shared budget for a send that will be refused anyway.
           if (sendAttempts.isExhausted(event.requestId)) {
@@ -278,6 +320,15 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     log.success(`═══ Request #${event.requestId} fulfilled (${durationMs}ms) ═══`);
     log.success(`  TX hash: ${txHash}`);
     log.success(`  Beta:    ${bytesToHex(proof.betaOutput)}`);
+
+    // 6. Callback delivery is a separate transaction and cannot change the
+    // result. One best-effort attempt, paid by the current operator account.
+    if (AUTO_DELIVER && isLeader()) {
+      const pendingCb = await hasPendingCallback(server, event.requestId).catch(() => false);
+      if (pendingCb) {
+        await deliverBestEffort(server, event.requestId, ORACLE_KEYS[0].stellar, DELIVER_MAX_FEE_STROOPS);
+      }
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     recordFailure(msg);
@@ -345,6 +396,7 @@ async function reconcile(server: rpc.Server, isCurrent: () => boolean): Promise<
     await handleRequest({
       requestId: p.requestId,
       requester: "(recovered by reconciliation)",
+      epochId: p.epochId,
       requiredRound: p.requiredRound,
       ledger: 0,
     });
@@ -411,9 +463,11 @@ async function main(): Promise<void> {
 
   printConfig();
 
-  // Verify BLS keypair
-  const blsPubKey = deriveBlsPublicKey();
-  log.info(`Oracle BLS public key: ${bytesToHex(blsPubKey).slice(0, 40)}…`);
+  for (const k of ORACLE_KEYS) {
+    log.info(
+      `Oracle ${k.label} keys: ${k.stellar.publicKey()} / BLS ${bytesToHex(k.blsPublicKey).slice(0, 40)}…`
+    );
+  }
   log.info(`Instance ID: ${getInstanceId()}`);
 
   // The contract is the single source of truth for drand genesis/period/key
@@ -435,12 +489,15 @@ async function main(): Promise<void> {
         drandGenesisTime: DRAND_GENESIS_TIME,
         drandPeriod: DRAND_PERIOD,
         drandPublicKeyHex: DRAND_PUBLIC_KEY,
-        oracleBlsPublicKey: blsPubKey,
-        oracleAddress: ORACLE_PUBLIC_KEY,
+        oracleKeys: ORACLE_KEYS.map((k) => ({
+          label: k.label,
+          blsPublicKey: k.blsPublicKey,
+          address: k.stellar.publicKey(),
+        })),
       },
       () => withRetry("read_chain_config", () => readChainConfig(feeGuardServer))
     );
-    log.info("Chain config check: drand genesis/period/key and oracle keys match the contract.");
+    log.info("Chain config check: drand genesis/period/key match the contract and a key set serves the active epoch.");
   }
 
   // Report the economic posture up front so operators see it in the first log lines.

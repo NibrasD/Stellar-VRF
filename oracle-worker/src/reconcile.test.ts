@@ -24,13 +24,16 @@ vi.mock("./utils.js", () => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
-import { findPendingRequests, readRequestCounter, resetReconcileSweep } from "./listener.js";
+import { findPendingRequests, readRequestCounter, resetReconcileSweep, decodeEpoch } from "./listener.js";
+import { Address, nativeToScVal } from "@stellar/stellar-sdk";
 import { getListenerStatus } from "./metrics.js";
 
 interface FakeRequest {
-  fulfilled: boolean;
-  refunded: boolean;
+  /** undefined = marker absent (V2 writes Fulfilled/Refunded only when true). */
+  fulfilled?: boolean;
+  refunded?: boolean;
   round: bigint;
+  epoch?: number;
 }
 
 /** Fake RPC server backed by an in-memory map of request state. */
@@ -42,10 +45,18 @@ function fakeServer(counter: bigint, requests: Map<bigint, FakeRequest>) {
       const [name, rawId] = scValToNative(scKey) as [string, bigint];
       const req = requests.get(BigInt(rawId));
       if (!req) continue; // missing / expired entry → RPC omits it
-      const val =
-        name === "Fulfilled" ? xdr.ScVal.scvBool(req.fulfilled)
-        : name === "Refunded" ? xdr.ScVal.scvBool(req.refunded)
-        : xdr.ScVal.scvU64(req.round);
+      let val: xdr.ScVal;
+      if (name === "Fulfilled") {
+        if (req.fulfilled === undefined) continue;
+        val = xdr.ScVal.scvBool(req.fulfilled);
+      } else if (name === "Refunded") {
+        if (req.refunded === undefined) continue;
+        val = xdr.ScVal.scvBool(req.refunded);
+      } else if (name === "RequestEpoch") {
+        val = xdr.ScVal.scvU32(req.epoch ?? 1);
+      } else {
+        val = xdr.ScVal.scvU64(req.round);
+      }
       entries.push({ key: k, val: { contractData: { key: scKey, val } } });
     }
     return { entries, latestLedger: 1 };
@@ -96,9 +107,18 @@ describe("findPendingRequests", () => {
     const pending = await findPendingRequests(server, 1000);
 
     expect(pending).toEqual([
-      { requestId: 7n, requiredRound: 1007n },
-      { requestId: 240n, requiredRound: 1240n },
+      { requestId: 7n, requiredRound: 1007n, epochId: 1 },
+      { requestId: 240n, requiredRound: 1240n, epochId: 1 },
     ]);
+  });
+
+  it("V2: a request with NO Fulfilled/Refunded marker is pending, with its epoch", async () => {
+    const reqs = populate(5, {
+      2: { fulfilled: undefined, refunded: undefined, epoch: 3 },
+      4: { fulfilled: undefined, refunded: true },
+    });
+    const pending = await findPendingRequests(fakeServer(5n, reqs), 1000);
+    expect(pending).toEqual([{ requestId: 2n, requiredRound: 1002n, epochId: 3 }]);
   });
 
   it("excludes refunded and expired requests", async () => {
@@ -150,9 +170,9 @@ describe("findPendingRequests", () => {
 
     await findPendingRequests(server, 1000);
 
-    // 120 ids × 3 keys = 360 keys → 3 calls of ≤ 150 keys
+    // 120 ids × 4 keys = 480 keys → 3 calls of 40 ids (160 keys)
     const sizes = server.getLedgerEntries.mock.calls.map((c: unknown[]) => c.length);
-    expect(sizes).toEqual([150, 150, 60]);
+    expect(sizes).toEqual([160, 160, 160]);
     expect(Math.max(...sizes)).toBeLessThanOrEqual(200);
   });
 
@@ -167,5 +187,26 @@ describe("findPendingRequests", () => {
     const before = Date.now();
     await findPendingRequests(fakeServer(1n, populate(1, {})), 10);
     expect(getListenerStatus().lastHeartbeatAt).toBeGreaterThanOrEqual(before);
+  });
+});
+
+describe("decodeEpoch", () => {
+  it("decodes the contract's EpochData struct", () => {
+    const pk = Buffer.alloc(192, 7);
+    const op = "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P";
+    // contracttype struct = ScMap with keys in ascending order.
+    const val = xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("created_ledger"), val: xdr.ScVal.scvU32(5) }),
+      new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("oracle_address"), val: new Address(op).toScVal() }),
+      new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("oracle_bls_pk"), val: nativeToScVal(pk, { type: "bytes" }) }),
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol("status"),
+        val: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Revoked")]),
+      }),
+    ]);
+    const e = decodeEpoch(val);
+    expect(Buffer.from(e.oraclePk)).toEqual(pk);
+    expect(e.oracleAddress).toBe(op);
+    expect(e.status).toBe("Revoked");
   });
 });

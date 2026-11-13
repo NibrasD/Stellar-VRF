@@ -1313,3 +1313,83 @@ const E2_BETA: [u8; 32] = [
     0x76, 0xb5, 0xf6, 0x44, 0x02, 0x6c, 0x1f, 0xc4, 0x14, 0xe1, 0xc2, 0xc8, 0x60, 0x27, 0x6c, 0xfb,
     0x88, 0x40, 0xeb, 0x90, 0x45, 0xd2, 0x82, 0x7b, 0x9e, 0x70, 0x4a, 0x79, 0xbe, 0x5b, 0x86, 0xd9,
 ];
+
+#[test]
+fn test_pop_message_layout() {
+    // Layout documented for off-chain tools (oracle-worker/v2_pop.mjs):
+    // POP_DOMAIN ‖ xdr(ScVal::Address(contract)) ‖ epoch_id_be ‖ pk.
+    use soroban_sdk::xdr::ToXdr;
+    let t = setup();
+    let pk = BytesN::from_array(&t.env, &E2_PK);
+    let msg = t
+        .env
+        .as_contract(&t.client.address, || crate::pop_message(&t.env, 7, &pk));
+    let mut want = Bytes::from_slice(&t.env, crate::POP_DOMAIN);
+    want.append(&t.client.address.clone().to_xdr(&t.env));
+    want.append(&Bytes::from_slice(&t.env, &7u32.to_be_bytes()));
+    want.append(&Bytes::from_slice(&t.env, &E2_PK));
+    assert_eq!(msg, want);
+    let addr_xdr = t.client.address.clone().to_xdr(&t.env);
+    let mut hex = std::string::String::new();
+    for b in addr_xdr.iter() {
+        hex.push_str(&std::format!("{:02x}", b));
+    }
+    let strkey = t.client.address.to_string();
+    let mut buf = [0u8; 56];
+    strkey.copy_into_slice(&mut buf);
+    // Same bytes as `new Address(strkey).toScVal().toXDR()` in stellar-sdk JS
+    // (checked once against @stellar/stellar-sdk 17 for this test address).
+    assert_eq!(
+        core::str::from_utf8(&buf).unwrap(),
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+    );
+    assert_eq!(
+        hex,
+        "00000012000000010000000000000000000000000000000000000000000000000000000000000005"
+    );
+}
+
+/// PoP produced by `oracle-worker/v2_lib.mjs` (`popSignature`) for this test
+/// contract address, epoch 2 and the E2 key: the operator tool and the
+/// contract agree on the message layout.
+const JS_POP_E2_EPOCH2: [u8; 96] = [
+    0x0b, 0x1a, 0x5a, 0x89, 0x8f, 0xe8, 0x67, 0x30, 0x16, 0x3d, 0xc6, 0x8e, 0xf2, 0x70, 0x91, 0x7b,
+    0xb1, 0x96, 0x89, 0x8f, 0xc7, 0xce, 0x4b, 0x6f, 0xb7, 0x53, 0xf1, 0x42, 0x37, 0x4c, 0xb2, 0xbd,
+    0x41, 0x79, 0xb9, 0xac, 0x06, 0xf1, 0xa0, 0xb3, 0xfa, 0x7e, 0xcb, 0xd7, 0x88, 0x22, 0x0a, 0x1f,
+    0x07, 0xcd, 0xbc, 0x9e, 0xcc, 0x7f, 0xc7, 0x1e, 0x79, 0x11, 0x78, 0x45, 0x52, 0xe7, 0x39, 0x54,
+    0xe3, 0x0a, 0xf6, 0x09, 0x41, 0xc6, 0x49, 0x65, 0x7a, 0xe0, 0x2e, 0x91, 0xb5, 0x3e, 0x28, 0x8e,
+    0xa3, 0x5a, 0x41, 0xad, 0x3b, 0xaa, 0x3c, 0xc3, 0xe4, 0xe0, 0xa2, 0x8f, 0x8e, 0x54, 0xbc, 0x78,
+];
+
+#[test]
+fn test_pop_from_operator_tool_accepted() {
+    let t = setup();
+    t.client.propose_key_rotation(
+        &t.admin,
+        &BytesN::from_array(&t.env, &E2_PK),
+        &Address::generate(&t.env),
+        &BytesN::from_array(&t.env, &JS_POP_E2_EPOCH2),
+    );
+    assert_eq!(t.client.pending_rotation().unwrap().new_epoch_id, 2);
+}
+
+/// The V2 `fulfill` event value, byte for byte. The same hex is parsed by the
+/// Rust SDK (`test_parse_v2_event_vectors`) and was built with stellar-sdk JS.
+const EVT_FULFILL_V2_XDR_HEX: &str = "0000001000000001000000030000000500000000000000010000000d000000202e74917fceb23851c8e76ae17b1959a72e2dc91286c1dbed716a65847c6ddaf90000000300000001";
+
+#[test]
+fn test_fulfill_event_wire_format_v2() {
+    use soroban_sdk::xdr::{Limits, WriteXdr};
+    let t = setup();
+    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.fulfill(&id, &e1_proof(&t.env));
+    let evs = t.env.events().all().filter_by_contract(&t.client.address);
+    let e = evs.events().last().unwrap().clone();
+    let soroban_sdk::xdr::ContractEventBody::V0(body) = e.body;
+    let bytes = body.data.to_xdr(Limits::none()).unwrap();
+    let mut hex = std::string::String::new();
+    for b in bytes {
+        hex.push_str(&std::format!("{:02x}", b));
+    }
+    assert_eq!(hex, EVT_FULFILL_V2_XDR_HEX);
+}
