@@ -1,8 +1,29 @@
-# Keeps the SHA-pinned GitHub Actions current: Dependabot opens PRs that bump
-# both the commit SHA and its `# vX.Y.Z` comment.
+# Dependabot opens at most ONE pull request per ecosystem per week: every
+# available bump is grouped into it. (Before: one PR and one branch per
+# dependency.) Enable "Automatically delete head branches" in the repository
+# settings so a merged or closed Dependabot branch disappears too.
 version: 2
 updates:
+  # SHA-pinned GitHub Actions: bumps both the commit SHA and its `# vX.Y.Z` comment.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Node packages of the oracle worker and the JS SDK. @stellar/stellar-sdk
+  # must keep up with network protocol upgrades (17.1.0 could not parse
+  # protocol-30 ledger headers).
+  - package-ecosystem: npm
+    directories:
+      - /oracle-worker
+      - /sdk/js
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      npm:
+        patterns: ["*"]
