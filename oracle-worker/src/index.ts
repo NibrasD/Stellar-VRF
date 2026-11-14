@@ -160,6 +160,17 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     return;
   }
 
+  // Fulfillment window, checked before any RPC call: after a restart the
+  // listener replays up to a day of request events, and almost all of them
+  // are long past the point where fulfill() is accepted.
+  if (fulfillWindowClosed(event.requiredRound)) {
+    log.info(
+      `Request ${event.requestId} is past its fulfillment window (round ${event.requiredRound} + ` +
+        `${TIMEOUT_ROUNDS}); skipping. If still open it can be refunded with timeout_refund().`
+    );
+    return;
+  }
+
   processingRequests.add(reqKey);
   recordRequestSeen();
   const startMs = Date.now();
@@ -176,16 +187,6 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     if (fulfilled) {
       sendAttempts.clear(event.requestId);
       log.info(`Request ${event.requestId} already fulfilled, skipping.`);
-      return;
-    }
-
-    // 1·. Fulfillment window: an expired request can only be refunded.
-    if (fulfillWindowClosed(event.requiredRound)) {
-      recordTerminalFailure("fulfill_window_closed");
-      log.warn(
-        `Request ${event.requestId} is past its fulfillment window (round ${event.requiredRound} + ` +
-          `${TIMEOUT_ROUNDS}); not fulfilling. It can be refunded with timeout_refund().`
-      );
       return;
     }
 

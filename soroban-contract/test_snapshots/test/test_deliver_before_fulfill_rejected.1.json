@@ -256,7 +256,7 @@
                     "symbol": "CallbackContract"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -344,10 +344,37 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "Nonce"
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u64": "1"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 519400
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "RequestContext"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -374,7 +401,7 @@
                     "symbol": "RequestEpoch"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -401,7 +428,7 @@
                     "symbol": "RequestRound"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -428,7 +455,7 @@
                     "symbol": "Requester"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -491,18 +518,6 @@
                       },
                       "val": {
                         "u32": 2
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "Counter"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "u64": "1"
                       }
                     },
                     {

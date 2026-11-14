@@ -67,10 +67,9 @@ fuzz_target!(|data: &[u8]| {
                 let ctx = Bytes::from_slice(&env, &ctx_buf);
 
                 let id = client.request(&ctx, &requester);
-                assert_eq!(
-                    id,
-                    (requests.len() as u64) + 1,
-                    "Sequential ID invariant violated"
+                assert!(
+                    id != 0 && !requests.contains(&id),
+                    "Request id uniqueness invariant violated"
                 );
                 requests.push(id);
             }
@@ -89,10 +88,9 @@ fuzz_target!(|data: &[u8]| {
                     &callback_contract,
                     &callback_fn,
                 );
-                assert_eq!(
-                    id,
-                    (requests.len() as u64) + 1,
-                    "Sequential ID invariant violated"
+                assert!(
+                    id != 0 && !requests.contains(&id),
+                    "Request id uniqueness invariant violated"
                 );
                 requests.push(id);
             }

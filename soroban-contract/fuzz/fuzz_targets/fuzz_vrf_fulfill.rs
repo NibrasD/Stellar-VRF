@@ -124,8 +124,8 @@ fuzz_target!(|data: &[u8]| {
         );
     }
 
-    // 3. If target_req_id == 0 or non-existent, MUST NEVER succeed
-    if target_req_id == 0 || target_req_id > valid_req_id {
+    // 3. Any id other than the one real request does not exist: MUST NEVER succeed
+    if target_req_id != valid_req_id {
         assert!(
             res.is_err(),
             "Non-existent request fulfillment invariant violated"

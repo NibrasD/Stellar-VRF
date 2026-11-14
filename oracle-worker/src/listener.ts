@@ -46,7 +46,7 @@ const MAX_CONSECUTIVE_POLL_FAILURES = parseInt(
 );
 
 /** getLedgerEntries accepts at most 200 keys; 3 keys per request ID. */
-const RECONCILE_BATCH_IDS = 40;
+const RECONCILE_BATCH_IDS = 100; // × 2 keys per id = the RPC's 200-key limit
 
 // Persistent cursor for event pagination
 let lastCursor: string | undefined;
@@ -80,18 +80,6 @@ export async function initListener(server: rpc.Server): Promise<void> {
     `Listener initialized. Starting from ledger ${lastLedger} ` +
       `(head ${health.latestLedger}, lookback ${lookback})`
   );
-}
-
-/**
- * Read the contract's request counter (`DataKey::Counter`, instance storage).
- *
- * Request IDs are assigned sequentially as `Counter + 1`, so the counter is
- * the highest ID ever issued. This is what lets reconciliation look at the
- * NEWEST requests instead of guessing where the ID range ends.
- */
-export async function readRequestCounter(server: rpc.Server): Promise<bigint> {
-  // Counter is initialised by the contract's __constructor at deploy time.
-  return (await readInstanceInteger(server, "Counter")) ?? 0n;
 }
 
 /**
@@ -262,142 +250,97 @@ function requestEntryKey(name: string, id: bigint): xdr.LedgerKey {
 }
 
 /**
- * Reconcile against contract STATE rather than events.
+ * Recover requests that still need fulfilling, from the chain rather than
+ * from this process's memory.
  *
- * Events alone cannot guarantee delivery: the cursor is in-memory, and the RPC
- * only retains a finite event window. After an outage longer than that window,
- * a request whose `request` event has aged out would never be seen again.
+ * V2 request ids are derived from the requester and its nonce (so that
+ * requests by different accounts never conflict in a ledger); they cannot be
+ * enumerated by counting. They do not need to be: `fulfill()` is only accepted
+ * for `TIMEOUT_ROUNDS` after the bound round (5 minutes), so every request
+ * that can still be fulfilled emitted its `request` event within the last few
+ * minutes. Reconciliation therefore:
  *
- * How it works:
- *   1. Read `Counter` — the highest request ID issued.
- *   2. Walk IDs from the newest downwards (bounded by `maxScan`), reading
- *      `Fulfilled`, `Refunded` and `RequestRound` for each directly from ledger
- *      storage via batched `getLedgerEntries` — one RPC call per 50 IDs, no
- *      simulations, no oracle account lookup.
- *   3. A request is pending iff `Fulfilled != true` and `Refunded != true`
- *      (V2 writes these markers only when they become true).
+ *   1. lists the `request` events of the last `RECONCILE_LOOKBACK_LEDGERS`
+ *      ledgers (default 600, about 50 minutes: ten times the window), and
+ *   2. reads `Fulfilled` / `Refunded` for those ids directly from ledger
+ *      storage (batched `getLedgerEntries`), keeping the ones that are still
+ *      open. V2 writes these markers only when they become true.
  *
- * Entries that no longer exist (TTL-expired / archived) are skipped: `fulfill()`
- * could not succeed on them anyway.
- *
- * Returned oldest-first so the requests closest to their timeout are served
- * first.
- *
- * The previous implementation scanned IDs 1..200 upwards and stopped at the
- * first gap, which silently stopped finding new requests once the contract had
- * issued more than 200 IDs.
+ * This is independent of the live listener's cursor, so it also catches an
+ * event the listener skipped. Returned oldest-first: the requests closest to
+ * their deadline are served first.
  */
 export async function findPendingRequests(
   server: rpc.Server,
-  maxScan = parseInt(process.env.RECONCILE_MAX_SCAN || "1000", 10)
+  lookbackLedgers = parseInt(process.env.RECONCILE_LOOKBACK_LEDGERS || "600", 10)
 ): Promise<PendingRequest[]> {
-  const counter = await readRequestCounter(server);
+  const health = await server.getHealth();
+  const startLedger = clampToRetention(health.latestLedger - Math.max(1, lookbackLedgers), health);
+  const filters: rpc.Api.EventFilter[] = [
+    {
+      type: "contract",
+      contractIds: [CONTRACT_ADDRESS],
+      topics: [[xdr.ScVal.scvSymbol("request").toXDR("base64")]],
+    },
+  ];
+
+  const recent = new Map<bigint, VrfRequestEvent>();
+  let cursor: string | undefined;
+  for (let page = 0; page < RECONCILE_MAX_PAGES; page++) {
+    const response: any = await server.getEvents(
+      cursor
+        ? { filters, limit: RECONCILE_PAGE_SIZE, cursor }
+        : { filters, limit: RECONCILE_PAGE_SIZE, startLedger }
+    );
+    const batch = response.events ?? [];
+    for (const event of batch) {
+      const parsed = parseRequestEvent(event);
+      if (parsed) recent.set(parsed.requestId, parsed);
+    }
+    if (batch.length < RECONCILE_PAGE_SIZE || !response.cursor) break;
+    cursor = response.cursor;
+  }
+
+  const candidates = [...recent.values()].sort((a, b) => a.ledger - b.ledger);
   const pending: PendingRequest[] = [];
-  if (counter === 0n) {
-    recordListenerHeartbeat();
-    log.info("Reconciliation: contract has issued no requests yet.");
-    return pending;
+  for (let i = 0; i < candidates.length; i += RECONCILE_BATCH_IDS) {
+    const chunk = candidates.slice(i, i + RECONCILE_BATCH_IDS);
+    const res = await server.getLedgerEntries(
+      ...chunk.flatMap((c) => [
+        requestEntryKey("Fulfilled", c.requestId),
+        requestEntryKey("Refunded", c.requestId),
+      ])
+    );
+    const closed = new Set<bigint>();
+    for (const entry of res.entries) {
+      const data = (entry.val as any).contractData;
+      const key = scValToNative(data.key);
+      if (Array.isArray(key) && key.length === 2 && scValToNative(data.val) === true) {
+        closed.add(BigInt(key[1]));
+      }
+    }
+    for (const c of chunk) {
+      if (!closed.has(c.requestId)) {
+        pending.push({ requestId: c.requestId, requiredRound: c.requiredRound, epochId: c.epochId });
+      }
+    }
   }
-
-  const window = BigInt(Math.max(1, maxScan));
-  const lowest = counter - window + 1n;
-  const floor = lowest > 1n ? lowest : 1n;
-
-  await scanIdRange(server, floor, counter, pending);
-
-  // Older IDs: sweep one more window per pass with a cursor that walks down to
-  // 1 and then wraps. The newest window is checked every pass; every older ID
-  // is checked at least once every ceil((floor-1)/maxScan) passes, so after a
-  // long outage with heavy traffic nothing stays undiscovered forever.
-  let sweep: { lo: bigint; hi: bigint } | null = null;
-  if (floor > 1n) {
-    let hi = olderSweepCursor !== null && olderSweepCursor < floor ? olderSweepCursor : floor - 1n;
-    if (hi < 1n) hi = floor - 1n;
-    const lo = hi - window + 1n > 1n ? hi - window + 1n : 1n;
-    await scanIdRange(server, lo, hi, pending);
-    olderSweepCursor = lo > 1n ? lo - 1n : null; // null → wrap to the top next pass
-    sweep = { lo, hi };
-  } else {
-    olderSweepCursor = null;
-  }
-
-  pending.sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
   recordListenerHeartbeat();
 
-  const scanned = `${floor}..${counter}` + (sweep ? ` + older ${sweep.lo}..${sweep.hi}` : "");
+  const scanned = `${recent.size} request event(s) since ledger ${startLedger}`;
   if (pending.length) {
     log.warn(
-      `Reconciliation found ${pending.length} unfulfilled request(s) ` +
-        `(scanned ${scanned}): ` +
+      `Reconciliation found ${pending.length} open request(s) (${scanned}): ` +
         pending.map((p) => String(p.requestId)).join(", ")
     );
   } else {
-    log.info(`Reconciliation: no outstanding requests (scanned ${scanned}).`);
+    log.info(`Reconciliation: no open requests (${scanned}).`);
   }
   return pending;
 }
 
-/**
- * Position of the rolling sweep over IDs older than the newest window.
- * In-memory: after a restart the sweep restarts from the top, which only
- * re-checks IDs (idempotent), never skips them.
- */
-let olderSweepCursor: bigint | null = null;
-
-/** Test hook: reset the older-ID sweep. */
-export function resetReconcileSweep(): void {
-  olderSweepCursor = null;
-}
-
-async function scanIdRange(
-  server: rpc.Server,
-  floor: bigint,
-  top: bigint,
-  pending: PendingRequest[]
-): Promise<void> {
-  for (let hi = top; hi >= floor; hi -= BigInt(RECONCILE_BATCH_IDS)) {
-    const ids: bigint[] = [];
-    for (let id = hi; id >= floor && id > hi - BigInt(RECONCILE_BATCH_IDS); id--) {
-      ids.push(id);
-    }
-
-    // 4 keys per id: stays within the RPC's getLedgerEntries key limit.
-    const keys = ids.flatMap((id) => [
-      requestEntryKey("Fulfilled", id),
-      requestEntryKey("Refunded", id),
-      requestEntryKey("RequestRound", id),
-      requestEntryKey("RequestEpoch", id),
-    ]);
-    const res = await server.getLedgerEntries(...keys);
-
-    const fulfilled = new Map<bigint, boolean>();
-    const refunded = new Map<bigint, boolean>();
-    const rounds = new Map<bigint, bigint>();
-    const epochs = new Map<bigint, number>();
-    for (const entry of res.entries) {
-      const data = (entry.val as any).contractData;
-      const key = scValToNative(data.key);
-      if (!Array.isArray(key) || key.length !== 2) continue;
-      const [name, rawId] = key;
-      const id = BigInt(rawId);
-      const value = scValToNative(data.val);
-      if (name === "Fulfilled") fulfilled.set(id, value === true);
-      else if (name === "Refunded") refunded.set(id, value === true);
-      else if (name === "RequestRound") rounds.set(id, BigInt(value));
-      else if (name === "RequestEpoch") epochs.set(id, Number(value));
-    }
-
-    for (const id of ids) {
-      const round = rounds.get(id);
-      // V2 stores the Fulfilled / Refunded markers only once they become
-      // true, so "absent" means "not yet". RequestRound exists for every live
-      // request; if it is gone (archived) fulfill() cannot succeed anyway.
-      if (fulfilled.get(id) !== true && refunded.get(id) !== true && round !== undefined) {
-        pending.push({ requestId: id, requiredRound: round, epochId: epochs.get(id) });
-      }
-    }
-  }
-}
+const RECONCILE_PAGE_SIZE = 200;
+const RECONCILE_MAX_PAGES = 50;
 
 /**
  * Clamp a candidate startLedger so it always sits inside the RPC's retention

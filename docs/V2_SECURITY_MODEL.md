@@ -108,7 +108,7 @@ Findings, fixes and verified properties: [`SECURITY_REVIEW_V2.md`](SECURITY_REVI
 
 ## Evidence
 
-- `soroban-contract/src/test.rs`: 76 tests. Every success path uses a real
+- `soroban-contract/src/test.rs`: 78 tests. Every success path uses a real
   drand quicknet beacon (round 32 427 720) and proofs generated with
   `@noble/curves`, recomputed on the Soroban host
   (`test_noble_vector_matches_host_computation`). Rotation keeps old requests
@@ -153,4 +153,4 @@ operator authorization is non-root and must be simulated with
 `record_allow_nonroot`; `consumer-example` could not pay a non-zero fee.
 
 Not yet done: an independent audit (an internal review is in
-`SECURITY_REVIEW_V2.md`; its finding M-3 is open).
+`SECURITY_REVIEW_V2.md`).

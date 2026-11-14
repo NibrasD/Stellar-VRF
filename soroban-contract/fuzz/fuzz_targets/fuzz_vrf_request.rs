@@ -39,7 +39,7 @@ fuzz_target!(|data: &[u8]| {
     if data.len() <= 1024 {
         // Must succeed without error
         let id = client.request(&context, &requester);
-        assert_eq!(id, 1);
+        assert_ne!(id, 0);
         assert_eq!(client.requester_of(&id), requester);
         assert!(!client.is_fulfilled(&id));
         assert!(!client.is_refunded(&id));

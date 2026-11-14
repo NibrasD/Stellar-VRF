@@ -1,16 +1,17 @@
 /**
- * reconcile.test.ts — state-based recovery of pending requests.
+ * reconcile.test.ts — recovery of open requests from the chain.
  *
  * Uses the REAL @stellar/stellar-sdk XDR types (only the RPC server is faked),
- * so the ledger keys built here are the same bytes sent to a real RPC node.
+ * so the event values and ledger keys here are the bytes a real RPC node
+ * exchanges.
  *
- * Regression target: the previous implementation scanned IDs 1..200 upwards
- * and stopped at the first gap, so once the contract had issued more than 200
- * requests every NEW pending request was invisible to reconciliation.
+ * V2 request ids are derived from the requester and its nonce, so they are
+ * not sequential and cannot be found by counting. Reconciliation lists recent
+ * `request` events and checks each id's Fulfilled / Refunded marker.
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { xdr, scValToNative } from "@stellar/stellar-sdk";
+import { xdr, scValToNative, Address, nativeToScVal } from "@stellar/stellar-sdk";
 
 vi.mock("./config.js", () => ({
   WORKER_CONCURRENCY: 4,
@@ -25,168 +26,131 @@ vi.mock("./utils.js", () => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
-import { findPendingRequests, readRequestCounter, resetReconcileSweep, decodeEpoch } from "./listener.js";
-import { Address, nativeToScVal } from "@stellar/stellar-sdk";
+import { findPendingRequests, decodeEpoch } from "./listener.js";
 import { getListenerStatus } from "./metrics.js";
 
+const REQUESTER = "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P";
+
 interface FakeRequest {
+  id: bigint;
+  ledger: number;
+  round: bigint;
+  epoch: number;
   /** undefined = marker absent (V2 writes Fulfilled/Refunded only when true). */
   fulfilled?: boolean;
   refunded?: boolean;
-  round: bigint;
-  epoch?: number;
 }
 
-/** Fake RPC server backed by an in-memory map of request state. */
-function fakeServer(counter: bigint, requests: Map<bigint, FakeRequest>) {
+/** Fake RPC: `request` events plus the Fulfilled / Refunded ledger entries. */
+function fakeServer(requests: FakeRequest[], latestLedger = 10_000, oldestLedger = 1) {
+  const events = requests
+    .slice()
+    .sort((a, b) => a.ledger - b.ledger)
+    .map((r) => ({
+      ledger: r.ledger,
+      value: xdr.ScVal.scvVec([
+        xdr.ScVal.scvU64(r.id),
+        new Address(REQUESTER).toScVal(),
+        xdr.ScVal.scvU32(r.epoch),
+        xdr.ScVal.scvU64(r.round),
+      ]),
+    }));
+
+  const getHealth = vi.fn(async () => ({ status: "healthy", latestLedger, oldestLedger }));
+
+  // Pages by position: the cursor is the index of the next event.
+  const getEvents = vi.fn(async (req: any) => {
+    const from = req.cursor !== undefined ? Number(req.cursor) : events.findIndex((e) => e.ledger >= req.startLedger);
+    const start = from < 0 ? events.length : from;
+    const page = events.slice(start, start + req.limit);
+    return { events: page, cursor: String(start + page.length), latestLedger };
+  });
+
   const getLedgerEntries = vi.fn(async (...keys: any[]) => {
     const entries = [];
     for (const k of keys) {
       const scKey: xdr.ScVal = k.contractData.key;
       const [name, rawId] = scValToNative(scKey) as [string, bigint];
-      const req = requests.get(BigInt(rawId));
-      if (!req) continue; // missing / expired entry → RPC omits it
-      let val: xdr.ScVal;
-      if (name === "Fulfilled") {
-        if (req.fulfilled === undefined) continue;
-        val = xdr.ScVal.scvBool(req.fulfilled);
-      } else if (name === "Refunded") {
-        if (req.refunded === undefined) continue;
-        val = xdr.ScVal.scvBool(req.refunded);
-      } else if (name === "RequestEpoch") {
-        val = xdr.ScVal.scvU32(req.epoch ?? 1);
-      } else {
-        val = xdr.ScVal.scvU64(req.round);
-      }
-      entries.push({ key: k, val: { contractData: { key: scKey, val } } });
+      const req = requests.find((r) => r.id === BigInt(rawId));
+      if (!req) continue;
+      const flag = name === "Fulfilled" ? req.fulfilled : name === "Refunded" ? req.refunded : undefined;
+      if (flag === undefined) continue; // marker absent → RPC omits the entry
+      entries.push({ key: k, val: { contractData: { key: scKey, val: xdr.ScVal.scvBool(flag) } } });
     }
-    return { entries, latestLedger: 1 };
+    return { entries, latestLedger };
   });
 
-  const getContractData = vi.fn(async () => ({
-    val: {
-      contractData: {
-        val: {
-          instance: {
-            storage: [
-              { key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("FeeAmount")]), val: xdr.ScVal.scvU64(0n) },
-              { key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Counter")]), val: xdr.ScVal.scvU64(counter) },
-            ],
-          },
-        },
-      },
-    },
-  }));
-
-  return { getLedgerEntries, getContractData } as any;
+  return { getHealth, getEvents, getLedgerEntries } as any;
 }
 
-function populate(counter: number, overrides: Record<number, Partial<FakeRequest> | null>) {
-  const m = new Map<bigint, FakeRequest>();
-  for (let i = 1; i <= counter; i++) {
-    const o = overrides[i];
-    if (o === null) continue; // simulate an expired / archived entry
-    m.set(BigInt(i), { fulfilled: true, refunded: false, round: BigInt(1000 + i), ...o });
-  }
-  return m;
-}
-
-describe("readRequestCounter", () => {
-  it("reads DataKey::Counter out of contract instance storage", async () => {
-    expect(await readRequestCounter(fakeServer(3n, new Map()))).toBe(3n);
-  });
-});
+// Non-sequential ids, as the contract produces them.
+const ID_A = 7450777608292806116n;
+const ID_B = 12819282031553731624n;
+const ID_C = 3971875892804378338n;
 
 describe("findPendingRequests", () => {
-  it("finds pending requests ABOVE id 200 (the old 1..200 scan missed these)", async () => {
-    const reqs = populate(250, {
-      7: { fulfilled: false },
-      240: { fulfilled: false },
-    });
-    const server = fakeServer(250n, reqs);
-
-    const pending = await findPendingRequests(server, 1000);
-
-    expect(pending).toEqual([
-      { requestId: 7n, requiredRound: 1007n, epochId: 1 },
-      { requestId: 240n, requiredRound: 1240n, epochId: 1 },
+  it("returns open requests (no marker) with their epoch and round, oldest first", async () => {
+    const server = fakeServer([
+      { id: ID_B, ledger: 9_950, round: 2002n, epoch: 3 },
+      { id: ID_A, ledger: 9_900, round: 2001n, epoch: 1 },
+    ]);
+    expect(await findPendingRequests(server, 600)).toEqual([
+      { requestId: ID_A, requiredRound: 2001n, epochId: 1 },
+      { requestId: ID_B, requiredRound: 2002n, epochId: 3 },
     ]);
   });
 
-  it("V2: a request with NO Fulfilled/Refunded marker is pending, with its epoch", async () => {
-    const reqs = populate(5, {
-      2: { fulfilled: undefined, refunded: undefined, epoch: 3 },
-      4: { fulfilled: undefined, refunded: true },
-    });
-    const pending = await findPendingRequests(fakeServer(5n, reqs), 1000);
-    expect(pending).toEqual([{ requestId: 2n, requiredRound: 1002n, epochId: 3 }]);
+  it("excludes fulfilled and refunded requests", async () => {
+    const server = fakeServer([
+      { id: ID_A, ledger: 9_900, round: 1n, epoch: 1, fulfilled: true },
+      { id: ID_B, ledger: 9_910, round: 2n, epoch: 1, refunded: true },
+      { id: ID_C, ledger: 9_920, round: 3n, epoch: 1 },
+    ]);
+    const pending = await findPendingRequests(server, 600);
+    expect(pending.map((p) => p.requestId)).toEqual([ID_C]);
   });
 
-  it("excludes refunded and expired requests", async () => {
-    const reqs = populate(10, {
-      3: { fulfilled: false, refunded: true }, // refunded → not pending
-      5: null,                                 // entries gone → cannot fulfil
-      9: { fulfilled: false },
-    });
-
-    const pending = await findPendingRequests(fakeServer(10n, reqs), 1000);
-
-    expect(pending.map((p) => p.requestId)).toEqual([9n]);
+  it("only looks back the configured number of ledgers", async () => {
+    const server = fakeServer([
+      { id: ID_A, ledger: 9_000, round: 1n, epoch: 1 }, // older than the look-back
+      { id: ID_B, ledger: 9_700, round: 2n, epoch: 1 },
+    ]);
+    const pending = await findPendingRequests(server, 600);
+    expect(pending.map((p) => p.requestId)).toEqual([ID_B]);
+    expect(server.getEvents.mock.calls[0][0].startLedger).toBe(9_400);
   });
 
-  it("always scans the newest maxScan IDs, plus one rolling window of older IDs", async () => {
-    resetReconcileSweep();
-    const reqs = populate(250, {
-      7: { fulfilled: false },   // far outside the newest window
-      240: { fulfilled: false }, // inside
-    });
-    const server = fakeServer(250n, reqs);
-
-    // Pass 1: newest 231..250 + older 211..230 → only 240.
-    expect((await findPendingRequests(server, 20)).map((p) => p.requestId)).toEqual([240n]);
+  it("never asks the RPC for a ledger outside its retention window", async () => {
+    const server = fakeServer([{ id: ID_A, ledger: 9_990, round: 1n, epoch: 1 }], 10_000, 9_800);
+    await findPendingRequests(server, 600);
+    expect(server.getEvents.mock.calls[0][0].startLedger).toBe(9_801);
   });
 
-  it("the older-ID sweep eventually reaches every ID (no request stays undiscovered)", async () => {
-    resetReconcileSweep();
-    const reqs = populate(250, { 7: { fulfilled: false } });
-    const server = fakeServer(250n, reqs);
-
-    // 230 older IDs / 20 per pass → 12 passes cover 1..230.
-    let found = false;
-    let passes = 0;
-    for (; passes < 12 && !found; passes++) {
-      found = (await findPendingRequests(server, 20)).some((p) => p.requestId === 7n);
-    }
-    expect(found).toBe(true);
-    expect(passes).toBe(12);
-
-    // The sweep then wraps back to the top of the older range.
-    const again = await findPendingRequests(server, 20);
-    expect(again.some((p) => p.requestId === 7n)).toBe(false); // 211..230 this pass
-  });
-
-  it("batches ledger reads within the RPC's 200-key limit", async () => {
-    resetReconcileSweep();
-    const server = fakeServer(120n, populate(120, {}));
-
-    await findPendingRequests(server, 1000);
-
-    // 120 ids × 4 keys = 480 keys → 3 calls of 40 ids (160 keys)
+  it("pages through more events than one page holds, and batches ledger reads within 200 keys", async () => {
+    const many: FakeRequest[] = Array.from({ length: 450 }, (_, i) => ({
+      id: BigInt(1_000_000 + i),
+      ledger: 9_500 + i,
+      round: BigInt(i),
+      epoch: 1,
+      fulfilled: i !== 449 ? true : undefined,
+    }));
+    const server = fakeServer(many);
+    const pending = await findPendingRequests(server, 600);
+    expect(pending.map((p) => p.requestId)).toEqual([1_000_449n]);
+    expect(server.getEvents).toHaveBeenCalledTimes(3); // 200 + 200 + 50
     const sizes = server.getLedgerEntries.mock.calls.map((c: unknown[]) => c.length);
-    expect(sizes).toEqual([160, 160, 160]);
-    expect(Math.max(...sizes)).toBeLessThanOrEqual(200);
+    expect(sizes).toEqual([200, 200, 200, 200, 100]);
   });
 
-  it("returns nothing (and does not scan) when no requests exist", async () => {
-    const server = fakeServer(0n, new Map());
-
-    expect(await findPendingRequests(server, 1000)).toEqual([]);
+  it("returns nothing when there are no recent requests", async () => {
+    const server = fakeServer([]);
+    expect(await findPendingRequests(server, 600)).toEqual([]);
     expect(server.getLedgerEntries).not.toHaveBeenCalled();
   });
 
   it("counts as listener progress for /health", async () => {
     const before = Date.now();
-    await findPendingRequests(fakeServer(1n, populate(1, {})), 10);
+    await findPendingRequests(fakeServer([]), 10);
     expect(getListenerStatus().lastHeartbeatAt).toBeGreaterThanOrEqual(before);
   });
 });

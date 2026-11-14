@@ -18,7 +18,7 @@ operational key management, and formal verification.
 |---|---|---|---|
 | H-1 | High | Requester could veto an output: a late `fulfill()` raced `timeout_refund()` | **Fixed** |
 | M-1 | Medium | Worker handled requests one at a time; a few cheap requests delayed everyone else's | **Fixed** (capacity limit remains, see below) |
-| M-3 | Medium (availability) | Only one `request()` can succeed per ledger | **Open** — needs a design decision |
+| M-3 | Medium (availability) | Only one `request()` could succeed per ledger | **Fixed** |
 | M-2 | Medium (integration) | The output is public between `fulfill()` and `deliver()` | By design; **consumer rule documented** |
 | L-1 | Low | `alpha` was not bound to the contract or network | **Fixed** |
 | L-2 | Low | Admin ≠ operator was not re-checked when a rotation executes | **Fixed** |
@@ -28,7 +28,7 @@ operational key management, and formal verification.
 | I-1 … I-7 | Info | See below | Documented |
 
 No finding allows forging an output, and none was found that lets the operator
-choose between outputs. One availability finding (M-3) is still open.
+choose between outputs.
 
 ## Findings
 
@@ -74,10 +74,10 @@ Remaining limit: one operator account submits about one `fulfill()` per ledger
 flooding request pays the fee if fulfilled). Raising the limit needs several
 fulfillments per ledger (channel accounts); not implemented.
 
-### M-3 — One request per ledger (open)
+### M-3 — One request per ledger (fixed)
 
-Request ids come from a global counter, and each request's storage keys
-contain its id. A Soroban transaction must declare the storage keys it touches
+Before: request ids came from a global counter, and each request's storage
+keys contain its id. A Soroban transaction must declare the storage keys it touches
 when it is simulated. Two `request()` transactions simulated against the same
 state both declare the keys of id `n + 1`; whichever is applied second is
 assigned `n + 2`, touches keys it did not declare, and fails. So at most one
@@ -91,18 +91,21 @@ Consequences: a hard ceiling of about 12 requests per minute for the whole
 contract, and a cheap way to keep other users out: one request per ledger
 (0.2 XLM each, about 144 XLM per hour) makes most competing requests fail.
 
-Options:
-1. **Ids that do not depend on global order** (the real fix): for example
-   `id = first 8 bytes of sha256(requester ‖ per-requester nonce)`, with a
-   collision check. Requests by different requesters then never conflict. Ids
-   stop being 1, 2, 3…; the worker's recovery would list recent `request`
-   events instead of walking the counter (enough now that a request is only
-   fulfillable for 5 minutes). Touches the contract, the test fixtures, the
-   worker's reconciliation and anything that assumes sequential ids.
-2. **Client-side padding** (mitigation): the SDK declares the keys of the next
-   few ids as well, so a request survives a few others landing first. No
-   contract change, slightly higher fees, does not stop a deliberate flood.
-3. Accept and document the limit.
+Fix: the id of a request is now
+`first 8 bytes of sha256(domain ‖ requester ‖ requester's nonce)`. It depends
+only on the requester, so requests by different accounts declare disjoint keys
+and all succeed in the same ledger. Ids are no longer 1, 2, 3…. A collision
+(about 2^-64 per pair) or a zero id advances the nonce, so it cannot block a
+requester. The global counter is gone, and `request()` no longer writes the
+contract instance entry. Two requests by the *same* account in one ledger
+still need consecutive nonces, as any two transactions of one account do.
+
+The worker's recovery no longer walks a counter: it lists the `request`
+events of the last 600 ledgers and checks each id's markers. That is
+sufficient because a request can only be fulfilled for 5 minutes.
+
+Tests: `test_request_ids_do_not_depend_on_other_requesters`,
+`test_request_id_collision_skips_to_next_nonce`; worker `reconcile.test.ts`.
 
 ### M-2 — The output is public before the consumer processes it (by design)
 
@@ -216,24 +219,35 @@ Monitor them; cancel what is not going to be executed.
 
 ## Testnet check of the fixes
 
-Contract `CBECNOM3XBHSSXT6WD42BIR3TNGHPM75TQAMO7O4NRBHVUNWIBPALTEO`
-(WASM `74b054dd…2462f5`), 2026-11-13.
+Two deployments on 2026-11-13/14.
 
-- **H-1:** request #1 was left unfulfilled. The same valid proof simulated
+Build with H-1, L-1, M-1 fixed
+(`CBECNOM3XBHSSXT6WD42BIR3TNGHPM75TQAMO7O4NRBHVUNWIBPALTEO`):
+
+- **H-1:** a request was left unfulfilled. The same valid proof simulated
   `fulfill()` successfully inside the window (current round 33935268, window
   end 33935364) and was rejected after it (round 33935371). The refund then
   went through: `6620b72007b105e0e4baecc57c881c4bab23f7990ef653afe9604254a7b8f4d7`.
-  The restarted worker skipped the request ("past its fulfillment window").
-- **L-1:** all fulfillments below use the contract-bound `alpha`.
-- **M-1:** eight requests (#2–#9), six of them submitted at once, were all
-  fulfilled, each 7–18 s after it reached the chain, with the worker handling
-  them concurrently and no sequence-number errors.
-- **M-3** was found by this run (see above).
+- **M-3 found:** 6 accounts requesting at once needed 15 failed transactions
+  and 28 s.
 
-Not re-run on this build: key rotation (its logic is unchanged; the earlier
-run is in `V2_SECURITY_MODEL.md`) and the consumer callback path.
+Build with M-3 fixed as well
+(`CBHH55DIDMHEKKDC6SUNRGLHHXWGIPQQ6SDW26YBGI72YYBHKXZN7UDW`,
+WASM `d87aa3cd…541f3012`):
+
+- **M-3:** 8 accounts requesting at once: all 8 requests on-chain in 4.6 s,
+  0 failed transactions.
+- **M-1:** those 8 were fulfilled 19–55 s after the burst started (one
+  `fulfill()` per ledger from the single operator account), with no
+  sequence-number errors.
+- **Recovery:** a request made while the worker was stopped was found by
+  event-based reconciliation after the restart and fulfilled 13.5 s later.
+- **L-1:** all of these use the contract-bound `alpha`.
+
+Not re-run on the final build: the fulfillment-deadline drill, key rotation
+and the consumer callback path. Their contract logic did not change between
+the builds; the earlier runs are above and in `V2_SECURITY_MODEL.md`.
 
 ## What would still be worth an outside look
 
-An independent review of the same code, a decision on M-3, typed contract
-errors (I-1), and higher worker throughput (M-1) before high-volume use.
+An independent review of the same code, typed contract errors (I-1), and higher worker throughput (M-1) before high-volume use.

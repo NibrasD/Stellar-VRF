@@ -151,6 +151,7 @@
       ]
     ],
     [],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -161,7 +162,7 @@
               "function_name": "fulfill",
               "args": [
                 {
-                  "u64": "1"
+                  "u64": "11820348816926469073"
                 },
                 {
                   "map": [
@@ -170,7 +171,7 @@
                         "symbol": "alpha_seed"
                       },
                       "val": {
-                        "bytes": "7beb6ec732b9ac655bdaed2a71f98dad0a02b03f2a577e858d2d80c9fa847dcb"
+                        "bytes": "d684b69aa58523bc4f2f6f3692727c6177745c7bc399bc066902c28b8ce54b1f"
                       }
                     },
                     {
@@ -178,7 +179,7 @@
                         "symbol": "beta_output"
                       },
                       "val": {
-                        "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
+                        "bytes": "e939efba99418b31b219a2abde1de7cc79b3f39d9f386f28d3867658429c7a4b"
                       }
                     },
                     {
@@ -202,7 +203,7 @@
                         "symbol": "gamma_point"
                       },
                       "val": {
-                        "bytes": "0baf7be530b5c4aa4d35a2cc07780cafe13c7c4e0a975a1685d4b0c30b82f13f146a31ea7e8d16338e48f808ba492b5f03d22b8ab3490799fe2883f951708207dacc86cf04bcd9ea27431d1d2377ca71132b4da7352cf34df28677abd4654693"
+                        "bytes": "0b5a8b2524e5218d46b6b356a248b85e649e6ff553012795056c76f742e9795c4bc7726c2a26d4ccc0f8bfe8cca75b9c0e2aac04f06987e09502ddb7330e9c8862c421a610a615952a89395e3a537c3d26a4a7a3f5256fdf56dc3d8e4b6d11d4"
                       }
                     }
                   ]
@@ -345,13 +346,13 @@
                     "symbol": "Beta"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
-                "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
+                "bytes": "e939efba99418b31b219a2abde1de7cc79b3f39d9f386f28d3867658429c7a4b"
               }
             }
           },
@@ -436,7 +437,7 @@
                     "symbol": "Fulfilled"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -460,10 +461,37 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "Nonce"
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u64": "1"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 519400
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "Proof"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -475,7 +503,7 @@
                       "symbol": "alpha_seed"
                     },
                     "val": {
-                      "bytes": "7beb6ec732b9ac655bdaed2a71f98dad0a02b03f2a577e858d2d80c9fa847dcb"
+                      "bytes": "d684b69aa58523bc4f2f6f3692727c6177745c7bc399bc066902c28b8ce54b1f"
                     }
                   },
                   {
@@ -483,7 +511,7 @@
                       "symbol": "beta_output"
                     },
                     "val": {
-                      "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
+                      "bytes": "e939efba99418b31b219a2abde1de7cc79b3f39d9f386f28d3867658429c7a4b"
                     }
                   },
                   {
@@ -507,7 +535,7 @@
                       "symbol": "gamma_point"
                     },
                     "val": {
-                      "bytes": "0baf7be530b5c4aa4d35a2cc07780cafe13c7c4e0a975a1685d4b0c30b82f13f146a31ea7e8d16338e48f808ba492b5f03d22b8ab3490799fe2883f951708207dacc86cf04bcd9ea27431d1d2377ca71132b4da7352cf34df28677abd4654693"
+                      "bytes": "0b5a8b2524e5218d46b6b356a248b85e649e6ff553012795056c76f742e9795c4bc7726c2a26d4ccc0f8bfe8cca75b9c0e2aac04f06987e09502ddb7330e9c8862c421a610a615952a89395e3a537c3d26a4a7a3f5256fdf56dc3d8e4b6d11d4"
                     }
                   }
                 ]
@@ -531,7 +559,7 @@
                     "symbol": "RequestContext"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -558,7 +586,7 @@
                     "symbol": "RequestEpoch"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -585,7 +613,7 @@
                     "symbol": "RequestRound"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -612,7 +640,7 @@
                     "symbol": "Requester"
                   },
                   {
-                    "u64": "1"
+                    "u64": "11820348816926469073"
                   }
                 ]
               },
@@ -675,18 +703,6 @@
                       },
                       "val": {
                         "u32": 2
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "Counter"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "u64": "1"
                       }
                     },
                     {
@@ -835,10 +851,10 @@
                   "storage": [
                     {
                       "key": {
-                        "u64": "1"
+                        "u64": "11820348816926469073"
                       },
                       "val": {
-                        "bytes": "e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab48"
+                        "bytes": "e939efba99418b31b219a2abde1de7cc79b3f39d9f386f28d3867658429c7a4b"
                       }
                     }
                   ]

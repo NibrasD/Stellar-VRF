@@ -90,8 +90,19 @@ fn setup() -> T {
     setup_with_fee(0)
 }
 
+/// Requests in these tests come from one fixed account, because a request id
+/// is derived from the requester and its nonce and the proof fixtures are
+/// bound to ids `FIX_ID1` (nonce 0) and `FIX_ID2` (nonce 1).
+const FIX_REQUESTER: &str = "CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR";
+const FIX_ID1: u64 = 7450777608292806116;
+const FIX_ID2: u64 = 12819282031553731624;
+
+fn requester(t: &T) -> Address {
+    Address::from_str(&t.env, FIX_REQUESTER)
+}
+
 fn funded_requester(t: &T) -> Address {
-    let r = Address::generate(&t.env);
+    let r = requester(t);
     StellarAssetClient::new(&t.env, &t.token).mint(&r, &(FEE * 10));
     r
 }
@@ -122,6 +133,36 @@ fn e1_proof(env: &Env) -> BlsVrfProof {
 /// Valid proof for request #2 in epoch 2.
 fn e2_proof(env: &Env) -> BlsVrfProof {
     proof(env, &E2_ALPHA, &E2_GAMMA, &E2_BETA)
+}
+
+/// A valid proof for any request, computed with the Soroban host from the
+/// same public layout the worker uses. For requests whose id is not one of the
+/// noble-generated fixtures (e.g. requests made by a consumer contract).
+fn host_proof(t: &T, id: u64, epoch_id: u32, sk: &[u8; 32]) -> BlsVrfProof {
+    use soroban_sdk::xdr::ToXdr;
+    let env = &t.env;
+    let sig = Bytes::from_slice(env, &FIX_DRAND_SIG);
+    let mut input = Bytes::from_slice(env, crate::ALPHA_DOMAIN);
+    input.append(&t.client.address.clone().to_xdr(env));
+    input.append(&Bytes::from_slice(env, &id.to_be_bytes()));
+    input.append(&t.client.get_context(&id));
+    input.append(&Bytes::from_slice(env, &ROUND.to_be_bytes()));
+    input.append(&Bytes::from_slice(
+        env,
+        &env.crypto().sha256(&sig).to_array(),
+    ));
+    input.append(&Bytes::from_slice(env, &epoch_id.to_be_bytes()));
+    let alpha = env.crypto().sha256(&input).to_array();
+    let bls = env.crypto().bls12_381();
+    let h = bls.hash_to_g1(
+        &Bytes::from_slice(env, &alpha),
+        &Bytes::from_slice(env, VRF_DST),
+    );
+    let gamma = bls.g1_mul(&h, &fr(env, sk)).to_bytes().to_array();
+    let mut beta_in = Bytes::from_slice(env, b"VREP_BETA_V1");
+    beta_in.append(&Bytes::from_slice(env, &gamma));
+    let beta = env.crypto().sha256(&beta_in).to_array();
+    proof(env, &alpha, &gamma, &beta)
 }
 
 fn fr(env: &Env, sk: &[u8; 32]) -> Bls12381Fr {
@@ -361,7 +402,7 @@ fn test_request_binds_round_epoch_and_escrows_fee() {
     let r = funded_requester(&t);
     let before = balance(&t, &r);
     let id = t.client.request(&ctx(&t.env), &r);
-    assert_eq!(id, 1);
+    assert_eq!(id, FIX_ID1);
     assert_eq!(t.client.request_round(&id), ROUND);
     assert_eq!(t.client.request_epoch(&id), 1);
     assert_eq!(t.client.requester_of(&id), r);
@@ -371,13 +412,59 @@ fn test_request_binds_round_epoch_and_escrows_fee() {
     assert!(t.client.callback_of(&id).is_none());
     assert_eq!(balance(&t, &r), before - FEE);
     assert_eq!(balance(&t, &t.client.address), FEE);
-    assert_eq!(t.client.request(&ctx(&t.env), &r), 2);
+    assert_eq!(t.client.request(&ctx(&t.env), &r), FIX_ID2);
+}
+
+// ── Request ids (audit finding M-3) ─────────────────────────────────────────
+
+#[test]
+fn test_request_ids_do_not_depend_on_other_requesters() {
+    // The id of A's n-th request is the same whether or not B requested
+    // first. This is what lets several requesters succeed in one ledger: each
+    // transaction can declare its storage keys without knowing about the others.
+    let a = |t: &T| requester(t);
+    let b = |t: &T| {
+        Address::from_str(
+            &t.env,
+            "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+        )
+    };
+
+    let t1 = setup();
+    let a1 = t1.client.request(&ctx(&t1.env), &a(&t1));
+    let b1 = t1.client.request(&ctx(&t1.env), &b(&t1));
+    let a2 = t1.client.request(&ctx(&t1.env), &a(&t1));
+
+    let t2 = setup();
+    let b1x = t2.client.request(&ctx(&t2.env), &b(&t2));
+    let a1x = t2.client.request(&ctx(&t2.env), &a(&t2));
+    let a2x = t2.client.request(&ctx(&t2.env), &a(&t2));
+
+    assert_eq!((a1, a2, b1), (a1x, a2x, b1x));
+    assert_eq!((a1, a2), (FIX_ID1, FIX_ID2));
+    assert!(a1 != b1 && a1 != a2 && a2 != b1);
+}
+
+#[test]
+fn test_request_id_collision_skips_to_next_nonce() {
+    // Simulate another request already holding the id this requester would
+    // get. The request must still succeed, under the next free id.
+    let t = setup();
+    t.env.as_contract(&t.client.address, || {
+        t.env
+            .storage()
+            .persistent()
+            .set(&DataKey::Requester(FIX_ID1), &Address::generate(&t.env));
+    });
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
+    assert_eq!(id, FIX_ID2);
+    assert_eq!(t.client.requester_of(&id), requester(&t));
 }
 
 #[test]
 fn test_request_does_not_write_default_flags() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env.as_contract(&t.client.address, || {
         assert!(!t.env.storage().persistent().has(&DataKey::Fulfilled(id)));
         assert!(!t.env.storage().persistent().has(&DataKey::Refunded(id)));
@@ -387,7 +474,7 @@ fn test_request_does_not_write_default_flags() {
 #[test]
 fn test_request_event_carries_epoch_and_round() {
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     let id = t.client.request(&ctx(&t.env), &r);
     let data = last_event_data(&t);
     let (eid, who, epoch, round): (u64, Address, u32, u64) =
@@ -400,7 +487,7 @@ fn test_request_event_carries_epoch_and_round() {
 fn test_request_oversized_context_rejected() {
     let t = setup();
     let big = Bytes::from_slice(&t.env, &[0u8; 1025]);
-    t.client.request(&big, &Address::generate(&t.env));
+    t.client.request(&big, &requester(&t));
 }
 
 #[test]
@@ -419,7 +506,7 @@ fn test_request_with_callback_requester_mismatch_rejected() {
 #[should_panic(expected = "callback_fn must be 'on_vrf'")]
 fn test_request_with_callback_wrong_fn_rejected() {
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     t.client
         .request_with_callback(&ctx(&t.env), &r, &r, &Symbol::new(&t.env, "steal"));
 }
@@ -427,12 +514,13 @@ fn test_request_with_callback_wrong_fn_rejected() {
 #[test]
 fn test_requests_paused_while_upgrade_pending() {
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     t.client
         .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
     assert!(t.client.try_request(&ctx(&t.env), &r).is_err());
     t.client.cancel_upgrade(&t.admin);
-    assert_eq!(t.client.request(&ctx(&t.env), &r), 1);
+    // The rejected request did not consume a nonce.
+    assert_eq!(t.client.request(&ctx(&t.env), &r), FIX_ID1);
 }
 
 #[test]
@@ -440,13 +528,13 @@ fn test_requests_paused_while_upgrade_pending() {
 fn test_revoked_active_epoch_blocks_requests() {
     let t = setup();
     t.client.revoke_epoch(&t.admin, &1);
-    t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.request(&ctx(&t.env), &requester(&t));
 }
 
 #[test]
 fn test_epoch_ttl_is_extended_by_requests() {
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     let ttl = |t: &T| {
         t.env.as_contract(&t.client.address, || {
             t.env.storage().persistent().get_ttl(&DataKey::Epoch(1))
@@ -488,7 +576,7 @@ fn test_fulfill_real_proof_succeeds_and_pays_operator() {
 #[test]
 fn test_fulfill_requires_operator_auth() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env.set_auths(&[]);
     assert!(t.client.try_fulfill(&id, &e1_proof(&t.env)).is_err());
     assert!(!t.client.is_fulfilled(&id));
@@ -497,7 +585,7 @@ fn test_fulfill_requires_operator_auth() {
 #[test]
 fn test_fulfill_records_operator_auth() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.fulfill(&id, &e1_proof(&t.env));
     let auths = t.env.auths();
     assert_eq!(auths.len(), 1);
@@ -508,7 +596,7 @@ fn test_fulfill_records_operator_auth() {
 #[should_panic(expected = "already fulfilled")]
 fn test_fulfill_duplicate_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.fulfill(&id, &e1_proof(&t.env));
     t.client.fulfill(&id, &e1_proof(&t.env));
 }
@@ -524,7 +612,7 @@ fn test_fulfill_unknown_request_rejected() {
 #[should_panic(expected = "drand round mismatch")]
 fn test_fulfill_wrong_round_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     let mut p = e1_proof(&t.env);
     p.drand_round = ROUND + 1;
     t.client.fulfill(&id, &p);
@@ -534,7 +622,7 @@ fn test_fulfill_wrong_round_rejected() {
 #[should_panic(expected = "drand signature verification failed")]
 fn test_fulfill_forged_drand_signature_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     let mut p = e1_proof(&t.env);
     // A valid G1 point that is not drand's signature (the alpha-derived gamma).
     p.drand_signature = BytesN::from_array(&t.env, &E2_GAMMA);
@@ -545,7 +633,7 @@ fn test_fulfill_forged_drand_signature_rejected() {
 #[should_panic(expected = "alpha seed mismatch")]
 fn test_fulfill_tampered_alpha_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     let mut a = E1_ALPHA;
     a[0] ^= 1;
     t.client
@@ -557,7 +645,7 @@ fn test_fulfill_tampered_alpha_rejected() {
 fn test_fulfill_other_request_proof_rejected() {
     // A valid proof for request #1 cannot be replayed on request #2.
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     t.client.request(&ctx(&t.env), &r);
     let id2 = t.client.request(&ctx(&t.env), &r);
     t.client.fulfill(&id2, &e1_proof(&t.env));
@@ -568,7 +656,7 @@ fn test_fulfill_other_request_proof_rejected() {
 fn test_fulfill_gamma_from_wrong_key_rejected() {
     // Correct alpha, but gamma computed with the epoch-2 key.
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     let env = &t.env;
     let bls = env.crypto().bls12_381();
     let h = bls.hash_to_g1(
@@ -584,7 +672,7 @@ fn test_fulfill_gamma_from_wrong_key_rejected() {
 #[should_panic(expected = "beta output mismatch")]
 fn test_fulfill_tampered_beta_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     let mut b = E1_BETA;
     b[31] ^= 1;
     t.client
@@ -595,7 +683,7 @@ fn test_fulfill_tampered_beta_rejected() {
 #[should_panic(expected = "epoch revoked")]
 fn test_fulfill_revoked_epoch_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.revoke_epoch(&t.admin, &1);
     t.client.fulfill(&id, &e1_proof(&t.env));
 }
@@ -604,7 +692,7 @@ fn test_fulfill_revoked_epoch_rejected() {
 #[should_panic(expected = "request refunded")]
 fn test_fulfill_after_refund_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env
         .ledger()
         .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
@@ -620,7 +708,7 @@ fn test_fulfill_and_refund_windows_are_disjoint() {
     // succeed. Otherwise a requester could watch a late fulfill transaction
     // and refund first whenever it dislikes the output.
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     let id = t.client.request(&ctx(&t.env), &r);
 
     // Last round of the fulfillment window: refund is rejected, fulfill works.
@@ -636,7 +724,7 @@ fn test_fulfill_and_refund_windows_are_disjoint() {
 #[should_panic(expected = "fulfillment window closed")]
 fn test_fulfill_after_window_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env
         .ledger()
         .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
@@ -649,7 +737,7 @@ fn test_late_valid_proof_cannot_beat_refund() {
     // refund goes through. No ordering of the two transactions lets the
     // requester pick between "accept this output" and "refund".
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env
         .ledger()
         .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
@@ -684,8 +772,11 @@ fn test_proof_for_another_deployment_rejected() {
         ),
     );
     let other = VRFOracleContractClient::new(&t.env, &other);
-    let id = other.request(&ctx(&t.env), &Address::generate(&t.env));
-    assert_eq!(id, 1);
+    let id = other.request(&ctx(&t.env), &requester(&t));
+    assert_eq!(
+        id, FIX_ID1,
+        "nonces are per contract: same id as on the first"
+    );
     assert_eq!(other.request_round(&id), ROUND);
     other.fulfill(&id, &e1_proof(&t.env));
 }
@@ -738,12 +829,13 @@ fn test_fulfill_does_not_run_callback_and_deliver_does() {
     );
     assert!(t.client.callback_of(&id).is_some());
 
-    t.client.fulfill(&id, &e1_proof(&t.env));
+    let p = host_proof(&t, id, 1, &E1_SK);
+    t.client.fulfill(&id, &p);
     assert!(cc.got(&id).is_none(), "fulfill must not run consumer code");
     assert!(t.client.callback_of(&id).is_some());
 
     t.client.deliver(&id);
-    assert_eq!(cc.got(&id), Some(BytesN::from_array(&t.env, &E1_BETA)));
+    assert_eq!(cc.got(&id), Some(p.beta_output.clone()));
     assert!(t.client.callback_of(&id).is_none());
     assert!(t.client.try_deliver(&id).is_err(), "delivered only once");
 }
@@ -758,10 +850,11 @@ fn test_failing_callback_cannot_undo_result_and_stays_retryable() {
         &consumer,
         &Symbol::new(&t.env, "on_vrf"),
     );
-    t.client.fulfill(&id, &e1_proof(&t.env));
+    let p = host_proof(&t, id, 1, &E1_SK);
+    t.client.fulfill(&id, &p);
     assert!(t.client.try_deliver(&id).is_err());
     assert!(t.client.is_fulfilled(&id));
-    assert_eq!(t.client.get_beta(&id), BytesN::from_array(&t.env, &E1_BETA));
+    assert_eq!(t.client.get_beta(&id), p.beta_output);
     assert!(t.client.callback_of(&id).is_some(), "still pending");
     // The request is final: it can no longer be refunded.
     t.env
@@ -794,21 +887,22 @@ fn test_cleanup_waits_for_delivery_and_keeps_beta() {
         &consumer,
         &Symbol::new(&t.env, "on_vrf"),
     );
-    t.client.fulfill(&id, &e1_proof(&t.env));
+    let p = host_proof(&t, id, 1, &E1_SK);
+    t.client.fulfill(&id, &p);
     // The operator cannot cancel delivery by cleaning up first.
     assert!(t.client.try_cleanup_proof(&id, &t.operator).is_err());
     t.client.deliver(&id);
     t.client.cleanup_proof(&id, &t.operator);
     assert!(t.client.try_get_proof(&id).is_err());
     assert!(t.client.is_fulfilled(&id));
-    assert_eq!(t.client.get_beta(&id), BytesN::from_array(&t.env, &E1_BETA));
+    assert_eq!(t.client.get_beta(&id), p.beta_output);
 }
 
 #[test]
 #[should_panic(expected = "only requester or oracle can cleanup")]
 fn test_cleanup_by_stranger_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.fulfill(&id, &e1_proof(&t.env));
     t.client.cleanup_proof(&id, &Address::generate(&t.env));
 }
@@ -821,7 +915,7 @@ fn test_cleanup_by_stranger_rejected() {
 #[should_panic(expected = "timeout window not reached")]
 fn test_timeout_refund_too_early() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env
         .ledger()
         .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS));
@@ -863,7 +957,7 @@ fn test_timeout_refund_permissionless_after_expiry() {
 #[test]
 fn test_timeout_refund_before_expiry_fails_without_requester_auth() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env
         .ledger()
         .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
@@ -875,7 +969,7 @@ fn test_timeout_refund_before_expiry_fails_without_requester_auth() {
 #[should_panic(expected = "already refunded")]
 fn test_timeout_refund_double_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.env
         .ledger()
         .set_timestamp(ts_of_round(ROUND + TIMEOUT_ROUNDS + 1));
@@ -887,7 +981,7 @@ fn test_timeout_refund_double_rejected() {
 #[should_panic(expected = "already fulfilled")]
 fn test_timeout_refund_after_fulfill_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.fulfill(&id, &e1_proof(&t.env));
     t.env
         .ledger()
@@ -912,7 +1006,7 @@ fn test_emergency_refund_on_revoked_epoch() {
 #[should_panic(expected = "emergency refund only for revoked epochs")]
 fn test_emergency_refund_on_active_epoch_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.emergency_refund(&id);
 }
 
@@ -923,7 +1017,7 @@ fn test_emergency_refund_on_active_epoch_rejected() {
 #[test]
 fn test_rotation_keeps_pending_requests_on_their_epoch() {
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     // Request #1 is bound to epoch 1 before the rotation.
     let id1 = t.client.request(&ctx(&t.env), &r);
     let op2 = rotate_to_e2(&t);
@@ -952,7 +1046,7 @@ fn test_new_key_cannot_fulfill_old_epoch_request() {
     // The heart of the epoch design: rotating keys cannot change the output
     // of a request created before the rotation.
     let t = setup();
-    let id1 = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id1 = t.client.request(&ctx(&t.env), &requester(&t));
     rotate_to_e2(&t);
     let env = &t.env;
     let bls = env.crypto().bls12_381();
@@ -1088,7 +1182,7 @@ fn test_many_rotations_with_abandoned_requests() {
     // Regression: abandoned (never fulfilled, never refunded) requests must not
     // be able to block key rotation.
     let t = setup();
-    let r = Address::generate(&t.env);
+    let r = requester(&t);
     let keys = [&TEST_G2_TIMES_2, &TEST_G2_TIMES_3, &E2_PK];
     let sks: [[u8; 32]; 3] = [
         {
@@ -1146,7 +1240,7 @@ fn test_revocation_survives_rotation_and_cancels_pending() {
     t.client.execute_key_rotation(&t.admin);
     assert_eq!(t.client.epoch_status(&1), EpochStatus::Revoked);
     assert_eq!(t.client.current_epoch_id(), 3);
-    t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    t.client.request(&ctx(&t.env), &requester(&t));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1224,11 +1318,8 @@ pub(crate) const VEC_DOMAIN_CARD1_1000: u64 = 595;
 #[test]
 fn test_derive_vectors_shared_with_sdks() {
     let t = setup();
-    let r = Address::generate(&t.env);
-    let mut id = 0;
-    while id < VEC_REQUEST_ID {
-        id = t.client.request(&Bytes::from_slice(&t.env, b"vec"), &r);
-    }
+    // Derivations depend only on (request id, beta): seed them directly.
+    let id = VEC_REQUEST_ID;
     let mut beta = [0u8; 32];
     for (i, b) in beta.iter_mut().enumerate() {
         *b = i as u8;
@@ -1252,7 +1343,7 @@ fn test_derive_vectors_shared_with_sdks() {
 #[test]
 fn test_derive_from_real_fulfillment() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.fulfill(&id, &e1_proof(&t.env));
     for max in [1u64, 2, 6, 1000, u64::MAX] {
         let v = t.client.derive_random_in_range(&id, &max);
@@ -1272,7 +1363,7 @@ fn test_derive_from_real_fulfillment() {
 #[should_panic(expected = "request not yet fulfilled")]
 fn test_derive_requires_fulfillment() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.derive_random(&id);
 }
 
@@ -1280,7 +1371,7 @@ fn test_derive_requires_fulfillment() {
 #[should_panic(expected = "max must be > 0")]
 fn test_derive_zero_max_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     seed_beta(&t, id, [1; 32]);
     t.client.derive_random_in_range(&id, &0);
 }
@@ -1289,7 +1380,7 @@ fn test_derive_zero_max_rejected() {
 #[should_panic(expected = "domain exceeds maximum length")]
 fn test_derive_long_domain_rejected() {
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     seed_beta(&t, id, [1; 32]);
     let domain = Bytes::from_slice(&t.env, &[0x41u8; crate::MAX_DERIVE_DOMAIN_LEN as usize + 1]);
     t.client.derive_range_for_domain(&id, &domain, &10);
@@ -1355,22 +1446,22 @@ const E1_PK: [u8; 192] = [
 ];
 
 const E1_ALPHA: [u8; 32] = [
-    0x7b, 0xeb, 0x6e, 0xc7, 0x32, 0xb9, 0xac, 0x65, 0x5b, 0xda, 0xed, 0x2a, 0x71, 0xf9, 0x8d, 0xad,
-    0x0a, 0x02, 0xb0, 0x3f, 0x2a, 0x57, 0x7e, 0x85, 0x8d, 0x2d, 0x80, 0xc9, 0xfa, 0x84, 0x7d, 0xcb,
+    0x37, 0xe6, 0x63, 0xa0, 0x6f, 0x92, 0xf4, 0xb2, 0x5c, 0xed, 0xff, 0x36, 0xdd, 0x48, 0xe3, 0x70,
+    0xa7, 0x67, 0x15, 0x35, 0x56, 0xe0, 0x9c, 0xbb, 0x71, 0xbc, 0x82, 0x08, 0x0e, 0x61, 0x40, 0xa4,
 ];
 
 const E1_GAMMA: [u8; 96] = [
-    0x0b, 0xaf, 0x7b, 0xe5, 0x30, 0xb5, 0xc4, 0xaa, 0x4d, 0x35, 0xa2, 0xcc, 0x07, 0x78, 0x0c, 0xaf,
-    0xe1, 0x3c, 0x7c, 0x4e, 0x0a, 0x97, 0x5a, 0x16, 0x85, 0xd4, 0xb0, 0xc3, 0x0b, 0x82, 0xf1, 0x3f,
-    0x14, 0x6a, 0x31, 0xea, 0x7e, 0x8d, 0x16, 0x33, 0x8e, 0x48, 0xf8, 0x08, 0xba, 0x49, 0x2b, 0x5f,
-    0x03, 0xd2, 0x2b, 0x8a, 0xb3, 0x49, 0x07, 0x99, 0xfe, 0x28, 0x83, 0xf9, 0x51, 0x70, 0x82, 0x07,
-    0xda, 0xcc, 0x86, 0xcf, 0x04, 0xbc, 0xd9, 0xea, 0x27, 0x43, 0x1d, 0x1d, 0x23, 0x77, 0xca, 0x71,
-    0x13, 0x2b, 0x4d, 0xa7, 0x35, 0x2c, 0xf3, 0x4d, 0xf2, 0x86, 0x77, 0xab, 0xd4, 0x65, 0x46, 0x93,
+    0x15, 0x51, 0xef, 0xbb, 0x0d, 0xd6, 0x2c, 0xb6, 0x02, 0x52, 0x0b, 0xe4, 0xa8, 0xdb, 0x15, 0xbe,
+    0x55, 0x26, 0xb3, 0x42, 0x25, 0x89, 0x66, 0x5d, 0xd5, 0x91, 0xa5, 0x29, 0x2f, 0x1a, 0x0f, 0x4e,
+    0x8a, 0xe5, 0x00, 0x67, 0xef, 0x05, 0x06, 0x68, 0x8b, 0x3e, 0x3b, 0x5d, 0xb7, 0xe6, 0xbd, 0x4f,
+    0x08, 0x6e, 0xfb, 0x0b, 0xee, 0x89, 0xa6, 0xbe, 0x7c, 0x26, 0x84, 0x2b, 0x07, 0x6f, 0x0d, 0x79,
+    0x30, 0xd8, 0xea, 0x70, 0x65, 0x30, 0xbe, 0x0b, 0x19, 0x04, 0x8f, 0xef, 0x4f, 0x53, 0x1b, 0xf1,
+    0x4f, 0x75, 0x5d, 0xaf, 0x60, 0xeb, 0xdf, 0x68, 0x5b, 0x7a, 0x1a, 0x81, 0xdb, 0x57, 0xaf, 0x6b,
 ];
 
 const E1_BETA: [u8; 32] = [
-    0xe3, 0x5a, 0x05, 0x18, 0x0a, 0xc9, 0xba, 0xaf, 0x2e, 0x75, 0x41, 0x9f, 0xa3, 0xbc, 0x8e, 0xa4,
-    0xe8, 0x77, 0xa0, 0x07, 0x7c, 0x24, 0x18, 0x45, 0x05, 0xf2, 0x65, 0x7f, 0xce, 0xfe, 0xab, 0x48,
+    0xeb, 0x8b, 0x5a, 0x76, 0x70, 0xd1, 0x58, 0xaa, 0x89, 0xe1, 0x49, 0x7e, 0xca, 0xc0, 0x0e, 0x0c,
+    0x77, 0xe2, 0x01, 0xab, 0xa4, 0xc4, 0xda, 0x41, 0x68, 0x16, 0x25, 0xd5, 0x01, 0xe6, 0x53, 0x6d,
 ];
 
 const E2_SK: [u8; 32] = [
@@ -1394,22 +1485,22 @@ const E2_PK: [u8; 192] = [
 ];
 
 const E2_ALPHA: [u8; 32] = [
-    0x1b, 0x61, 0x0e, 0x41, 0x4d, 0xd8, 0x6c, 0x6d, 0xc8, 0xd8, 0xf9, 0x33, 0x1f, 0xd0, 0x26, 0xc7,
-    0x54, 0xa2, 0x7c, 0x48, 0x5c, 0x6d, 0x53, 0xe5, 0xfa, 0x0e, 0xf6, 0x2b, 0x73, 0xd0, 0x39, 0x96,
+    0xb8, 0xbc, 0x17, 0x6d, 0x03, 0x3e, 0xe8, 0xb9, 0x42, 0x83, 0x74, 0xb9, 0xe5, 0x29, 0x0c, 0x9a,
+    0xd5, 0x87, 0x46, 0x9e, 0x8b, 0xaa, 0xc7, 0x61, 0x2c, 0x82, 0x16, 0x3f, 0xcc, 0x43, 0xdb, 0xcc,
 ];
 
 const E2_GAMMA: [u8; 96] = [
-    0x04, 0xf8, 0xf9, 0x57, 0x02, 0x3f, 0xa0, 0xe4, 0x28, 0x49, 0x88, 0xaf, 0x15, 0xc3, 0x08, 0xcf,
-    0x0f, 0xf2, 0xd6, 0xed, 0xf2, 0xa7, 0x30, 0x91, 0xad, 0xa3, 0x3e, 0x48, 0xb4, 0x44, 0x18, 0x6b,
-    0xbf, 0xf3, 0x98, 0x79, 0x25, 0x96, 0x0b, 0x3e, 0xbd, 0xa4, 0x97, 0x56, 0xe3, 0x4e, 0x4e, 0x54,
-    0x0b, 0xe9, 0x96, 0x27, 0x7c, 0x2e, 0x8b, 0xae, 0x52, 0xc7, 0xf1, 0x73, 0x90, 0x79, 0x91, 0x8b,
-    0x9b, 0xc8, 0x62, 0x48, 0xde, 0xd5, 0x46, 0xe8, 0x79, 0x9b, 0x73, 0x0b, 0x7c, 0x46, 0x22, 0x65,
-    0xa0, 0x09, 0xc1, 0x52, 0x1d, 0xaf, 0x4b, 0xcd, 0x9d, 0x1a, 0x7e, 0x1f, 0x40, 0x79, 0xec, 0xc5,
+    0x03, 0x6d, 0x9d, 0xe5, 0xbb, 0xd0, 0x1d, 0x67, 0xa3, 0x77, 0x37, 0xdd, 0x46, 0x04, 0x09, 0xcc,
+    0x4b, 0xbb, 0x8f, 0x69, 0x0b, 0xf4, 0xcc, 0x2b, 0xd7, 0x8e, 0x1f, 0x6b, 0xef, 0x75, 0x06, 0x2a,
+    0x6e, 0x06, 0x7b, 0xfa, 0x47, 0x4c, 0x3b, 0x7a, 0x1f, 0xb7, 0x34, 0x05, 0xd5, 0x1f, 0xba, 0x5f,
+    0x00, 0xe7, 0x3b, 0x0f, 0xbd, 0x54, 0xe2, 0x76, 0xf2, 0x8b, 0x03, 0xd2, 0xd4, 0xb1, 0x3c, 0x99,
+    0xbe, 0x57, 0x9e, 0xec, 0x0c, 0xaf, 0x31, 0xdc, 0xac, 0x21, 0x35, 0x11, 0xb3, 0x64, 0x2c, 0xe9,
+    0x5c, 0x57, 0x6f, 0xb1, 0x84, 0xb6, 0x4a, 0x50, 0xbe, 0xd1, 0x7b, 0xda, 0x0b, 0x7f, 0x91, 0xa5,
 ];
 
 const E2_BETA: [u8; 32] = [
-    0x46, 0x46, 0xff, 0x6c, 0x79, 0x8c, 0xa2, 0xae, 0xf2, 0x14, 0xd4, 0x03, 0x62, 0x9a, 0x85, 0x98,
-    0x37, 0x49, 0x97, 0xba, 0x87, 0x9a, 0x2c, 0xa4, 0xfb, 0xd1, 0xde, 0x19, 0xfd, 0x28, 0xcc, 0x4b,
+    0xaa, 0x2a, 0x5c, 0x0f, 0xdf, 0x86, 0x58, 0x98, 0xd5, 0x59, 0x5f, 0x49, 0x50, 0xab, 0x72, 0x15,
+    0x79, 0x6c, 0x17, 0xdf, 0x42, 0xb4, 0x96, 0xbd, 0xee, 0x56, 0x6e, 0x85, 0x0a, 0xf7, 0x6e, 0x76,
 ];
 
 #[test]
@@ -1473,13 +1564,13 @@ fn test_pop_from_operator_tool_accepted() {
 
 /// The V2 `fulfill` event value, byte for byte. The same hex is parsed by the
 /// Rust SDK (`test_parse_v2_event_vectors`) and was built with stellar-sdk JS.
-const EVT_FULFILL_V2_XDR_HEX: &str = "0000001000000001000000030000000500000000000000010000000d00000020e35a05180ac9baaf2e75419fa3bc8ea4e877a0077c24184505f2657fcefeab480000000300000001";
+const EVT_FULFILL_V2_XDR_HEX: &str = "0000001000000001000000030000000567667ac242ba2de40000000d00000020eb8b5a7670d158aa89e1497ecac00e0c77e201aba4c4da41681625d501e6536d0000000300000001";
 
 #[test]
 fn test_fulfill_event_wire_format_v2() {
     use soroban_sdk::xdr::{Limits, WriteXdr};
     let t = setup();
-    let id = t.client.request(&ctx(&t.env), &Address::generate(&t.env));
+    let id = t.client.request(&ctx(&t.env), &requester(&t));
     t.client.fulfill(&id, &e1_proof(&t.env));
     let evs = t.env.events().all().filter_by_contract(&t.client.address);
     let e = evs.events().last().unwrap().clone();

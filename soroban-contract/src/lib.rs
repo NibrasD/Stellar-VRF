@@ -49,6 +49,8 @@ const POP_BLS_DST: &[u8] = b"SOROBAN_VRF_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_";
 pub const POP_DOMAIN: &[u8] = b"STELLAR_VRF_BLS_POP_V2";
 /// Prefix of the alpha pre-image. See [`derive_expected_alpha`].
 pub const ALPHA_DOMAIN: &[u8] = b"STELLAR_VRF_ALPHA_V2";
+/// Prefix of the request-id pre-image. See [`allocate_request_id`].
+pub const REQUEST_ID_DOMAIN: &[u8] = b"STELLAR_VRF_REQUEST_ID_V2";
 const BETA_DOMAIN: &[u8] = b"VREP_BETA_V1";
 /// Domain tag for every value derived from a stored beta.
 const DERIVE_DOMAIN: &[u8] = b"VREP_DERIVE_V2";
@@ -171,7 +173,6 @@ pub enum DataKey {
     DrandGenesis,
     DrandPeriod,
     RoundOffset,
-    Counter,
     FeeToken,
     FeeAmount,
     EpochCounter,
@@ -200,6 +201,10 @@ pub enum DataKey {
     Beta(u64),
     /// Present while a callback is registered and not yet delivered.
     CallbackContract(u64),
+
+    // ── Persistent Storage (per-requester) ───────────────────
+    /// Number of request ids this requester has consumed.
+    Nonce(Address),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -280,7 +285,6 @@ impl VRFOracleContract {
         inst.set(&DataKey::DrandGenesis, &drand_genesis_time);
         inst.set(&DataKey::DrandPeriod, &drand_period);
         inst.set(&DataKey::RoundOffset, &round_offset);
-        inst.set(&DataKey::Counter, &0u64);
         inst.set(&DataKey::FeeToken, &fee_token);
         inst.set(&DataKey::FeeAmount, &fee_amount);
         inst.set(&DataKey::EpochCounter, &1u32);
@@ -1411,6 +1415,48 @@ fn verify_drand_signature(env: &Env, proof: &BlsVrfProof, drand_pk: &BytesN<192>
     )
 }
 
+/// Allocate the id of a new request:
+/// `first 8 bytes of sha256(REQUEST_ID_DOMAIN ‖ xdr(requester) ‖ nonce_be)`.
+///
+/// The id depends only on the requester and its own nonce, never on what other
+/// requesters do. This matters on Soroban: a transaction must declare the
+/// storage keys it touches when it is simulated, and the keys of a request
+/// contain its id. With ids from a global counter, every `request()` simulated
+/// against the same state declared the same "next id", and only one of them
+/// could succeed per ledger.
+///
+/// Ids are therefore not sequential. If an id is already taken (a 64-bit
+/// collision, about 2^-64 per pair) or is 0, the nonce is advanced until a
+/// free one is found, so a collision can never block a requester.
+fn allocate_request_id(env: &Env, requester: &Address) -> u64 {
+    let nonce_key = DataKey::Nonce(requester.clone());
+    let mut nonce: u64 = env.storage().persistent().get(&nonce_key).unwrap_or(0);
+    let requester_xdr = requester.clone().to_xdr(env);
+    let id = loop {
+        let mut input = Bytes::from_slice(env, REQUEST_ID_DOMAIN);
+        input.append(&requester_xdr);
+        input.append(&u64_be_bytes(env, nonce));
+        let hash = env.crypto().sha256(&input).to_array();
+        let mut first = [0u8; 8];
+        first.copy_from_slice(&hash[0..8]);
+        let candidate = u64::from_be_bytes(first);
+        nonce = nonce
+            .checked_add(1)
+            .unwrap_or_else(|| panic!("nonce overflow"));
+        if candidate != 0
+            && !env
+                .storage()
+                .persistent()
+                .has(&DataKey::Requester(candidate))
+        {
+            break candidate;
+        }
+    };
+    env.storage().persistent().set(&nonce_key, &nonce);
+    bump_persistent(env, &nonce_key);
+    id
+}
+
 fn request_internal(env: &Env, context: Bytes, requester: Address, with_callback: bool) -> u64 {
     requester.require_auth();
 
@@ -1434,12 +1480,7 @@ fn request_internal(env: &Env, context: Bytes, requester: Address, with_callback
 
     transfer_fee(env, &requester, &env.current_contract_address());
 
-    let counter: u64 = inst_get(env, &DataKey::Counter, "counter missing");
-    let id = counter
-        .checked_add(1)
-        .unwrap_or_else(|| panic!("counter overflow"));
-    env.storage().instance().set(&DataKey::Counter, &id);
-
+    let id = allocate_request_id(env, &requester);
     let offset: u32 = inst_get(env, &DataKey::RoundOffset, "round offset missing");
     let required_round = current_round(env).saturating_add(offset as u64);
 

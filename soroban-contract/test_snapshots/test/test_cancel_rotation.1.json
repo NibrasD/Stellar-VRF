@@ -448,18 +448,6 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "Counter"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "u64": "0"
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
                             "symbol": "DrandGenesis"
                           }
                         ]
