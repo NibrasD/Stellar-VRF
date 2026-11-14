@@ -30,6 +30,9 @@ import {
   readFeeToken,
   readOracleBalance,
   readRequester,
+  readEpoch,
+  readRequestEpoch,
+  hasPendingCallback,
 } from "./listener.js";
 import { FeeGuard, feeGuardOptionsFromEnv, formatXlm, type Funding } from "./feeGuard.js";
 import { createSpendLedger, createPaidExposureLedger } from "./spendLedger.js";
@@ -42,10 +45,18 @@ import { readChainConfig } from "./listener.js";
 import {
   DRAND_GENESIS_TIME,
   DRAND_PUBLIC_KEY,
-  ORACLE_PUBLIC_KEY,
+  ORACLE_KEYS,
+  AUTO_DELIVER,
+  DELIVER_MAX_RESOURCE_FEE_STROOPS,
+  CONTRACT_ADDRESS,
+  TIMEOUT_ROUNDS,
+  WORKER_CONCURRENCY,
 } from "./config.js";
+import { KeyedMutex, mapLimit } from "./concurrency.js";
 import { Networks } from "@stellar/stellar-sdk";
-import { generateVrfProof, deriveBlsPublicKey } from "./vrf.js";
+import { generateVrfProof } from "./vrf.js";
+import { selectKeySet } from "./keys.js";
+import { deliverBestEffort } from "./deliver.js";
 import { submitFulfillment } from "./fulfiller.js";
 import { log, bytesToHex, sleep } from "./utils.js";
 import {
@@ -119,6 +130,21 @@ const sendAttempts = new SendAttemptTracker(sendAttemptOptionsFromEnv());
  */
 const RECONCILE_INTERVAL_MS = parseInt(process.env.RECONCILE_INTERVAL_MS || "120000", 10);
 
+/** Serializes on-chain submissions per signing account (sequence numbers). */
+const accountLocks = new KeyedMutex();
+
+/**
+ * The contract rejects fulfill() once the current drand round is past
+ * `required_round + TIMEOUT_ROUNDS` (after that the request can only be
+ * refunded). Stop two rounds early: the transaction still has to reach a
+ * ledger, and a doomed send only costs fees.
+ */
+const WINDOW_MARGIN_ROUNDS = 2;
+function fulfillWindowClosed(requiredRound: bigint): boolean {
+  const now = BigInt(computeCurrentRound(Date.now() / 1000));
+  return now > requiredRound + BigInt(TIMEOUT_ROUNDS - WINDOW_MARGIN_ROUNDS);
+}
+
 async function handleRequest(event: VrfRequestEvent): Promise<void> {
   // Double-check leadership before every request
   if (!isLeader()) {
@@ -131,6 +157,17 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
   // Guard against concurrent processing of the same request
   if (processingRequests.has(reqKey)) {
     log.info(`Request ${event.requestId} is already being processed, skipping.`);
+    return;
+  }
+
+  // Fulfillment window, checked before any RPC call: after a restart the
+  // listener replays up to a day of request events, and almost all of them
+  // are long past the point where fulfill() is accepted.
+  if (fulfillWindowClosed(event.requiredRound)) {
+    log.info(
+      `Request ${event.requestId} is past its fulfillment window (round ${event.requiredRound} + ` +
+        `${TIMEOUT_ROUNDS}); skipping. If still open it can be refunded with timeout_refund().`
+    );
     return;
   }
 
@@ -211,9 +248,44 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     );
     log.info(`  Context: ${bytesToHex(context).slice(0, 32)}… (${context.length} bytes)`);
 
-    // 4. Generate BLS-VRF proof
-    log.info(`  Generating BLS-VRF proof…`);
-    const proof = generateVrfProof(event.requestId, context, beacon);
+    // 4. Generate the BLS-VRF proof with the keys of the request's epoch.
+    // The epoch comes from the request event, or from storage for requests
+    // recovered by reconciliation. Never assume an epoch: a wrong one makes
+    // alpha differ and the proof is rejected.
+    const epochId =
+      event.epochId ??
+      (await withRetry(`request_epoch(${event.requestId})`, () =>
+        readRequestEpoch(server, event.requestId)
+      ));
+    if (epochId === null) {
+      throw new FulfillTerminalError(
+        `request ${event.requestId} has no RequestEpoch entry`,
+        "request_missing",
+        false
+      );
+    }
+    const epoch = await withRetry(`epoch(${epochId})`, () => readEpoch(server, epochId));
+    if (!epoch) {
+      throw new FulfillTerminalError(`Epoch(${epochId}) not found`, "epoch_missing", false);
+    }
+    if (epoch.status === "Revoked") {
+      throw new FulfillTerminalError(
+        `epoch ${epochId} is revoked; request ${event.requestId} can only be emergency_refund()ed`,
+        "epoch_revoked",
+        true
+      );
+    }
+    const keys = selectKeySet(ORACLE_KEYS, epoch);
+    if (!keys) {
+      throw new FulfillTerminalError(
+        `no configured key set serves epoch ${epochId} (operator ${epoch.oracleAddress}); ` +
+          `configure it as ORACLE_PREVIOUS_* to fulfill this request`,
+        "no_key_for_epoch",
+        false
+      );
+    }
+    log.info(`  Generating BLS-VRF proof (epoch ${epochId}, ${keys.label} keys)…`);
+    const proof = generateVrfProof(event.requestId, context, beacon, epochId, keys, CONTRACT_ADDRESS);
 
     // 5. Re-verify leadership immediately before spending money.
     //
@@ -242,10 +314,20 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     // ambiguous timeouts count against the budget. A FulfillAbortedError is
     // terminal — withFulfillRetry does not retry it.
     const sendFunding = funding;
-    const txHash = await withFulfillRetry(
+    // One submission at a time per signing account. Re-check the window once
+    // the lock is held: the request may have waited behind others.
+    const txHash = await accountLocks.run(keys.stellar.publicKey(), () => {
+      if (fulfillWindowClosed(event.requiredRound)) {
+        throw new FulfillTerminalError(
+          `request ${event.requestId} passed its fulfillment window while queued`,
+          "fulfill_window_closed",
+          true
+        );
+      }
+      return withFulfillRetry(
       `fulfill(${event.requestId})`,
       () =>
-        submitFulfillment(server, event.requestId, proof, isLeader, async (maxFee, sendId) => {
+        submitFulfillment(server, event.requestId, proof, keys.stellar, isLeader, async (maxFee, sendId) => {
           // Per-request send cap first: it is free to check and never reserves
           // shared budget for a send that will be refused anyway.
           if (sendAttempts.isExhausted(event.requestId)) {
@@ -267,7 +349,8 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
               : undefined,
           };
         })
-    );
+      );
+    });
     sendAttempts.clear(event.requestId);
 
     const durationMs = Date.now() - startMs;
@@ -278,6 +361,18 @@ async function handleRequest(event: VrfRequestEvent): Promise<void> {
     log.success(`═══ Request #${event.requestId} fulfilled (${durationMs}ms) ═══`);
     log.success(`  TX hash: ${txHash}`);
     log.success(`  Beta:    ${bytesToHex(proof.betaOutput)}`);
+
+    // 6. Callback delivery is a separate transaction and cannot change the
+    // result. One best-effort attempt, paid by the current operator account.
+    if (AUTO_DELIVER && isLeader()) {
+      const pendingCb = await hasPendingCallback(server, event.requestId).catch(() => false);
+      if (pendingCb) {
+        const payer = ORACLE_KEYS[0].stellar;
+        await accountLocks.run(payer.publicKey(), () =>
+          deliverBestEffort(server, event.requestId, payer, DELIVER_MAX_RESOURCE_FEE_STROOPS)
+        );
+      }
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     recordFailure(msg);
@@ -340,15 +435,16 @@ async function reconcile(server: rpc.Server, isCurrent: () => boolean): Promise<
     }
   }
   const pending = await findPendingRequests(server);
-  for (const p of pending) {
-    if (!isCurrent()) break;
+  await mapLimit(pending, WORKER_CONCURRENCY, async (p) => {
+    if (!isCurrent()) return;
     await handleRequest({
       requestId: p.requestId,
       requester: "(recovered by reconciliation)",
+      epochId: p.epochId,
       requiredRound: p.requiredRound,
       ledger: 0,
     });
-  }
+  });
 }
 
 /** One listener session: reconcile, then poll events (with periodic reconcile). */
@@ -411,9 +507,11 @@ async function main(): Promise<void> {
 
   printConfig();
 
-  // Verify BLS keypair
-  const blsPubKey = deriveBlsPublicKey();
-  log.info(`Oracle BLS public key: ${bytesToHex(blsPubKey).slice(0, 40)}…`);
+  for (const k of ORACLE_KEYS) {
+    log.info(
+      `Oracle ${k.label} keys: ${k.stellar.publicKey()} / BLS ${bytesToHex(k.blsPublicKey).slice(0, 40)}…`
+    );
+  }
   log.info(`Instance ID: ${getInstanceId()}`);
 
   // The contract is the single source of truth for drand genesis/period/key
@@ -435,12 +533,15 @@ async function main(): Promise<void> {
         drandGenesisTime: DRAND_GENESIS_TIME,
         drandPeriod: DRAND_PERIOD,
         drandPublicKeyHex: DRAND_PUBLIC_KEY,
-        oracleBlsPublicKey: blsPubKey,
-        oracleAddress: ORACLE_PUBLIC_KEY,
+        oracleKeys: ORACLE_KEYS.map((k) => ({
+          label: k.label,
+          blsPublicKey: k.blsPublicKey,
+          address: k.stellar.publicKey(),
+        })),
       },
       () => withRetry("read_chain_config", () => readChainConfig(feeGuardServer))
     );
-    log.info("Chain config check: drand genesis/period/key and oracle keys match the contract.");
+    log.info("Chain config check: drand genesis/period/key match the contract and a key set serves the active epoch.");
   }
 
   // Report the economic posture up front so operators see it in the first log lines.

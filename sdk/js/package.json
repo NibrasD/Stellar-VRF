@@ -1,6 +1,6 @@
 {
   "name": "stellar-vrf-sdk",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "description": "JavaScript/TypeScript SDK for the Stellar VRF Oracle",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,7 +22,7 @@
   "files": ["dist", "src", "README.md", "tsconfig.json"],
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@stellar/stellar-sdk": "^17.1.0"
+    "@stellar/stellar-sdk": "^17.4.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

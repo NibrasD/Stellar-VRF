@@ -43,9 +43,7 @@ vi.mock("@stellar/stellar-sdk", async (orig) => {
 vi.mock("./config.js", () => ({
   CONTRACT_ADDRESS: "CAW6KECQMHRTX2GS3JVHWBMOB5JNNOHNOCE635RQS4SWJ72YF56EUPRX",
   NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
-  ORACLE_KEYPAIR: {},
-  ORACLE_PUBLIC_KEY: "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P",
-  TX_FEE: "100",
+    TX_FEE: "100",
   MAX_RETRIES: 4,
 }));
 
@@ -57,17 +55,19 @@ const PROOF = {
   alphaSeed: Buffer.alloc(32),
   gammaPoint: Buffer.alloc(96),
   betaOutput: Buffer.alloc(32),
-  publicKey: Buffer.alloc(192),
   drandRound: 1n,
   drandSignature: Buffer.alloc(96),
-  ed25519Signature: Buffer.alloc(64),
 };
+
+// Operator account of the request's epoch (only its public key is used here;
+// the mocked prepared tx ignores sign()).
+const SIGNER = { publicKey: () => "GA6HYAVWPVOVB4XJHGUZSDHRVYOKLPU4JAHYPXZRSJWO2PM4HSCNKP5P" } as any;
 
 describe("submitFulfillment canSubmit gate", () => {
   it("never touches the network when not allowed to submit", async () => {
     const server = { getAccount: vi.fn() } as any;
 
-    await expect(submitFulfillment(server, 1n, PROOF, () => false)).rejects.toBeInstanceOf(
+    await expect(submitFulfillment(server, 1n, PROOF, SIGNER, () => false)).rejects.toBeInstanceOf(
       FulfillAbortedError
     );
     expect(server.getAccount).not.toHaveBeenCalled();
@@ -82,7 +82,7 @@ describe("submitFulfillment canSubmit gate", () => {
       }),
     } as any;
 
-    await expect(submitFulfillment(server, 1n, PROOF, () => leader)).rejects.toBeInstanceOf(
+    await expect(submitFulfillment(server, 1n, PROOF, SIGNER, () => leader)).rejects.toBeInstanceOf(
       FulfillAbortedError
     );
     // Attempt 1 ran; attempt 2 was refused before it could build/sign/send.
@@ -94,7 +94,7 @@ describe("submitFulfillment canSubmit gate", () => {
     const canSubmit = vi.fn(() => false);
 
     await expect(
-      withFulfillRetry("fulfill(1)", () => submitFulfillment(server, 1n, PROOF, canSubmit))
+      withFulfillRetry("fulfill(1)", () => submitFulfillment(server, 1n, PROOF, SIGNER, canSubmit))
     ).rejects.toBeInstanceOf(FulfillAbortedError);
     expect(canSubmit).toHaveBeenCalledTimes(1);
   });
@@ -119,7 +119,7 @@ describe("submitFulfillment beforeSend gate (fee guard)", () => {
     const beforeSend = vi.fn(async () => ({ ok: false as const, reason: "budget used up" }));
 
     await expect(
-      submitFulfillment(server, 1n, PROOF, () => true, beforeSend)
+      submitFulfillment(server, 1n, PROOF, SIGNER, () => true, beforeSend)
     ).rejects.toBeInstanceOf(FulfillAbortedError);
     expect(beforeSend).toHaveBeenCalledTimes(1);
     // Max fee, plus a unique send id used to key the fee reservation.
@@ -132,7 +132,7 @@ describe("submitFulfillment beforeSend gate (fee guard)", () => {
     server.sendTransaction = vi.fn(async () => ({ status: "ERROR", errorResult: "txBadSeq" }));
     const beforeSend = vi.fn(async () => ({ ok: true as const }));
 
-    await expect(submitFulfillment(server, 1n, PROOF, () => true, beforeSend)).rejects.toThrow(
+    await expect(submitFulfillment(server, 1n, PROOF, SIGNER, () => true, beforeSend)).rejects.toThrow(
       /after 4 attempts/
     );
     expect(beforeSend).toHaveBeenCalledTimes(4); // MAX_RETRIES in the config mock
@@ -158,7 +158,7 @@ describe("submitFulfillment beforeSend gate (fee guard)", () => {
       };
     });
 
-    const err = await submitFulfillment(server, 1n, PROOF, () => leader, beforeSend).catch((e) => e);
+    const err = await submitFulfillment(server, 1n, PROOF, SIGNER, () => leader, beforeSend).catch((e) => e);
     spy.mockRestore();
 
     expect(err).toBeInstanceOf(FulfillAbortedError);
@@ -196,7 +196,7 @@ describe("submitFulfillment settles each send's fee reservation by outcome", () 
         outcomes.push(o);
       },
     }));
-    const err = await submitFulfillment(s, 1n, PROOF, () => true, gate).catch((e) => e);
+    const err = await submitFulfillment(s, 1n, PROOF, SIGNER, () => true, gate).catch((e) => e);
     return { outcomes, err };
   }
 
@@ -244,7 +244,7 @@ describe("submitFulfillment resource guard + terminal errors", () => {
     const server = mockServer("1500000", 95_000_000); // expensive on_vrf()
     const beforeSend = vi.fn(async () => ({ ok: true as const }));
 
-    const err = await submitFulfillment(server, 1n, PROOF, () => true, beforeSend).catch((e) => e);
+    const err = await submitFulfillment(server, 1n, PROOF, SIGNER, () => true, beforeSend).catch((e) => e);
     expect(err).toBeInstanceOf(FulfillTerminalError);
     expect(err.reason).toBe("resource_bound_exceeded");
     expect(server.simulateTransaction).toHaveBeenCalledTimes(1); // no internal retry
@@ -254,7 +254,7 @@ describe("submitFulfillment resource guard + terminal errors", () => {
 
   it("refuses an over-budget resource fee", async () => {
     const server = mockServer("1500000", 58_000_000, "9000000");
-    await expect(submitFulfillment(server, 1n, PROOF)).rejects.toBeInstanceOf(FulfillTerminalError);
+    await expect(submitFulfillment(server, 1n, PROOF, SIGNER)).rejects.toBeInstanceOf(FulfillTerminalError);
     expect(server.sendTransaction).not.toHaveBeenCalled();
   });
 
@@ -262,7 +262,7 @@ describe("submitFulfillment resource guard + terminal errors", () => {
     const server = mockServer("1500000", 58_000_000);
     server.sendTransaction = vi.fn(async () => ({ status: "ERROR", errorResult: "tx_insufficient_balance" }));
     await expect(
-      withFulfillRetry("fulfill(1)", () => submitFulfillment(server, 1n, PROOF))
+      withFulfillRetry("fulfill(1)", () => submitFulfillment(server, 1n, PROOF, SIGNER))
     ).rejects.toBeInstanceOf(FulfillTerminalError);
     expect(server.sendTransaction).toHaveBeenCalledTimes(1);
   });
@@ -272,7 +272,7 @@ describe("submitFulfillment resource guard + terminal errors", () => {
     const { rpc } = await import("@stellar/stellar-sdk");
     const spy = vi.spyOn(rpc.Api, "isSimulationError").mockReturnValue(true);
     server.simulateTransaction = vi.fn(async () => ({ error: "HostError: \"already fulfilled\"" }));
-    const err = await submitFulfillment(server, 1n, PROOF).catch((e) => e);
+    const err = await submitFulfillment(server, 1n, PROOF, SIGNER).catch((e) => e);
     spy.mockRestore();
     expect(err).toBeInstanceOf(FulfillTerminalError);
     expect(err.settled).toBe(true);

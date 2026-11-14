@@ -5,11 +5,10 @@
  * Why: the worker used to carry its own copy of drand genesis/period and
  * public key (env defaults), and index.ts even hard-coded the quicknet
  * genesis. If they drift from the contract's `DrandGenesis` / `DrandPeriod` /
- * `DrandPK` (e.g. after `rotate_drand_pk()`, or a deploy against another
- * chain), the worker waits for the wrong round, verifies beacons against the
- * wrong key, and pays for transactions the contract is certain to reject.
- * The same goes for an oracle BLS key that no longer matches `OraclePK`
- * after `rotate_oracle_keys()`.
+ * `DrandPK` (e.g. a deploy against another chain), the worker waits for the
+ * wrong round, verifies beacons against the wrong key, and pays for
+ * transactions the contract is certain to reject. The same goes for oracle
+ * keys that match none of the contract's active key epoch after a rotation.
  *
  * `compareChainConfig()` is pure (unit-tested); `verifyChainConfig()` reads
  * the contract and throws on any mismatch.
@@ -22,10 +21,8 @@ export interface LocalChainConfig {
   drandPeriod: number;
   /** Compressed G2 (96 bytes), hex, as returned by drand `/info`. */
   drandPublicKeyHex: string;
-  /** Oracle BLS public key derived from ORACLE_BLS_SECRET_KEY, 192 bytes uncompressed. */
-  oracleBlsPublicKey: Uint8Array;
-  /** Oracle Stellar account (G…). */
-  oracleAddress: string;
+  /** The worker's key sets (current, and previous during a rotation). */
+  oracleKeys: Array<{ label: string; blsPublicKey: Uint8Array; address: string }>;
 }
 
 export interface OnChainConfig {
@@ -33,9 +30,11 @@ export interface OnChainConfig {
   drandPeriod: bigint;
   /** `DrandPK`, uncompressed G2 (192 bytes). */
   drandPk: Uint8Array;
-  /** `OraclePK`, uncompressed G2 (192 bytes). */
+  /** `ActiveEpochId`. */
+  activeEpochId: number;
+  /** BLS key of the active epoch, uncompressed G2 (192 bytes). */
   oraclePk: Uint8Array;
-  /** `OracleAddr`. */
+  /** Operator account of the active epoch. */
   oracleAddress: string;
 }
 
@@ -68,18 +67,23 @@ export function compareChainConfig(local: LocalChainConfig, chain: OnChainConfig
   if (localDrand !== null && localDrand !== hex(chain.drandPk)) {
     problems.push(
       `DRAND_PUBLIC_KEY (${local.drandPublicKeyHex.slice(0, 16)}…) does not match the contract's DrandPK ` +
-        `(${hex(chain.drandPk).slice(0, 16)}…, uncompressed); was rotate_drand_pk() called?`
+        `(${hex(chain.drandPk).slice(0, 16)}…, uncompressed). The drand key is fixed per contract: is this the right deployment?`
     );
   }
-  if (hex(local.oracleBlsPublicKey) !== hex(chain.oraclePk)) {
+  // The active epoch must be served by one of the worker's key sets: during a
+  // rotation hand-over the new keys are `current` and the old ones `previous`,
+  // and either may match depending on whether the rotation has executed yet.
+  const serving = local.oracleKeys.find(
+    (k) => hex(k.blsPublicKey) === hex(chain.oraclePk) && k.address === chain.oracleAddress
+  );
+  if (!serving) {
+    const mine = local.oracleKeys
+      .map((k) => `${k.label}: ${k.address} / ${hex(k.blsPublicKey).slice(0, 16)}…`)
+      .join("; ");
     problems.push(
-      `ORACLE_BLS_SECRET_KEY derives ${hex(local.oracleBlsPublicKey).slice(0, 16)}… but the contract's ` +
-        `OraclePK is ${hex(chain.oraclePk).slice(0, 16)}…; every proof would be rejected`
-    );
-  }
-  if (local.oracleAddress !== chain.oracleAddress) {
-    problems.push(
-      `ORACLE_STELLAR_SECRET is ${local.oracleAddress} but the contract's OracleAddr is ${chain.oracleAddress}`
+      `no configured key set matches the contract's active epoch ${chain.activeEpochId} ` +
+        `(${chain.oracleAddress} / ${hex(chain.oraclePk).slice(0, 16)}…); configured: ${mine}. ` +
+        `Every new request would be unfulfillable`
     );
   }
   return problems;

@@ -1,5 +1,7 @@
 /**
- * ttl_extend.mjs — keep the VRF contract's INSTANCE and WASM CODE entries alive.
+ * ttl_extend.mjs — keep the VRF contract's INSTANCE and WASM CODE entries alive
+ * (and, on a V2 contract, the ACTIVE KEY EPOCH entry `Epoch(ActiveEpochId)`,
+ * which every request and fulfillment reads).
  *
  * Soroban archives a contract whose instance or code entry runs out of TTL, and
  * every call then fails until it is restored. The contract extends its own TTL only
@@ -264,7 +266,29 @@ async function readState(server, contractId) {
   const wasm = r2.entries.length
     ? { liveUntil: r2.entries[0].liveUntilLedgerSeq, remaining: r2.entries[0].liveUntilLedgerSeq - ledger }
     : null;
-  return { ledger, instance, wasm, wasmHash, instanceKey, codeKey };
+  // V2: the active key epoch is a separate persistent entry read on every
+  // request/fulfill. Keep it alive with the instance.
+  let epoch = null;
+  let epochKey = null;
+  const storage = f(f(f(f(e.val, "contractData"), "val"), "instance"), "storage") ?? [];
+  for (const item of storage) {
+    const k = scValToNative(f(item, "key"));
+    if (Array.isArray(k) && k[0] === "ActiveEpochId") {
+      const id = Number(scValToNative(f(item, "val")));
+      epochKey = xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+          contract: new Contract(contractId).address().toScAddress(),
+          key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Epoch"), xdr.ScVal.scvU32(id)]),
+          durability: xdr.ContractDataDurability.persistent,
+        })
+      );
+      const r3 = await server.getLedgerEntries(epochKey);
+      epoch = r3.entries.length
+        ? { liveUntil: r3.entries[0].liveUntilLedgerSeq, remaining: r3.entries[0].liveUntilLedgerSeq - ledger }
+        : null;
+    }
+  }
+  return { ledger, instance, wasm, wasmHash, instanceKey, codeKey, epoch, epochKey };
 }
 
 async function readMaxEntryTtl(server) {
@@ -316,10 +340,13 @@ function report(label, s, minDays) {
   console.log(`${label} (current ledger ${s.ledger}, ~${SECONDS_PER_LEDGER}s/ledger):`);
   console.log(line("INSTANCE", s.instance));
   console.log(line("WASM", s.wasm));
+  if (s.epochKey) console.log(line("EPOCH", s.epoch));
 }
 
 function minRemainingDays(s) {
-  return Math.min(days(s.instance.remaining), days(s.wasm.remaining));
+  const all = [s.instance.remaining, s.wasm.remaining];
+  if (s.epochKey && s.epoch) all.push(s.epoch.remaining);
+  return Math.min(...all.map(days));
 }
 
 // ── send ────────────────────────────────────────────────────────────────────
@@ -348,7 +375,8 @@ async function extend(server, net, s, keeperKp, extendToLedgers, maxFee) {
   } catch {
     throw new Fail(`keeper account ${keeperKp.publicKey()} does not exist on ${net.name}. Fund it with a small amount of XLM first.`);
   }
-  const data = new SorobanDataBuilder().setReadOnly([s.instanceKey, s.codeKey]).build();
+  const keys = s.epochKey ? [s.instanceKey, s.codeKey, s.epochKey] : [s.instanceKey, s.codeKey];
+  const data = new SorobanDataBuilder().setReadOnly(keys).build();
   const raw = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: net.passphrase,
@@ -408,7 +436,7 @@ async function main() {
 
   console.log(`Network ${net.name} | contract ${contractId}${args.check ? " | CHECK (read-only)" : ""}`);
   const before = await readState(server, contractId);
-  if (!before.instance || !before.wasm) {
+  if (!before.instance || !before.wasm || (before.epochKey && !before.epoch)) {
     report("State", before, minDays);
     console.error("An entry is archived or missing: it needs RestoreFootprint (e.g. `stellar contract restore`), then re-run.");
     return EXIT_ARCHIVED;
@@ -450,7 +478,7 @@ async function main() {
   await extend(server, net, before, keeperKp, extendToLedgers, maxFee);
 
   const after = await readState(server, contractId);
-  if (!after.instance || !after.wasm) {
+  if (!after.instance || !after.wasm || (after.epochKey && !after.epoch)) {
     report("After", after, minDays);
     return EXIT_ARCHIVED;
   }
