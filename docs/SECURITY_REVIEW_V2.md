@@ -283,7 +283,15 @@ Final build, deployed by a **2-of-3 multisig admin**
 | Upgrade cancelled | `1546676ddb0bdff7d38776647e5941c19cf543059b584bbfda65f859812b74c4`; `request()` accepted again |
 | `v2_monitor.mjs` | reported the pending rotation, the pending upgrade and the short TTL of a fresh Testnet contract |
 
-Executing the rotation on this build waits for its timelock (ledger 5732602).
+Key rotation on this build, after its timelock:
+
+| Check | Result |
+|---|---|
+| Request made before the rotation (worker stopped) | bound to epoch 1 |
+| Execute rotation with one signer | rejected (`tx_bad_auth`) |
+| Execute rotation with two signers | `a94f186e59c5b176689c6f9b6c9ff5812561aed166bcb0acb3d62cf0fce9c852`; epoch 2 active |
+| Worker restarted with the new keys as current and the old as previous | event-based reconciliation found the epoch-1 request and fulfilled it with the **previous** keys |
+| New request | bound to epoch 2, fulfilled with the **current** keys after 19.4 s |
 
 ## What would still be worth an outside look
 
