@@ -24,6 +24,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 1
+    # Only minor and patch bumps are proposed and grouped: a major bump of
+    # TypeScript, vitest or the Stellar SDK needs code changes and would break
+    # the grouped PR for everything else.
     groups:
       npm:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
