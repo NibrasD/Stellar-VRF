@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ── Mock all external dependencies ──────────────────────────────────────────
 
 vi.mock("./config.js", () => ({
+  WORKER_CONCURRENCY: 4,
   SOROBAN_RPC_URL: "https://rpc.test",
   CONTRACT_ADDRESS: "CTEST",
   POLL_INTERVAL_MS: 100,

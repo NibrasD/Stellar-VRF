@@ -75,7 +75,6 @@ export interface VrfProof {
   alphaSeed: Uint8Array;    // 32 bytes
   gammaPoint: Uint8Array;   // 96 bytes (G1 point)
   betaOutput: Uint8Array;   // 32 bytes (the random output)
-  publicKey: Uint8Array;    // 192 bytes (G2 point)
   drandRound: bigint;
   drandSignature: Uint8Array; // 96 bytes
 }
@@ -140,6 +139,41 @@ export class VrfClient {
       return BigInt(native as string | number | bigint);
     }
     throw new Error("No return value from request()");
+  }
+
+  /**
+   * Run the registered `on_vrf` callback of a fulfilled request. Anyone may
+   * call it; the result is already final, so delivery cannot change it. Fails
+   * (and can be retried) if the consumer's `on_vrf` fails.
+   */
+  async deliver(requestId: bigint): Promise<string> {
+    const res = await this.submitTx("deliver", [nativeToScVal(requestId, { type: "u64" })]);
+    return res.txHash;
+  }
+
+  /**
+   * Refund the fee of an unfulfilled request to its requester. The requester
+   * may call after `timeout_rounds()` past the bound round; anyone may after
+   * `expiry_rounds()`. Do not request new randomness for the same event after
+   * a refund: that would let whoever withheld the result re-roll it.
+   */
+  async timeoutRefund(requestId: bigint): Promise<string> {
+    const res = await this.submitTx("timeout_refund", [nativeToScVal(requestId, { type: "u64" })]);
+    return res.txHash;
+  }
+
+  /** Key epoch the request is bound to (V2). */
+  async getRequestEpoch(requestId: bigint): Promise<number> {
+    const r = await this.simulate("request_epoch", [nativeToScVal(requestId, { type: "u64" })]);
+    return Number(r as number);
+  }
+
+  /** The callback still waiting for `deliver()`, if any (V2). */
+  async pendingCallback(requestId: bigint): Promise<string | null> {
+    const r = (await this.simulate("callback_of", [nativeToScVal(requestId, { type: "u64" })])) as
+      | [string, string]
+      | null;
+    return r ? String(r[0]) : null;
   }
 
   /**
@@ -260,7 +294,6 @@ export class VrfClient {
             alphaSeed: new Uint8Array(32),
             gammaPoint: new Uint8Array(96),
             betaOutput: beta,
-            publicKey: new Uint8Array(192),
             drandRound: 0n,
             drandSignature: new Uint8Array(96),
           };
@@ -293,11 +326,15 @@ export class VrfClient {
       limit,
     });
     return (response.events || []).map((e) => {
-      const native = scValToNative(e.value) as [bigint, string, bigint];
+      const native = scValToNative(e.value) as unknown[];
+      const isV2 = Array.isArray(native) && native.length >= 4;
+      const epochId = isV2 ? Number(native[2]) : 1;
+      const requiredRound = isV2 ? BigInt(native[3] as any) : BigInt(native[2] as any);
       return {
-        requestId: BigInt(native[0]),
-        requester: native[1],
-        requiredRound: BigInt(native[2]),
+        requestId: BigInt(native[0] as any),
+        requester: String(native[1]),
+        epochId,
+        requiredRound,
         ledger: e.ledger,
         pagingToken: (e as any).pagingToken ?? "",
       };
@@ -318,10 +355,12 @@ export class VrfClient {
       limit,
     });
     return (response.events || []).map((e) => {
-      const native = scValToNative(e.value) as [bigint, Uint8Array];
+      const native = scValToNative(e.value) as unknown[];
       return {
-        requestId: BigInt(native[0]),
+        requestId: BigInt(native[0] as bigint),
         betaOutput: native[1] as Uint8Array,
+        // V2: (request_id, beta, epoch_id)
+        epochId: native.length >= 3 ? Number(native[2]) : 1,
         ledger: e.ledger,
       };
     });
@@ -401,7 +440,9 @@ export class VrfClient {
   /**
    * Parse the native JS object returned by get_proof() into a VrfProof.
    * The contract returns a BlsVrfProof struct which scValToNative converts
-   * to a plain object: { alpha_seed, beta_output, drand_round, drand_signature, gamma_point, public_key }
+   * to a plain object: { alpha_seed, beta_output, drand_round, drand_signature, gamma_point }.
+   * (V2 no longer stores the BLS public key in the proof: it belongs to the
+   * request's key epoch, see `getRequestEpoch()`.)
    */
   private parseProofFromNative(requestId: bigint, raw: unknown): VrfProof {
     const obj = raw as Record<string, unknown>;
@@ -410,7 +451,6 @@ export class VrfClient {
       alphaSeed: toUint8Array(obj["alpha_seed"]),
       gammaPoint: toUint8Array(obj["gamma_point"]),
       betaOutput: toUint8Array(obj["beta_output"]),
-      publicKey: toUint8Array(obj["public_key"]),
       drandRound: BigInt(obj["drand_round"] as string | number | bigint),
       drandSignature: toUint8Array(obj["drand_signature"]),
     };

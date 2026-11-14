@@ -114,7 +114,7 @@ The replica will:
 | `LISTENER_RESTART_BASE_MS` / `LISTENER_RESTART_MAX_MS` | No | `2000` / `60000` | Listener restart backoff |
 | `LEADER_LEASE_SAFETY_MS` | No | `TTL/5` | Local fail-closed margin before lease expiry |
 | `LEADER_RELINQUISH_COOLDOWN_MS` | No | `2×TTL` | No re-acquire after relinquishing |
-| `RECONCILE_MAX_SCAN` | No | `1000` | Newest request IDs re-checked on each reconciliation |
+| `RECONCILE_LOOKBACK_LEDGERS` | No | `600` | V2: how many recent ledgers of `request` events each reconciliation re-checks |
 | `RECONCILE_INTERVAL_MS` | No | `120000` | Periodic reconciliation interval while leader |
 | `HEALTH_LISTENER_STALE_MS` / `HEALTH_LISTENER_GRACE_MS` | No | `120000` / `60000` | Leader listener staleness threshold / grace |
 | `DRAND_VERIFY_BEACONS` | No | `true` | Local drand verification. `false` is **refused** on Mainnet or with `NODE_ENV=production` |

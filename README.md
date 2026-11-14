@@ -4,6 +4,8 @@ A production-grade **Verifiable Random Function (VRF)** oracle for the Stellar/S
 
 > **Trust model in one sentence:** the proof shows that a result matches the *currently registered* oracle and drand keys, but the oracle account can rotate those keys, so the oracle operator is a trusted party for bias resistance. Read [Trust Assumptions & Known Limitations](#trust-assumptions--known-limitations) before using this for anything of value.
 
+> **V2 (in development, not deployed):** per-request key epochs, a fixed drand key, an admin/operator split with timelocks, and callbacks moved out of `fulfill()`. A stolen operator key can then only delay results, not choose them. See [`docs/V2_SECURITY_MODEL.md`](docs/V2_SECURITY_MODEL.md).
+
 ## How It Works
 
 ```

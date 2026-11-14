@@ -17,13 +17,12 @@ fuzz_target!(|data: &[u8]| {
 
     let oracle_addr = Address::generate(&env);
     let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
     let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
     let genesis: u64 = 1_000_000;
     let period: u32 = 3;
-    let round_offset: u32 = 2;
+    let round_offset: u32 = 4;
     let fee_amount: i128 = 0;
 
     env.ledger().set_timestamp(genesis);
@@ -33,15 +32,17 @@ fuzz_target!(|data: &[u8]| {
     let contract_id = env.register(
         VRFOracleContract,
         (
+            &Address::generate(&env),
             &oracle_pk,
             &oracle_addr,
-            &oracle_ed25519,
             &drand_pk,
             &genesis,
             &period,
             &round_offset,
             &fee_token,
             &fee_amount,
+            &2_880u32,
+            &8_640u32,
         ),
     );
     let client = VRFOracleContractClient::new(&env, &contract_id);
@@ -66,10 +67,9 @@ fuzz_target!(|data: &[u8]| {
                 let ctx = Bytes::from_slice(&env, &ctx_buf);
 
                 let id = client.request(&ctx, &requester);
-                assert_eq!(
-                    id,
-                    (requests.len() as u64) + 1,
-                    "Sequential ID invariant violated"
+                assert!(
+                    id != 0 && !requests.contains(&id),
+                    "Request id uniqueness invariant violated"
                 );
                 requests.push(id);
             }
@@ -88,10 +88,9 @@ fuzz_target!(|data: &[u8]| {
                     &callback_contract,
                     &callback_fn,
                 );
-                assert_eq!(
-                    id,
-                    (requests.len() as u64) + 1,
-                    "Sequential ID invariant violated"
+                assert!(
+                    id != 0 && !requests.contains(&id),
+                    "Request id uniqueness invariant violated"
                 );
                 requests.push(id);
             }
@@ -106,12 +105,10 @@ fuzz_target!(|data: &[u8]| {
                         alpha_seed: BytesN::from_array(&env, &[param; 32]),
                         gamma_point: BytesN::from_array(&env, &[0u8; 96]),
                         beta_output: BytesN::from_array(&env, &[param.wrapping_mul(7); 32]),
-                        public_key: oracle_pk.clone(),
                         drand_round: 2,
                         drand_signature: BytesN::from_array(&env, &[0u8; 96]),
                     };
-                    let dummy_sig = BytesN::from_array(&env, &[0u8; 64]);
-                    let res = client.try_fulfill(&target_id, &dummy_proof, &dummy_sig);
+                    let res = client.try_fulfill(&target_id, &dummy_proof);
 
                     if initially_refunded || initially_fulfilled {
                         assert!(

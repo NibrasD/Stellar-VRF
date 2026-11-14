@@ -57,21 +57,29 @@ jobs:
           cargo test --all-targets
           cargo test --doc
 
-      - name: Reviewer evidence — BLS / drand rejection paths
+      # Each evidence test is run by exact name and the step fails unless
+      # exactly that one test ran and passed. (A renamed or deleted test would
+      # otherwise run zero tests and pass silently.)
+      - name: Reviewer evidence — real-crypto fulfill, rejection paths, budget, epochs
         working-directory: soroban-contract
         run: |
-          cargo test --lib test::test_fulfill_invalid_drand_bls_signature -- --exact --nocapture
-          cargo test --lib test::test_fulfill_delayed_drand_round_rejected -- --exact --nocapture
-
-      - name: Reviewer evidence — CPU instruction measurements
-        working-directory: soroban-contract
-        run: |
-          cargo test --lib test::test_budget_g1_negation_cpu_instructions -- --exact --nocapture
-          cargo test --lib test::test_budget_sac_transfer_cpu_instructions -- --exact --nocapture
-
-      - name: Reviewer evidence — key rotation vs pending requests
-        working-directory: soroban-contract
-        run: cargo test --lib rotate_keys -- --nocapture
+          set -euo pipefail
+          for t in \
+            test_noble_vector_matches_host_computation \
+            test_fulfill_real_proof_succeeds_and_pays_operator \
+            test_fulfill_forged_drand_signature_rejected \
+            test_fulfill_gamma_from_wrong_key_rejected \
+            test_fulfill_core_budget \
+            test_rotation_keeps_pending_requests_on_their_epoch \
+            test_new_key_cannot_fulfill_old_epoch_request \
+            test_many_rotations_with_abandoned_requests \
+            test_failing_callback_cannot_undo_result_and_stays_retryable \
+            test_epoch_ttl_is_extended_by_requests; do
+            out=$(cargo test --lib "test::$t" -- --exact --nocapture 2>&1) || { echo "$out"; exit 1; }
+            echo "$out"
+            echo "$out" | grep -q "test result: ok. 1 passed" \
+              || { echo "::error::evidence test $t did not run exactly once"; exit 1; }
+          done
 
       - name: cargo fmt --check (contract, fuzz targets, consumer example)
         run: |

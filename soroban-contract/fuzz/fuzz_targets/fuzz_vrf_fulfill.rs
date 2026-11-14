@@ -17,7 +17,6 @@ fuzz_target!(|data: &[u8]| {
 
     let oracle_addr = Address::generate(&env);
     let oracle_pk = BytesN::from_array(&env, &TEST_G2_TIMES_2);
-    let oracle_ed25519 = BytesN::from_array(&env, &[0x11; 32]);
     let drand_pk = BytesN::from_array(&env, &TEST_G2_TIMES_3);
     let fee_token = Address::generate(&env);
 
@@ -26,15 +25,17 @@ fuzz_target!(|data: &[u8]| {
     let contract_id = env.register(
         VRFOracleContract,
         (
+            &Address::generate(&env),
             &oracle_pk,
             &oracle_addr,
-            &oracle_ed25519,
             &drand_pk,
             &1_692_803_367u64,
             &3u32,
-            &2u32,
+            &4u32,
             &fee_token,
             &0i128,
+            &2_880u32,
+            &8_640u32,
         ),
     );
     let client = VRFOracleContractClient::new(&env, &contract_id);
@@ -71,13 +72,6 @@ fuzz_target!(|data: &[u8]| {
         u64::from_le_bytes(b.try_into().unwrap())
     };
 
-    let target_pk = if (flags & 0x10) != 0 {
-        oracle_pk.clone()
-    } else {
-        let b = take_bytes(192);
-        BytesN::from_array(&env, &b.try_into().unwrap())
-    };
-
     // Pre-state mutation (test duplicate fulfillment and refund replay)
     if (flags & 0x20) != 0 {
         env.as_contract(&client.address, || {
@@ -91,36 +85,27 @@ fuzz_target!(|data: &[u8]| {
                 .persistent()
                 .set(&DataKey::Refunded(valid_req_id), &true);
         });
-    } else if (flags & 0x80) != 0 {
-        env.as_contract(&client.address, || {
-            env.storage()
-                .persistent()
-                .set(&DataKey::Fulfilling(valid_req_id), &true);
-        });
     }
 
     let alpha_b = take_bytes(32);
     let gamma_b = take_bytes(96);
     let beta_b = take_bytes(32);
     let drand_sig_b = take_bytes(96);
-    let ed25519_sig_b = take_bytes(64);
 
     let proof = BlsVrfProof {
         alpha_seed: BytesN::from_array(&env, &alpha_b.try_into().unwrap()),
         gamma_point: BytesN::from_array(&env, &gamma_b.try_into().unwrap()),
         beta_output: BytesN::from_array(&env, &beta_b.try_into().unwrap()),
-        public_key: target_pk,
         drand_round: target_round,
         drand_signature: BytesN::from_array(&env, &drand_sig_b.try_into().unwrap()),
     };
-    let signature = BytesN::from_array(&env, &ed25519_sig_b.try_into().unwrap());
 
     // Record initial invariant state
     let initially_fulfilled = client.is_fulfilled(&valid_req_id);
     let initially_refunded = client.is_refunded(&valid_req_id);
 
     // Call try_fulfill directly — Soroban host returns Ok(()) or Err(Error)
-    let res = client.try_fulfill(&target_req_id, &proof, &signature);
+    let res = client.try_fulfill(&target_req_id, &proof);
 
     // Invariant verifications:
     // 1. If initially refunded, fulfill MUST NEVER succeed
@@ -139,8 +124,8 @@ fuzz_target!(|data: &[u8]| {
         );
     }
 
-    // 3. If target_req_id == 0 or non-existent, MUST NEVER succeed
-    if target_req_id == 0 || target_req_id > valid_req_id {
+    // 3. Any id other than the one real request does not exist: MUST NEVER succeed
+    if target_req_id != valid_req_id {
         assert!(
             res.is_err(),
             "Non-existent request fulfillment invariant violated"

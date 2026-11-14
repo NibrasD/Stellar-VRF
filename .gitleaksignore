@@ -8,3 +8,7 @@ bcd16b96249562cd9d4d65a4bca645e72a9862c7:soroban-contract/deployed.json:generic-
 bcd16b96249562cd9d4d65a4bca645e72a9862c7:oracle-worker/deployed.mainnet.json:generic-api-key:16
 soroban-contract/deployed.json:generic-api-key:16
 oracle-worker/deployed.mainnet.json:generic-api-key:16
+
+# Public Mainnet contract address (CAW6KECQ…UPRX) used as a second contract id in a
+# worker unit test; flagged as generic-api-key because it follows the word "keys".
+e16880addbfaca071b51cf712c1cbf8e139f0af1:oracle-worker/src/vrf.test.ts:generic-api-key:95
