@@ -176,6 +176,9 @@ jobs:
       - name: Install dependencies
         working-directory: oracle-worker
         run: npm ci
+      - name: Known vulnerabilities in runtime dependencies (fails on high or critical)
+        working-directory: oracle-worker
+        run: npm audit --omit=dev --audit-level=high
       - name: Unit tests (drand delay/retry/backoff, listener)
         working-directory: oracle-worker
         run: npm test

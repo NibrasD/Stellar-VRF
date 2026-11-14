@@ -6,6 +6,8 @@
  *   NETWORK=testnet node v2_rotate.mjs execute     # after the timelock
  *   NETWORK=testnet node v2_rotate.mjs cancel
  *   NETWORK=testnet node v2_rotate.mjs revoke <epoch_id>
+ *   NETWORK=testnet node v2_rotate.mjs propose-upgrade <wasm_hash> | execute-upgrade
+ *   NETWORK=testnet node v2_rotate.mjs cancel-upgrade | cancel-admin-transfer
  *
  * Environment: CONTRACT_ADDRESS, ADMIN_PUBLIC, ADMIN_SECRETS (optional, see
  * v2_lib.mjs), and for `propose`:
@@ -98,7 +100,19 @@ if (cmd === "status") {
 } else if (cmd === "revoke") {
   if (!arg) throw new Error("usage: revoke <epoch_id>");
   await adminCall("revoke_epoch", [admin, nativeToScVal(Number(arg), { type: "u32" })]);
+} else if (cmd === "propose-upgrade") {
+  // New requests are refused from now until execute-upgrade or cancel-upgrade.
+  if (!/^[0-9a-fA-F]{64}$/.test(arg ?? "")) throw new Error("usage: propose-upgrade <wasm sha256 hex> (upload the WASM first)");
+  await adminCall("propose_upgrade", [admin, nativeToScVal(Buffer.from(arg, "hex"), { type: "bytes" })]);
+} else if (cmd === "execute-upgrade") {
+  await adminCall("execute_upgrade", [admin]);
+} else if (cmd === "cancel-upgrade") {
+  // Incident response: stop a pending code upgrade.
+  await adminCall("cancel_upgrade", [admin]);
+} else if (cmd === "cancel-admin-transfer") {
+  // Incident response: stop a pending admin transfer.
+  await adminCall("cancel_admin_transfer", [admin]);
 } else {
-  console.log("usage: node v2_rotate.mjs status|propose|execute|cancel|revoke <epoch_id>");
+  console.log("usage: node v2_rotate.mjs status|propose|execute|cancel|revoke <epoch_id>|propose-upgrade <wasm_hash>|execute-upgrade|cancel-upgrade|cancel-admin-transfer");
   process.exit(1);
 }

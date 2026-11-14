@@ -23,6 +23,8 @@ operational key management, and formal verification.
 | L-1 | Low | `alpha` was not bound to the contract or network | **Fixed** |
 | L-2 | Low | Admin ≠ operator was not re-checked when a rotation executes | **Fixed** |
 | L-3 | Low | Worker's automatic `deliver()` could cost more than the request fee | **Fixed** |
+| L-6 | Low | Known vulnerabilities in npm dependencies | **Fixed** |
+| L-7 | Low | No operator tooling for upgrades, cancellations, multisig or monitoring | **Fixed** |
 | L-4 | Low | Timelocks are counted in ledgers | Accepted, documented |
 | L-5 | Low | Pending proposals never expire | Accepted, documented |
 | I-1 … I-7 | Info | See below | Documented |
@@ -164,6 +166,25 @@ its timelock, however old. All three are visible on-chain (`pending_*`
 getters), and a pending upgrade pauses new requests for as long as it exists.
 Monitor them; cancel what is not going to be executed.
 
+### L-6 — Known vulnerabilities in dependencies (fixed)
+
+`npm audit` reported a high-severity advisory in `follow-redirects` and a
+moderate one in `smol-toml` (both pulled in by `@stellar/stellar-sdk`), plus
+advisories in the test tooling. Neither runtime issue is reachable in the
+worker as written (it sends no credentials to redirecting hosts and parses
+no TOML), but the lockfiles were updated to fixed versions and CI now fails
+on a high or critical advisory in runtime dependencies.
+
+### L-7 — No tooling for the upgrade path (fixed)
+
+The contract had `propose_upgrade` / `execute_upgrade` / `cancel_upgrade` and
+`cancel_admin_transfer`, but no operator tool called them, so stopping a
+malicious proposal in an incident would have meant writing a script under
+pressure. `v2_rotate.mjs` now has `propose-upgrade`, `execute-upgrade`,
+`cancel-upgrade` and `cancel-admin-transfer`; `v2_admin_multisig.mjs` sets up
+and checks the admin multisig; `v2_monitor.mjs` alerts on every pending
+proposal. All were exercised on Testnet (below).
+
 ### Informational
 
 - **I-1 Untyped errors.** The contract panics with strings, which the release
@@ -244,9 +265,25 @@ WASM `d87aa3cd…541f3012`):
   event-based reconciliation after the restart and fulfilled 13.5 s later.
 - **L-1:** all of these use the contract-bound `alpha`.
 
-Not re-run on the final build: the fulfillment-deadline drill, key rotation
-and the consumer callback path. Their contract logic did not change between
-the builds; the earlier runs are above and in `V2_SECURITY_MODEL.md`.
+Final build, deployed by a **2-of-3 multisig admin**
+(`CBNBURMFR2F7YTIZRAXCJTRU7ICNPHOLEJ7QSPDWVE5W5MGQIX52HZRA`, same WASM
+`d87aa3cd…541f3012`, 2026-11-14):
+
+| Check | Result |
+|---|---|
+| Admin converted to 2-of-3, master key disabled (`v2_admin_multisig.mjs`) | `f2f15ac499c6fbd61d8bff0d7f43776fa072e7553e4d4a7188d8b6029443019b`; `--check` passes |
+| Deploy with one signer | rejected (`tx_bad_auth`) |
+| Deploy with two signers | `f931e5d2fa34a6dee6b22bd5c94ce8c82ed4d0de94130e8b9589441b29494625` |
+| Propose rotation with one signer | rejected (`tx_bad_auth`) |
+| Propose rotation with two signers | `0096d143038ba6b18a0b2a7aeefd3db74f54891b5b975c248e18a52df6f3edb9` |
+| Deadline drill: valid proof after the window | rejected; refund `f60736f92e4bb16ecceeee3c6c31350ff93fdbc30d89c11cfba2e55f1644ec92` |
+| Plain request via the JS SDK | fulfilled after 21.9 s; on-chain derivation = SDK offline value |
+| Consumer callback request | fulfilled (58.46M CPU), then delivered in a separate transaction `68ba2e0f71780187f8ea916be3d6c3ba30f6043ba65ece2dc0012e3660b7a747`; consumer stored its sample |
+| Upgrade proposed | `95a3c4a0f44c7c2e18fa9e66c98dd2647675592b3899a925193e09841ec1e935`; `request()` refused while pending; execute before the timelock refused; monitor raised the alert |
+| Upgrade cancelled | `1546676ddb0bdff7d38776647e5941c19cf543059b584bbfda65f859812b74c4`; `request()` accepted again |
+| `v2_monitor.mjs` | reported the pending rotation, the pending upgrade and the short TTL of a fresh Testnet contract |
+
+Executing the rotation on this build waits for its timelock (ledger 5732602).
 
 ## What would still be worth an outside look
 
