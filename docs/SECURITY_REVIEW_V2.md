@@ -24,7 +24,8 @@ operational key management, and formal verification.
 | L-2 | Low | Admin ≠ operator was not re-checked when a rotation executes | **Fixed** |
 | L-3 | Low | Worker's automatic `deliver()` could cost more than the request fee | **Fixed** |
 | L-6 | Low | Known vulnerabilities in npm dependencies | **Fixed** |
-| L-7 | Low | No operator tooling for upgrades, cancellations, multisig or monitoring | **Fixed** |
+| L-7 | Low | No operator tooling for cancellations, multisig or monitoring | **Fixed** |
+| D-1 | Design | The admin could replace the code (upgrade), so "nobody can bias" depended on the admin | **Removed**: contract is immutable |
 | L-4 | Low | Timelocks are counted in ledgers | Accepted, documented |
 | L-5 | Low | Pending proposals never expire | Accepted, documented |
 | I-1 … I-7 | Info | See below | Documented |
@@ -154,16 +155,15 @@ deliver. Set `AUTO_DELIVER=false` to never pay for callbacks.
 
 ### L-4 — Timelocks in ledgers (accepted)
 
-The rotation and upgrade timelocks are ledger counts (2 880 ≈ 4 h and
+The rotation and admin-transfer timelocks are ledger counts (2 880 ≈ 4 h and
 8 640 ≈ 12 h at ~5 s per ledger). If the network's ledger time drops, the same
 counts mean less wall-clock time. They are constructor parameters with
 compile-time floors: choose them with margin at deployment.
 
 ### L-5 — Proposals do not expire (accepted)
 
-A pending rotation, upgrade or admin transfer can be executed any time after
-its timelock, however old. All three are visible on-chain (`pending_*`
-getters), and a pending upgrade pauses new requests for as long as it exists.
+A pending rotation or admin transfer can be executed any time after its
+timelock, however old. Both are visible on-chain (`pending_*` getters).
 Monitor them; cancel what is not going to be executed.
 
 ### L-6 — Known vulnerabilities in dependencies (fixed)
@@ -175,15 +175,31 @@ worker as written (it sends no credentials to redirecting hosts and parses
 no TOML), but the lockfiles were updated to fixed versions and CI now fails
 on a high or critical advisory in runtime dependencies.
 
-### L-7 — No tooling for the upgrade path (fixed)
+### L-7 — No tooling for governance incidents (fixed)
 
-The contract had `propose_upgrade` / `execute_upgrade` / `cancel_upgrade` and
-`cancel_admin_transfer`, but no operator tool called them, so stopping a
-malicious proposal in an incident would have meant writing a script under
-pressure. `v2_rotate.mjs` now has `propose-upgrade`, `execute-upgrade`,
-`cancel-upgrade` and `cancel-admin-transfer`; `v2_admin_multisig.mjs` sets up
+The contract had `cancel_admin_transfer`, but no operator tool called it, so
+stopping a malicious proposal in an incident would have meant writing a script
+under pressure. `v2_rotate.mjs` now has `cancel-admin-transfer` (and `cancel`
+for rotations); `v2_admin_multisig.mjs` sets up
 and checks the admin multisig; `v2_monitor.mjs` alerts on every pending
 proposal. All were exercised on Testnet (below).
+
+### D-1 — Code upgrade removed (design change, 2026-11-22)
+
+The earlier build had `propose_upgrade` / `execute_upgrade` / `cancel_upgrade`
+behind a 12 h timelock. Whatever the safeguards, new code can do anything, so
+the property "no one can choose an output" held only if the admin was honest.
+This was compared with other VRF services: Chainlink does not upgrade a
+coordinator in place but deploys a new one per version and has consumers move
+to it (see `V2_SECURITY_MODEL.md`).
+
+The upgrade functions, the pending-upgrade state and the request pause are
+removed. The constructor's last parameter is now `admin_timelock_ledgers` (the
+admin-transfer timelock, same 8 640-ledger floor). Soroban can change a
+contract's code only if the contract itself calls the host function
+`update_current_contract_wasm`; `scripts/check_immutable_wasm.py` reads the
+WASM import section and CI fails if that import (or an export named
+`*upgrade*`) is present. A fix to the contract ships as a new deployment.
 
 ### Informational
 
@@ -198,18 +214,24 @@ proposal. All were exercised on Testnet (below).
 - **I-3 Proof cleanup.** The operator may remove the stored proof of a
   fulfilled request (after delivery). The proof stays in the fulfill
   transaction; `get_beta` keeps working.
-- **I-4 Admin powers.** The admin can upgrade the code (12 h notice, requests
-  paused) and can cancel pending results of an epoch by revoking it (visible,
-  stops the service until a rotation executes). The admin is a trusted role;
-  use a multisig and monitor `propose_upg`, `propose_rot`, `epoch_revkd`.
+- **I-4 Admin powers.** The admin can rotate keys (applies only to later
+  requests) and can cancel pending results of an epoch by revoking it
+  (visible, refundable, stops the service until a rotation executes). It
+  cannot change a result and cannot replace the code (D-1). Use a multisig and
+  monitor `propose_rot`, `epoch_revkd`, `propose_adm`.
 - **I-5 Ledger close time.** The bound round is 9–12 s after the request
   ledger's close time. Validators choose close times; a stalled network plus a
   malicious nomination leader could close a ledger with an old timestamp and
   bind a request to an already published round. Not exploitable without
   controlling consensus leadership.
-- **I-6 Withholding.** The operator can decline to fulfill. It cannot choose an
-  output, but a consumer that re-requests after a refund gives it a re-roll.
-  Consumers must cancel the event instead.
+- **I-6 Withholding.** The operator can decline to fulfill, and it can compute
+  the output a few seconds before publishing it (once the drand round is out).
+  It cannot choose an output, but a consumer that re-requests after a refund
+  gives it a re-roll. Consumers must cancel the event instead. This is the same
+  position as Chainlink VRF and Pyth Entropy. Removing it needs several
+  independent operators sharing one threshold BLS key (as Supra dVRF and ARPA
+  do); the contract would verify such a key unchanged, since a threshold BLS
+  signature is an ordinary BLS signature.
 - **I-7 Fee token.** The constructor accepts any token address. The worker
   refuses anything but native XLM on Mainnet.
 
@@ -240,7 +262,8 @@ proposal. All were exercised on Testnet (below).
 
 ## Testnet check of the fixes
 
-Two deployments on 2026-11-13/14.
+Deployments on 2026-11-13/14 (builds with the upgrade path, before D-1) and
+2026-11-22 (immutable build, last section).
 
 Build with H-1, L-1, M-1 fixed
 (`CBECNOM3XBHSSXT6WD42BIR3TNGHPM75TQAMO7O4NRBHVUNWIBPALTEO`):
@@ -292,6 +315,20 @@ Key rotation on this build, after its timelock:
 | Execute rotation with two signers | `a94f186e59c5b176689c6f9b6c9ff5812561aed166bcb0acb3d62cf0fce9c852`; epoch 2 active |
 | Worker restarted with the new keys as current and the old as previous | event-based reconciliation found the epoch-1 request and fulfilled it with the **previous** keys |
 | New request | bound to epoch 2, fulfilled with the **current** keys after 19.4 s |
+
+Immutable build (D-1), deployed by the same **2-of-3 multisig admin**
+(`CANXPYUDPVX4CEKKVIJLMFARD7DDA3VKLPG3WN3ACQ5SLL44WGEHQUP5`, WASM
+`5471a482…eb5f2b3`, 2026-11-22):
+
+| Check | Result |
+|---|---|
+| Deploy with one signer | rejected (`tx_bad_auth`) |
+| Deploy with two signers | `94e1242adf7d74d741c85ccecb63b348e7733ee28048fb981d4b15fcb93b948e` |
+| Code the network runs | WASM fetched from the chain by the instance's hash: byte-identical to the build; `check_immutable_wasm.py` passes (no `update_current_contract_wasm` import) |
+| `propose_upgrade` / `execute_upgrade` called | refused by the host (`Error(WasmVm, MissingValue)`: no such function) |
+| Plain request via the JS SDK | fulfilled after 26.3 s (`e7e2b835d7ac6cdba15084ec83272c7e7ae3f9e468f04268b801964604dac962`); on-chain derivation = SDK offline value |
+| Consumer callback request | fulfilled (58.37M CPU, `0090008051e557e40d7b9deac92846f337a6a0fb3a2811c2c137f088fc304dc1`), then delivered separately (`040613f1f378239cd2bb98e45db4aebd4d54a39b4692a914f0c917bce61650a5`); consumer stored its sample |
+| Rotation proposed / cancelled with two signers | `7d731cedd999f49d52c454ccd5bb8618505c193a144af31ea40eb7f29601474d` / `ed0d0643523482dc3973d3f6765e30cc5f433040b9c00393766fe1594844ab10`; monitor raised the pending-rotation alert |
 
 ## What would still be worth an outside look
 

@@ -8,10 +8,10 @@
  * Pipe a non-zero exit into your alerting (mail, pager, chat webhook).
  *
  * What it reports:
- *   - GOVERNANCE: a pending key rotation, upgrade or admin transfer. The
- *     timelocks only protect users if someone notices these. A pending upgrade
- *     also pauses new requests. Expected ones: acknowledge with
- *     MONITOR_EXPECT=rotation,upgrade,admin (comma-separated).
+ *   - GOVERNANCE: a pending key rotation or admin transfer. The timelocks only
+ *     protect users if someone notices these. Expected ones: acknowledge with
+ *     MONITOR_EXPECT=rotation,admin (comma-separated). (The contract code is
+ *     immutable: there is no upgrade to watch.)
  *   - the active key epoch is not Active (revoked: no new requests);
  *   - the admin account is not a multisig with a disabled master key;
  *   - the operator's XLM balance is below MONITOR_MIN_OPERATOR_XLM (default 20);
@@ -42,7 +42,6 @@ export function evaluate(state, opts) {
     (opts.expect.has(key) ? info : alerts).push(line);
   };
   pend("KEY ROTATION", "rotation", state.pendingRotation, (p) => `epoch ${p.new_epoch_id}, operator ${p.new_epoch.oracle_address}`);
-  pend("UPGRADE (new requests are paused)", "upgrade", state.pendingUpgrade, (p) => `wasm ${Buffer.from(p.wasm_hash).toString("hex")}`);
   pend("ADMIN TRANSFER", "admin", state.pendingAdminTransfer, (p) => `to ${p.new_admin}`);
   if (state.activeEpochStatus !== "Active") alerts.push(`active epoch ${state.activeEpochId} is ${state.activeEpochStatus}: new requests are refused`);
   for (const p of state.adminProblems) alerts.push(`admin ${state.admin}: ${p}`);
@@ -90,7 +89,6 @@ async function readState(server) {
     activeEpochId: Number(inst.ActiveEpochId),
     activeEpochStatus: status,
     pendingRotation: inst.PendingRot ?? null,
-    pendingUpgrade: inst.PendingUpg ?? null,
     pendingAdminTransfer: inst.PendingAdminXfer ?? null,
     adminProblems,
     ttlDays: {

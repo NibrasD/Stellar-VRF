@@ -132,6 +132,8 @@ jobs:
         run: |
           cargo build --release --target wasm32v1-none
           sha256sum target/wasm32v1-none/release/*.wasm
+          # The contract must not be able to replace its own code.
+          python3 ../scripts/check_immutable_wasm.py target/wasm32v1-none/release/soroban_vrf_oracle.wasm
 
   rust-sdk:
     name: Rust SDK (test + package)

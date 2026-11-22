@@ -11,6 +11,7 @@ Throughout: `cd oracle-worker`, Node ≥ 22.12, and `export NETWORK=mainnet`.
 - [ ] CI is green on the commit you deploy.
 - [ ] You have read `V2_SECURITY_MODEL.md` (trust model, rules for consumers)
       and `SECURITY_REVIEW_V2.md` (internal review, not an independent audit).
+- [ ] CI's "Release WASM build" step printed `OK: immutable` for that build.
 - [ ] The WASM you deploy is the CI build of that commit:
       `sha256sum soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.wasm`
       equals the hash printed by the CI job "Release WASM build".
@@ -43,8 +44,8 @@ ADMIN_SECRET=S…(admin master) SIGNERS=G…,G…,G… THRESHOLD=2 node v2_admin
 - [ ] Destroy the admin master secret.
 
 A single key can no longer act as admin. If two signers are lost, governance
-is lost for good (the contract keeps working; it can no longer be rotated or
-upgraded), so keep the three keys in three places.
+is lost for good (the contract keeps working; its keys can no longer be
+rotated or revoked), so keep the three keys in three places.
 
 ## 3. Deploy
 
@@ -59,9 +60,9 @@ ADMIN_PUBLIC=G… ORACLE_STELLAR_SECRET=S… ORACLE_BLS_SECRET_KEY=… node v2_d
 ```
 
 Defaults: fee 0.2 XLM in native XLM, round offset 4, rotation timelock 2 880
-ledgers (~4 h), upgrade timelock 8 640 ledgers (~12 h). The timelocks are
-ledger counts: if you want more wall-clock margin, set
-`ROTATION_TIMELOCK_LEDGERS` / `UPGRADE_TIMELOCK_LEDGERS` higher now. They
+ledgers (~4 h), admin-transfer timelock 8 640 ledgers (~12 h). The timelocks
+are ledger counts: if you want more wall-clock margin, set
+`ROTATION_TIMELOCK_LEDGERS` / `ADMIN_TIMELOCK_LEDGERS` higher now. They
 cannot be changed later.
 
 - [ ] Verify on-chain (read-only): `CONTRACT_ADDRESS=C… node v2_monitor.mjs`
@@ -86,7 +87,7 @@ The timelocks protect users only if someone notices a proposal.
 
 - [ ] Cron, every 5 minutes, on a host with **no keys**:
       `NETWORK=mainnet CONTRACT_ADDRESS=C… node v2_monitor.mjs`
-      and alert on a non-zero exit. It reports pending rotations, upgrades and
+      and alert on a non-zero exit. It reports pending rotations and
       admin transfers, a revoked active epoch, an admin account that is not a
       multisig, a low operator balance and entries close to expiry.
 - [ ] Cron, weekly, with the keeper key only: `node ttl_extend.mjs --mainnet`.
@@ -94,7 +95,7 @@ The timelocks protect users only if someone notices a proposal.
 - [ ] Alert on the worker's `/health` endpoint and on its process being down.
 
 When you intend a governance action yourself, run the monitor with
-`MONITOR_EXPECT=rotation` (or `upgrade`, `admin`) so the expected proposal is
+`MONITOR_EXPECT=rotation` (or `admin`) so the expected proposal is
 reported as information instead of an alert.
 
 ## 6. Publish the SDK and update the pages
@@ -118,6 +119,6 @@ reported as information instead of an alert.
 | Situation | Action |
 |---|---|
 | Operator key suspected stolen | `v2_rotate.mjs revoke <active epoch>` (2 signers, immediate). Pending requests become refundable at once; new requests stop until a rotation executes (~4 h). Then `propose` with new keys. A stolen operator key cannot choose outputs, only withhold. |
-| Unexpected `pending KEY ROTATION / UPGRADE / ADMIN TRANSFER` alert | Two admin signer keys were used without your knowledge. If you still control two signers, cancel it (`v2_rotate.mjs cancel`, `cancel-upgrade` or `cancel-admin-transfer`) and replace the signers. If you do not, you cannot stop it: tell users immediately; the timelock (~4 h for a rotation, ~12 h for an upgrade) is their time to stop using the contract. |
+| Unexpected `pending KEY ROTATION / ADMIN TRANSFER` alert | Two admin signer keys were used without your knowledge. If you still control two signers, cancel it (`v2_rotate.mjs cancel` or `cancel-admin-transfer`) and replace the signers. If you do not, you cannot stop it: tell users immediately; the timelock (~4 h for a rotation, ~12 h for an admin transfer) is their time to stop using the contract. Neither can change a result or the code. |
 | Worker down | Requests expire after 5 minutes and are refundable. Restart; it recovers open requests from recent events. |
 | Planned key rotation | Runbook in `V2_SECURITY_MODEL.md`. |

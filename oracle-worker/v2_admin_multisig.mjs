@@ -11,7 +11,7 @@
  *   - sets the master key's weight to 0.
  *
  * After it, no single key controls the admin role: every governance call
- * (rotation, revocation, upgrade, admin transfer) needs THRESHOLD of the
+ * (rotation, revocation, admin transfer) needs THRESHOLD of the
  * signers. The master secret becomes useless and can be destroyed.
  *
  * Soroban's `require_auth` for a classic account uses the account's signers

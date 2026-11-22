@@ -1,7 +1,7 @@
 # Stellar-VRF V2: security model and operations
 
 Status: **not deployed.** This describes the V2 contract on the
-`v2/security-epochs-fixes` branch. The live Mainnet contract
+`v2/security-epochs` branch. The live Mainnet contract
 (`CAW6KECQ…UPRX`) is V1 and keeps the V1 trust model described in the README.
 
 ## What changes for trust
@@ -13,20 +13,49 @@ Status: **not deployed.** This describes the V2 contract on the
 | Key rotation | instant, by the oracle itself | admin only, 4 h minimum timelock, BLS proof of possession |
 | drand key | rotatable by the oracle | fixed at construction |
 | Consumer callback | runs inside `fulfill()` | separate `deliver()` after the result is final |
-| Code upgrade | none | admin only, 12 h minimum timelock, new requests refused while pending |
+| Code upgrade | none | **none**: the code is immutable; a fix is a new deployment |
 
 The reasoning: BLS signatures are unique. Once the oracle's BLS key and the
 drand key are fixed before the drand round is public, there is exactly one
 valid `gamma` (and so one `beta`) per request. The operator can still refuse to
 answer; it cannot pick an answer.
 
+### What is and is not guaranteed
+
+- **No one can choose or change a result**: not the operator, not the admin,
+  not a requester. The only outside trust is drand's threshold (no group of
+  drand nodes at or above its threshold colluding).
+- **The operator can withhold.** It learns the output a few seconds before it
+  publishes it (once the drand round is out) and can decline to fulfill. The
+  request is then refunded. This gives it no choice of output unless a consumer
+  re-requests for the same event (see the rules below).
+- **No one knows the output when the request is made**: it depends on a drand
+  round that is published 9–12 s later.
+
+How this compares with other VRF services:
+
+| | Can the operator choose? | Does the operator know the output first? | Can one party withhold? | Code replaceable? |
+|---|---|---|---|---|
+| Stellar-VRF V2 | no | yes, seconds before publishing | yes (refund) | no |
+| [Chainlink VRF](https://docs.chain.link/vrf/v2-5/security) | no | yes | yes | no in place; new coordinator per version ([migration](https://docs.chain.link/vrf/v2-5/migration-from-v2)) |
+| [Pyth Entropy](https://docs.pyth.network/entropy/protocol-design) | no | yes, before revealing | yes | — |
+| [Supra dVRF](https://docs.supra.com/dvrf/learn-supra-dvrf/supra-dvrf-architecture-guide) | no | no single node (threshold BLS) | no single node | — |
+
+Removing withholding by a single party needs several independent operators
+holding shares of one threshold BLS key. A threshold BLS signature is an
+ordinary BLS signature, so this contract would verify it unchanged (the epoch
+key becomes the group key); the work is operational (DKG, independent
+operators).
+
 ## Roles
 
 - **Admin**: cold key or multisig Stellar account. Proposes/executes key
-  rotations, revokes epochs, proposes/executes upgrades and admin transfers.
-  Must differ from the operator (enforced). The admin is trusted for upgrades:
-  new code can do anything. Watch `propose_upg` events; requests are paused
-  while one is pending, and the timelock gives consumers time to react.
+  rotations, revokes epochs and proposes/executes admin transfers. Must
+  differ from the operator (enforced). The admin **cannot change any result**:
+  a rotation applies only to requests made after it executes, and revoking an
+  epoch only makes its pending requests refundable (it can stop the service,
+  not steer it). The admin cannot replace the code: there is no upgrade entry
+  point, and CI fails if the WASM imports `update_current_contract_wasm`.
 - **Operator**: hot key on the worker hosts. Can only `fulfill()` requests of
   its own epoch and receives the per-request fee.
 - **drand quicknet**: the randomness beacon. Its group key does not change on
@@ -63,9 +92,9 @@ answer; it cannot pick an answer.
 
 - **Never request new randomness for the same event after a refund.** Whoever
   withheld the first result would get a re-roll. Cancel or void the event.
-- Store `beta` in your own contract from `on_vrf` (or read `get_beta`). After an
-  upgrade the VRF contract's storage is only as trustworthy as the admin; the
-  `fulfill` event in the ledger history is the permanent record.
+- Store `beta` in your own contract from `on_vrf` (or read `get_beta`). Stored
+  results can expire with their TTL; the `fulfill` event in the ledger history
+  is the permanent record.
 - `on_vrf` must check `vrf_contract.require_auth()` and be idempotent.
 - A consumer **contract** that pays the fee from its own balance must
   pre-authorize the fee transfer before calling `request_with_callback`:
@@ -108,7 +137,7 @@ Findings, fixes and verified properties: [`SECURITY_REVIEW_V2.md`](SECURITY_REVI
 
 ## Evidence
 
-- `soroban-contract/src/test.rs`: 78 tests. Every success path uses a real
+- `soroban-contract/src/test.rs`: 74 tests. Every success path uses a real
   drand quicknet beacon (round 32 427 720) and proofs generated with
   `@noble/curves`, recomputed on the Soroban host
   (`test_noble_vector_matches_host_computation`). Rotation keeps old requests

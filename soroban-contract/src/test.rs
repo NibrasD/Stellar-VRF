@@ -11,8 +11,8 @@ extern crate std;
 use crate::testkeys::{TEST_G2_TIMES_2, TEST_G2_TIMES_3};
 use crate::{
     BlsVrfProof, DataKey, EpochStatus, VRFOracleContract, VRFOracleContractClient,
-    BLS12_381_G2_GENERATOR, EXPIRY_ROUNDS, MIN_ROTATION_TIMELOCK_LEDGERS,
-    MIN_UPGRADE_TIMELOCK_LEDGERS, POP_BLS_DST, TIMEOUT_ROUNDS, VRF_DST,
+    BLS12_381_G2_GENERATOR, EXPIRY_ROUNDS, MIN_ADMIN_TIMELOCK_LEDGERS,
+    MIN_ROTATION_TIMELOCK_LEDGERS, POP_BLS_DST, TIMEOUT_ROUNDS, VRF_DST,
 };
 use soroban_sdk::crypto::bls12_381::{Bls12381Fr, Bls12381G2Affine};
 use soroban_sdk::testutils::storage::Persistent as _;
@@ -73,7 +73,7 @@ fn setup_with_fee(fee: i128) -> T {
             &token,
             &fee,
             &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
+            &MIN_ADMIN_TIMELOCK_LEDGERS,
         ),
     );
     let client = VRFOracleContractClient::new(&env, &id);
@@ -301,7 +301,7 @@ fn test_init_getters() {
     assert_eq!(t.client.timeout_rounds(), TIMEOUT_ROUNDS);
     assert_eq!(t.client.expiry_rounds(), EXPIRY_ROUNDS);
     assert!(t.client.pending_rotation().is_none());
-    assert!(t.client.pending_upgrade().is_none());
+    assert!(t.client.pending_admin_transfer().is_none());
 }
 
 fn try_construct(
@@ -310,7 +310,7 @@ fn try_construct(
     drand_pk: [u8; 192],
     offset: u32,
     rot: u32,
-    upg: u32,
+    adm: u32,
 ) {
     let env = Env::default();
     env.mock_all_auths();
@@ -333,42 +333,42 @@ fn try_construct(
             &Address::generate(&env),
             &0i128,
             &rot,
-            &upg,
+            &adm,
         ),
     );
 }
 
 const ROT: u32 = MIN_ROTATION_TIMELOCK_LEDGERS;
-const UPG: u32 = MIN_UPGRADE_TIMELOCK_LEDGERS;
+const ADM: u32 = MIN_ADMIN_TIMELOCK_LEDGERS;
 
 #[test]
 #[should_panic(expected = "admin must differ from oracle operator")]
 fn test_init_rejects_admin_eq_operator() {
-    try_construct(true, E1_PK, FIX_DRAND_PK, OFFSET, ROT, UPG);
+    try_construct(true, E1_PK, FIX_DRAND_PK, OFFSET, ROT, ADM);
 }
 
 #[test]
 #[should_panic(expected = "round_offset below minimum")]
 fn test_init_rejects_low_round_offset() {
-    try_construct(false, E1_PK, FIX_DRAND_PK, 3, ROT, UPG);
+    try_construct(false, E1_PK, FIX_DRAND_PK, 3, ROT, ADM);
 }
 
 #[test]
 #[should_panic(expected = "rotation timelock below minimum")]
 fn test_init_rejects_low_rotation_timelock() {
-    try_construct(false, E1_PK, FIX_DRAND_PK, OFFSET, ROT - 1, UPG);
+    try_construct(false, E1_PK, FIX_DRAND_PK, OFFSET, ROT - 1, ADM);
 }
 
 #[test]
-#[should_panic(expected = "upgrade timelock below minimum")]
-fn test_init_rejects_low_upgrade_timelock() {
-    try_construct(false, E1_PK, FIX_DRAND_PK, OFFSET, ROT, UPG - 1);
+#[should_panic(expected = "admin timelock below minimum")]
+fn test_init_rejects_low_admin_timelock() {
+    try_construct(false, E1_PK, FIX_DRAND_PK, OFFSET, ROT, ADM - 1);
 }
 
 #[test]
 #[should_panic(expected = "oracle pk must differ from drand pk")]
 fn test_init_rejects_identical_keys() {
-    try_construct(false, TEST_G2_TIMES_2, TEST_G2_TIMES_2, OFFSET, ROT, UPG);
+    try_construct(false, TEST_G2_TIMES_2, TEST_G2_TIMES_2, OFFSET, ROT, ADM);
 }
 
 #[test]
@@ -380,7 +380,7 @@ fn test_init_rejects_generator_key() {
         FIX_DRAND_PK,
         OFFSET,
         ROT,
-        UPG,
+        ADM,
     );
 }
 
@@ -389,7 +389,7 @@ fn test_init_rejects_generator_key() {
 fn test_init_rejects_infinity_drand_key() {
     let mut inf = [0u8; 192];
     inf[0] = 0x40;
-    try_construct(false, E1_PK, inf, OFFSET, ROT, UPG);
+    try_construct(false, E1_PK, inf, OFFSET, ROT, ADM);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -509,18 +509,6 @@ fn test_request_with_callback_wrong_fn_rejected() {
     let r = requester(&t);
     t.client
         .request_with_callback(&ctx(&t.env), &r, &r, &Symbol::new(&t.env, "steal"));
-}
-
-#[test]
-fn test_requests_paused_while_upgrade_pending() {
-    let t = setup();
-    let r = requester(&t);
-    t.client
-        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
-    assert!(t.client.try_request(&ctx(&t.env), &r).is_err());
-    t.client.cancel_upgrade(&t.admin);
-    // The rejected request did not consume a nonce.
-    assert_eq!(t.client.request(&ctx(&t.env), &r), FIX_ID1);
 }
 
 #[test]
@@ -768,7 +756,7 @@ fn test_proof_for_another_deployment_rejected() {
             &t.token,
             &0i128,
             &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
+            &MIN_ADMIN_TIMELOCK_LEDGERS,
         ),
     );
     let other = VRFOracleContractClient::new(&t.env, &other);
@@ -793,7 +781,7 @@ fn test_rotation_cannot_make_operator_equal_admin_after_admin_transfer() {
         .propose_key_rotation(&t.admin, &BytesN::from_array(&t.env, &E2_PK), &x, &sig);
     // ...then the admin role is transferred to X...
     t.client.propose_admin_transfer(&t.admin, &x);
-    advance_ledgers(&t.env, MIN_UPGRADE_TIMELOCK_LEDGERS);
+    advance_ledgers(&t.env, MIN_ADMIN_TIMELOCK_LEDGERS);
     t.client.execute_admin_transfer(&t.admin);
     assert_eq!(t.client.admin(), x);
     // ...so executing the rotation would make admin == operator. Refused.
@@ -1110,7 +1098,7 @@ fn test_rotation_pop_from_other_contract_rejected() {
             &t.token,
             &0i128,
             &MIN_ROTATION_TIMELOCK_LEDGERS,
-            &MIN_UPGRADE_TIMELOCK_LEDGERS,
+            &MIN_ADMIN_TIMELOCK_LEDGERS,
         ),
     );
     assert_ne!(other, t.client.address);
@@ -1244,36 +1232,8 @@ fn test_revocation_survives_rotation_and_cancels_pending() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// UPGRADE / ADMIN
+// ADMIN
 // ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-#[should_panic(expected = "unauthorized: not admin")]
-fn test_propose_upgrade_requires_admin() {
-    let t = setup();
-    t.client
-        .propose_upgrade(&t.operator, &BytesN::from_array(&t.env, &[0xAA; 32]));
-}
-
-#[test]
-#[should_panic(expected = "pending upgrade already exists")]
-fn test_double_upgrade_proposal_rejected() {
-    let t = setup();
-    t.client
-        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
-    t.client
-        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xBB; 32]));
-}
-
-#[test]
-#[should_panic(expected = "upgrade timelock not elapsed")]
-fn test_execute_upgrade_before_timelock_rejected() {
-    let t = setup();
-    t.client
-        .propose_upgrade(&t.admin, &BytesN::from_array(&t.env, &[0xAA; 32]));
-    advance_ledgers(&t.env, MIN_UPGRADE_TIMELOCK_LEDGERS - 1);
-    t.client.execute_upgrade(&t.admin);
-}
 
 #[test]
 fn test_admin_transfer_after_timelock() {
@@ -1281,7 +1241,7 @@ fn test_admin_transfer_after_timelock() {
     let new_admin = Address::generate(&t.env);
     t.client.propose_admin_transfer(&t.admin, &new_admin);
     assert!(t.client.try_execute_admin_transfer(&t.admin).is_err());
-    advance_ledgers(&t.env, MIN_UPGRADE_TIMELOCK_LEDGERS);
+    advance_ledgers(&t.env, MIN_ADMIN_TIMELOCK_LEDGERS);
     t.client.execute_admin_transfer(&t.admin);
     assert_eq!(t.client.admin(), new_admin);
 }

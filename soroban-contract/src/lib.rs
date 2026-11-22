@@ -12,11 +12,14 @@
 //!   key. BLS signatures are unique, so with the keys fixed before the drand round
 //!   is public the operator has exactly one valid output per request: it can
 //!   delay or withhold, it cannot choose.
-//! - **Admin** (cold key / multisig): key rotation, epoch revocation, contract
-//!   upgrade and admin transfer, all behind timelocks except revocation. The admin
-//!   is trusted for upgrades: new code can do anything. New requests are refused
-//!   while an upgrade is pending so no request is created under code that is about
-//!   to be replaced.
+//! - **Admin** (cold key / multisig): key rotation, epoch revocation and admin
+//!   transfer, all behind timelocks except revocation. None of these can change
+//!   a pending request's output: rotation only affects requests made after it
+//!   executes, and revocation only makes requests refundable.
+//! - **Code**: immutable. There is no upgrade entry point
+//!   (`update_current_contract_wasm` is never called), so nobody, the admin
+//!   included, can replace the verification logic. A fix ships as a new
+//!   deployment that consumers move to.
 //! - **drand**: the drand public key is fixed at construction. drand keeps the
 //!   group key across reshares; a new key means a new chain, which this contract
 //!   cannot follow anyway (genesis and period are fixed).
@@ -81,7 +84,7 @@ pub const MAX_DERIVE_DOMAIN_LEN: u32 = 64;
 
 /// Minimum timelocks (compile-time floors). Constructor rejects lower values.
 pub const MIN_ROTATION_TIMELOCK_LEDGERS: u32 = 2_880; // ~4 hours
-pub const MIN_UPGRADE_TIMELOCK_LEDGERS: u32 = 8_640; // ~12 hours
+pub const MIN_ADMIN_TIMELOCK_LEDGERS: u32 = 8_640; // ~12 hours
 
 const CONTRACT_VERSION_INIT: u32 = 2;
 const STORAGE_VERSION_INIT: u32 = 1;
@@ -138,14 +141,6 @@ pub struct PendingRotation {
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
-pub struct PendingUpgrade {
-    pub wasm_hash: BytesN<32>,
-    pub proposed_ledger: u32,
-    pub execute_after_ledger: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
 pub struct PendingAdminTransfer {
     pub new_admin: Address,
     pub proposed_ledger: u32,
@@ -180,9 +175,8 @@ pub enum DataKey {
     ContractVersion,
     StorageVersion,
     RotTimelockLedgers,
-    UpgTimelockLedgers,
+    AdminTimelockLedgers,
     PendingRot,
-    PendingUpg,
     PendingAdminXfer,
 
     // ── Persistent Storage (per-epoch) ───────────────────────
@@ -241,7 +235,7 @@ impl VRFOracleContract {
         fee_token: Address,
         fee_amount: i128,
         rotation_timelock_ledgers: u32,
-        upgrade_timelock_ledgers: u32,
+        admin_timelock_ledgers: u32,
     ) {
         if admin == oracle_address {
             panic!("admin must differ from oracle operator");
@@ -249,8 +243,8 @@ impl VRFOracleContract {
         if rotation_timelock_ledgers < MIN_ROTATION_TIMELOCK_LEDGERS {
             panic!("rotation timelock below minimum");
         }
-        if upgrade_timelock_ledgers < MIN_UPGRADE_TIMELOCK_LEDGERS {
-            panic!("upgrade timelock below minimum");
+        if admin_timelock_ledgers < MIN_ADMIN_TIMELOCK_LEDGERS {
+            panic!("admin timelock below minimum");
         }
         if drand_period == 0 {
             panic!("drand period must be > 0");
@@ -292,7 +286,7 @@ impl VRFOracleContract {
         inst.set(&DataKey::ContractVersion, &CONTRACT_VERSION_INIT);
         inst.set(&DataKey::StorageVersion, &STORAGE_VERSION_INIT);
         inst.set(&DataKey::RotTimelockLedgers, &rotation_timelock_ledgers);
-        inst.set(&DataKey::UpgTimelockLedgers, &upgrade_timelock_ledgers);
+        inst.set(&DataKey::AdminTimelockLedgers, &admin_timelock_ledgers);
         bump_instance(&env);
 
         env.events()
@@ -713,95 +707,6 @@ impl VRFOracleContract {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // GOVERNANCE: UPGRADE
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Propose a code upgrade. From now until the upgrade is executed or
-    /// cancelled, `request()` is refused, so no request is ever created under
-    /// code that is about to be replaced.
-    pub fn propose_upgrade(env: Env, admin: Address, wasm_hash: BytesN<32>) {
-        require_admin(&env, &admin);
-
-        let existing: Option<PendingUpgrade> = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingUpg)
-            .unwrap_or(None);
-        if existing.is_some() {
-            panic!("pending upgrade already exists");
-        }
-
-        let current_ledger = env.ledger().sequence();
-        let timelock: u32 = inst_get(&env, &DataKey::UpgTimelockLedgers, "timelock missing");
-        let execute_after = current_ledger
-            .checked_add(timelock)
-            .unwrap_or_else(|| panic!("timelock overflow"));
-
-        env.storage().instance().set(
-            &DataKey::PendingUpg,
-            &Some(PendingUpgrade {
-                wasm_hash: wasm_hash.clone(),
-                proposed_ledger: current_ledger,
-                execute_after_ledger: execute_after,
-            }),
-        );
-        bump_instance(&env);
-
-        env.events().publish(
-            (Symbol::new(&env, "propose_upg"),),
-            (wasm_hash, execute_after),
-        );
-    }
-
-    pub fn execute_upgrade(env: Env, admin: Address) {
-        require_admin(&env, &admin);
-
-        let pending: PendingUpgrade = env
-            .storage()
-            .instance()
-            .get::<DataKey, Option<PendingUpgrade>>(&DataKey::PendingUpg)
-            .unwrap_or(None)
-            .unwrap_or_else(|| panic!("no pending upgrade"));
-        if env.ledger().sequence() < pending.execute_after_ledger {
-            panic!("upgrade timelock not elapsed");
-        }
-
-        let version: u32 = inst_get(&env, &DataKey::ContractVersion, "version missing");
-        let new_version = version
-            .checked_add(1)
-            .unwrap_or_else(|| panic!("version overflow"));
-        env.storage()
-            .instance()
-            .set(&DataKey::ContractVersion, &new_version);
-        env.storage()
-            .instance()
-            .set::<DataKey, Option<PendingUpgrade>>(&DataKey::PendingUpg, &None);
-
-        env.events().publish(
-            (Symbol::new(&env, "upgraded"),),
-            (pending.wasm_hash.clone(), new_version),
-        );
-
-        env.deployer()
-            .update_current_contract_wasm(pending.wasm_hash);
-    }
-
-    pub fn cancel_upgrade(env: Env, admin: Address) {
-        require_admin(&env, &admin);
-        let pending: PendingUpgrade = env
-            .storage()
-            .instance()
-            .get::<DataKey, Option<PendingUpgrade>>(&DataKey::PendingUpg)
-            .unwrap_or(None)
-            .unwrap_or_else(|| panic!("no pending upgrade"));
-        env.storage()
-            .instance()
-            .set::<DataKey, Option<PendingUpgrade>>(&DataKey::PendingUpg, &None);
-        env.events()
-            .publish((Symbol::new(&env, "cancel_upg"),), pending.wasm_hash);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // GOVERNANCE: ADMIN TRANSFER
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -822,7 +727,7 @@ impl VRFOracleContract {
         new_admin.require_auth();
 
         let current_ledger = env.ledger().sequence();
-        let timelock: u32 = inst_get(&env, &DataKey::UpgTimelockLedgers, "timelock missing");
+        let timelock: u32 = inst_get(&env, &DataKey::AdminTimelockLedgers, "timelock missing");
         let execute_after = current_ledger
             .checked_add(timelock)
             .unwrap_or_else(|| panic!("timelock overflow"));
@@ -944,13 +849,6 @@ impl VRFOracleContract {
         env.storage()
             .instance()
             .get(&DataKey::PendingRot)
-            .unwrap_or(None)
-    }
-
-    pub fn pending_upgrade(env: Env) -> Option<PendingUpgrade> {
-        env.storage()
-            .instance()
-            .get(&DataKey::PendingUpg)
             .unwrap_or(None)
     }
 
@@ -1462,15 +1360,6 @@ fn request_internal(env: &Env, context: Bytes, requester: Address, with_callback
 
     if context.len() > MAX_CONTEXT_LEN {
         panic!("context exceeds maximum length");
-    }
-
-    let pending_upgrade: Option<PendingUpgrade> = env
-        .storage()
-        .instance()
-        .get(&DataKey::PendingUpg)
-        .unwrap_or(None);
-    if pending_upgrade.is_some() {
-        panic!("requests paused: upgrade pending");
     }
 
     let (epoch_id, epoch) = load_active_epoch(env);

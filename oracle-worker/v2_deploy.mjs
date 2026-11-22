@@ -14,8 +14,10 @@
  *   ORACLE_BLS_SECRET_KEY   operator BLS secret (hex) for epoch 1.
  *   FEE_STROOPS             per-request fee in native XLM (default 2000000).
  *   ROUND_OFFSET            default 4 (contract minimum).
- *   ROTATION_TIMELOCK_LEDGERS / UPGRADE_TIMELOCK_LEDGERS
+ *   ROTATION_TIMELOCK_LEDGERS / ADMIN_TIMELOCK_LEDGERS
  *                           defaults 2880 (~4 h) / 8640 (~12 h), the minimums.
+ *                           The admin timelock applies to admin transfers. The
+ *                           contract has no upgrade path: its code is fixed.
  *   WASM_PATH               default ../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.wasm
  *
  * The constructor requires the admin AND the operator to authorize, and
@@ -67,7 +69,8 @@ const ORACLE_BLS_PK = blsPublicKey(need("ORACLE_BLS_SECRET_KEY"));
 const FEE = BigInt(process.env.FEE_STROOPS ?? "2000000");
 const OFFSET = Number(process.env.ROUND_OFFSET ?? "4");
 const ROT_TL = Number(process.env.ROTATION_TIMELOCK_LEDGERS ?? "2880");
-const UPG_TL = Number(process.env.UPGRADE_TIMELOCK_LEDGERS ?? "8640");
+if (process.env.UPGRADE_TIMELOCK_LEDGERS) throw new Error("UPGRADE_TIMELOCK_LEDGERS is gone (the contract is immutable); use ADMIN_TIMELOCK_LEDGERS");
+const ADM_TL = Number(process.env.ADMIN_TIMELOCK_LEDGERS ?? "8640");
 const WASM_PATH =
   process.env.WASM_PATH ??
   path.resolve(__dirname, "../soroban-contract/target/wasm32v1-none/release/soroban_vrf_oracle.wasm");
@@ -81,7 +84,7 @@ console.log(`  Admin     : ${ADMIN}`);
 console.log(`  Operator  : ${OPERATOR.publicKey()}`);
 console.log(`  BLS pk    : ${ORACLE_BLS_PK.toString("hex").slice(0, 32)}…`);
 console.log(`  Fee       : ${FEE} stroops (native XLM SAC ${CFG.xlmSac})`);
-console.log(`  Offset    : ${OFFSET} rounds; timelocks rotation ${ROT_TL} / upgrade ${UPG_TL} ledgers`);
+console.log(`  Offset    : ${OFFSET} rounds; timelocks rotation ${ROT_TL} / admin transfer ${ADM_TL} ledgers`);
 console.log(`  WASM      : ${WASM_PATH}`);
 console.log(`  WASM hash : ${wasmHash.toString("hex")}  (compare with the CI build)`);
 
@@ -120,7 +123,7 @@ const constructorArgs = [
   new Address(CFG.xlmSac).toScVal(),
   nativeToScVal(FEE, { type: "i128" }),
   nativeToScVal(ROT_TL, { type: "u32" }),
-  nativeToScVal(UPG_TL, { type: "u32" }),
+  nativeToScVal(ADM_TL, { type: "u32" }),
 ];
 const adminAccount = await server.getAccount(ADMIN);
 const adminSeq = adminAccount.sequenceNumber();
@@ -158,7 +161,7 @@ if (out) {
     feeStroops: FEE.toString(),
     roundOffset: OFFSET,
     rotationTimelockLedgers: ROT_TL,
-    upgradeTimelockLedgers: UPG_TL,
+    adminTimelockLedgers: ADM_TL,
     deployTxHash: out.hash,
     deployedAt: new Date().toISOString(),
   };

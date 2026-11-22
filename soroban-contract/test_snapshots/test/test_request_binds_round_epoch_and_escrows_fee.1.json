@@ -701,6 +701,18 @@
                       "key": {
                         "vec": [
                           {
+                            "symbol": "AdminTimelockLedgers"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u32": 8640
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
                             "symbol": "ContractVersion"
                           }
                         ]
@@ -815,18 +827,6 @@
                       },
                       "val": {
                         "u32": 1
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "UpgTimelockLedgers"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "u32": 8640
                       }
                     }
                   ]
