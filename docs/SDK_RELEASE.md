@@ -182,6 +182,20 @@ from empty directories on 2026-10-17 (Node v24.15.0).
 
 For a future release, add a new table like this one instead of editing it.
  
+## 3.0 Version 3.0.0 (V2 contract) — NOT published
+
+On the `v2/security-epochs` branch both SDKs are versioned **3.0.0**. They
+target the V2 contract only and are breaking against 2.x:
+
+- request ids are no longer sequential (derived from requester + nonce);
+- `VrfProof` has no `publicKey` (the key belongs to the request's epoch);
+- `request` / `fulfill` events carry an epoch id;
+- JS adds `deliver()`, `timeoutRefund()`, `getRequestEpoch()`,
+  `pendingCallback()`.
+
+Publish 3.0.0 only after the V2 contract is live on Mainnet; 2.x stays the
+SDK for the V1 contract.
+
 ## 3.1 Release evidence — 2.0.1
  
 | Field | Value |

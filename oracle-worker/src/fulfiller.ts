@@ -9,6 +9,7 @@ import {
   TransactionBuilder,
   Operation,
   Address,
+  Keypair,
   nativeToScVal,
   xdr,
   rpc,
@@ -16,8 +17,6 @@ import {
 import {
   CONTRACT_ADDRESS,
   NETWORK_PASSPHRASE,
-  ORACLE_KEYPAIR,
-  ORACLE_PUBLIC_KEY,
   TX_FEE,
   MAX_RETRIES,
 } from "./config.js";
@@ -73,6 +72,8 @@ export class FulfillAbortedError extends Error {
  * @param server    - Soroban RPC server
  * @param requestId - The on-chain request ID
  * @param proof     - The complete VRF proof data
+ * @param signer    - Operator account of the request's key epoch (must match
+ *                    the epoch's `oracle_address`, see keys.ts)
  * @param canSubmit - Checked immediately before EVERY attempt (including
  *                    internal retries). Return false to abort — used to stop a
  *                    node that lost leadership mid-retry from submitting.
@@ -91,6 +92,7 @@ export async function submitFulfillment(
   server: rpc.Server,
   requestId: bigint,
   proof: VrfProofData,
+  signer: Keypair,
   canSubmit: () => boolean = () => true,
   beforeSend: (maxFeeStroops: bigint, sendId: string) => Promise<SendGate> = async () => ({ ok: true })
 ): Promise<string> {
@@ -109,7 +111,7 @@ export async function submitFulfillment(
       const proofScVal = buildProofScVal(proof);
 
       // 2. Build the transaction
-      const account = await server.getAccount(ORACLE_PUBLIC_KEY);
+      const account = await server.getAccount(signer.publicKey());
 
       const tx = new TransactionBuilder(account, {
         fee: TX_FEE,
@@ -124,8 +126,6 @@ export async function submitFulfillment(
               nativeToScVal(requestId, { type: "u64" }),
               // proof: BlsVrfProof struct
               proofScVal,
-              // signature: BytesN<64>
-              nativeToScVal(proof.ed25519Signature, { type: "bytes" }),
             ],
           })
         )
@@ -189,7 +189,7 @@ export async function submitFulfillment(
         );
       }
 
-      prepared.sign(ORACLE_KEYPAIR);
+      prepared.sign(signer);
 
       let sent: Awaited<ReturnType<rpc.Server["sendTransaction"]>>;
       try {
@@ -265,9 +265,10 @@ export async function submitFulfillment(
 }
 
 /**
- * Build the BlsVrfProof struct as an ScVal (Soroban struct).
+ * Build the BlsVrfProof struct as an ScVal (Soroban struct). Map keys must be
+ * in ascending order, as the host requires for contracttype structs.
  */
-function buildProofScVal(proof: VrfProofData): xdr.ScVal {
+export function buildProofScVal(proof: VrfProofData): xdr.ScVal {
   return xdr.ScVal.scvMap([
     new xdr.ScMapEntry({
       key: xdr.ScVal.scvSymbol("alpha_seed"),
@@ -288,10 +289,6 @@ function buildProofScVal(proof: VrfProofData): xdr.ScVal {
     new xdr.ScMapEntry({
       key: xdr.ScVal.scvSymbol("gamma_point"),
       val: nativeToScVal(proof.gammaPoint, { type: "bytes" }),
-    }),
-    new xdr.ScMapEntry({
-      key: xdr.ScVal.scvSymbol("public_key"),
-      val: nativeToScVal(proof.publicKey, { type: "bytes" }),
     }),
   ]);
 }
@@ -315,7 +312,7 @@ function txIdentity(prepared: unknown, requestId: bigint, attempt: number): Sent
  * a ledger (`success` or `failed`); throws only when there is no answer
  * (timeout or RPC error), i.e. the outcome is unknown.
  */
-async function pollTransaction(
+export async function pollTransaction(
   server: rpc.Server,
   hash: string,
   maxWaitMs = 120_000

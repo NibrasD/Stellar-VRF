@@ -12,6 +12,13 @@ export function u64ToBeBytes(value: bigint | number): Buffer {
   return buf;
 }
 
+/** Convert a u32 to 4-byte big-endian Buffer */
+export function u32ToBeBytes(value: number): Buffer {
+  const buf = Buffer.alloc(4);
+  buf.writeUInt32BE(value);
+  return buf;
+}
+
 /** SHA-256 hash returning a 32-byte Buffer */
 export function sha256Hash(data: Uint8Array): Buffer {
   return Buffer.from(sha256(data));

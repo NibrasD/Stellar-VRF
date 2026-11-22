@@ -12,7 +12,9 @@ import {
   POLL_INTERVAL_MS,
   ORACLE_PUBLIC_KEY,
   NETWORK_PASSPHRASE,
+  WORKER_CONCURRENCY,
 } from "./config.js";
+import { mapLimit } from "./concurrency.js";
 import { log, sleep } from "./utils.js";
 import { recordListenerHeartbeat } from "./metrics.js";
 import type { OnChainConfig } from "./configCheck.js";
@@ -20,12 +22,14 @@ import type { OnChainConfig } from "./configCheck.js";
 export interface VrfRequestEvent {
   requestId: bigint;
   requester: string;
+  epochId?: number;
   requiredRound: bigint;
   ledger: number;
 }
 
 export interface PendingRequest {
   requestId: bigint;
+  epochId?: number;
   requiredRound: bigint;
 }
 
@@ -42,7 +46,7 @@ const MAX_CONSECUTIVE_POLL_FAILURES = parseInt(
 );
 
 /** getLedgerEntries accepts at most 200 keys; 3 keys per request ID. */
-const RECONCILE_BATCH_IDS = 50;
+const RECONCILE_BATCH_IDS = 100; // × 2 keys per id = the RPC's 200-key limit
 
 // Persistent cursor for event pagination
 let lastCursor: string | undefined;
@@ -76,18 +80,6 @@ export async function initListener(server: rpc.Server): Promise<void> {
     `Listener initialized. Starting from ledger ${lastLedger} ` +
       `(head ${health.latestLedger}, lookback ${lookback})`
   );
-}
-
-/**
- * Read the contract's request counter (`DataKey::Counter`, instance storage).
- *
- * Request IDs are assigned sequentially as `Counter + 1`, so the counter is
- * the highest ID ever issued. This is what lets reconciliation look at the
- * NEWEST requests instead of guessing where the ID range ends.
- */
-export async function readRequestCounter(server: rpc.Server): Promise<bigint> {
-  // Counter is initialised by the contract's __constructor at deploy time.
-  return (await readInstanceInteger(server, "Counter")) ?? 0n;
 }
 
 /**
@@ -155,13 +147,81 @@ export async function readChainConfig(server: rpc.Server): Promise<OnChainConfig
     if (!v) throw new Error(`${name} not found in contract instance storage`);
     return v;
   };
+  const activeEpochId = Number(scValToNative(need("ActiveEpochId")));
+  const active = await readEpoch(server, activeEpochId, { fresh: true });
+  if (!active) throw new Error(`Epoch(${activeEpochId}) not found in contract storage`);
   return {
     drandGenesis: BigInt(scValToNative(need("DrandGenesis")) as bigint | number),
     drandPeriod: BigInt(scValToNative(need("DrandPeriod")) as bigint | number),
     drandPk: new Uint8Array(scValToNative(need("DrandPK")) as Buffer),
-    oraclePk: new Uint8Array(scValToNative(need("OraclePK")) as Buffer),
-    oracleAddress: Address.fromScVal(need("OracleAddr")).toString(),
+    activeEpochId,
+    oraclePk: active.oraclePk,
+    oracleAddress: active.oracleAddress,
   };
+}
+
+/** A key epoch as stored in `DataKey::Epoch(id)`. */
+export interface EpochInfo {
+  oraclePk: Uint8Array;
+  oracleAddress: string;
+  status: "Active" | "Superseded" | "Revoked";
+}
+
+/** Ledger key for a contract persistent entry `name(u32 id)`, e.g. `Epoch(2)`. */
+function u32EntryKey(name: string, id: number): xdr.LedgerKey {
+  return xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: new Address(CONTRACT_ADDRESS).toScAddress(),
+      key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(name), xdr.ScVal.scvU32(id)]),
+      durability: xdr.ContractDataDurability.persistent,
+    })
+  );
+}
+
+/** Decode an `EpochData` ScVal. Exported for tests. */
+export function decodeEpoch(val: xdr.ScVal): EpochInfo {
+  const n = scValToNative(val) as {
+    oracle_bls_pk: Buffer;
+    oracle_address: string;
+    status: string | string[];
+  };
+  const status = (Array.isArray(n.status) ? n.status[0] : n.status) as EpochInfo["status"];
+  return { oraclePk: new Uint8Array(n.oracle_bls_pk), oracleAddress: String(n.oracle_address), status };
+}
+
+// Keys and operator of an epoch never change; only `status` does. Cache the
+// record but re-read it after EPOCH_CACHE_MS so a revocation is noticed.
+const EPOCH_CACHE_MS = 60_000;
+const epochCache = new Map<number, { at: number; info: EpochInfo }>();
+
+/** Read `Epoch(id)` (cached), or null if it does not exist. */
+export async function readEpoch(
+  server: rpc.Server,
+  epochId: number,
+  opts: { fresh?: boolean } = {}
+): Promise<EpochInfo | null> {
+  const hit = epochCache.get(epochId);
+  if (!opts.fresh && hit && Date.now() - hit.at < EPOCH_CACHE_MS) return hit.info;
+  const res = await server.getLedgerEntries(u32EntryKey("Epoch", epochId));
+  const entry = res.entries[0];
+  if (!entry) return null;
+  const info = decodeEpoch((entry.val as any).contractData.val);
+  epochCache.set(epochId, { at: Date.now(), info });
+  return info;
+}
+
+/** Key epoch a request is bound to (`RequestEpoch(id)`), or null if absent. */
+export async function readRequestEpoch(server: rpc.Server, id: bigint): Promise<number | null> {
+  const res = await server.getLedgerEntries(requestEntryKey("RequestEpoch", id));
+  const entry = res.entries[0];
+  if (!entry) return null;
+  return Number(scValToNative((entry.val as any).contractData.val));
+}
+
+/** True while a callback is registered for the request and not yet delivered. */
+export async function hasPendingCallback(server: rpc.Server, id: bigint): Promise<boolean> {
+  const res = await server.getLedgerEntries(requestEntryKey("CallbackContract", id));
+  return res.entries.length > 0;
 }
 
 /** Requester address of a request (`DataKey::Requester(id)`), or null if absent. */
@@ -190,134 +250,97 @@ function requestEntryKey(name: string, id: bigint): xdr.LedgerKey {
 }
 
 /**
- * Reconcile against contract STATE rather than events.
+ * Recover requests that still need fulfilling, from the chain rather than
+ * from this process's memory.
  *
- * Events alone cannot guarantee delivery: the cursor is in-memory, and the RPC
- * only retains a finite event window. After an outage longer than that window,
- * a request whose `request` event has aged out would never be seen again.
+ * V2 request ids are derived from the requester and its nonce (so that
+ * requests by different accounts never conflict in a ledger); they cannot be
+ * enumerated by counting. They do not need to be: `fulfill()` is only accepted
+ * for `TIMEOUT_ROUNDS` after the bound round (5 minutes), so every request
+ * that can still be fulfilled emitted its `request` event within the last few
+ * minutes. Reconciliation therefore:
  *
- * How it works:
- *   1. Read `Counter` — the highest request ID issued.
- *   2. Walk IDs from the newest downwards (bounded by `maxScan`), reading
- *      `Fulfilled`, `Refunded` and `RequestRound` for each directly from ledger
- *      storage via batched `getLedgerEntries` — one RPC call per 50 IDs, no
- *      simulations, no oracle account lookup.
- *   3. A request is pending iff `Fulfilled == false` and `Refunded != true`.
+ *   1. lists the `request` events of the last `RECONCILE_LOOKBACK_LEDGERS`
+ *      ledgers (default 600, about 50 minutes: ten times the window), and
+ *   2. reads `Fulfilled` / `Refunded` for those ids directly from ledger
+ *      storage (batched `getLedgerEntries`), keeping the ones that are still
+ *      open. V2 writes these markers only when they become true.
  *
- * Entries that no longer exist (TTL-expired / archived) are skipped: `fulfill()`
- * could not succeed on them anyway.
- *
- * Returned oldest-first so the requests closest to their timeout are served
- * first.
- *
- * The previous implementation scanned IDs 1..200 upwards and stopped at the
- * first gap, which silently stopped finding new requests once the contract had
- * issued more than 200 IDs.
+ * This is independent of the live listener's cursor, so it also catches an
+ * event the listener skipped. Returned oldest-first: the requests closest to
+ * their deadline are served first.
  */
 export async function findPendingRequests(
   server: rpc.Server,
-  maxScan = parseInt(process.env.RECONCILE_MAX_SCAN || "1000", 10)
+  lookbackLedgers = parseInt(process.env.RECONCILE_LOOKBACK_LEDGERS || "600", 10)
 ): Promise<PendingRequest[]> {
-  const counter = await readRequestCounter(server);
+  const health = await server.getHealth();
+  const startLedger = clampToRetention(health.latestLedger - Math.max(1, lookbackLedgers), health);
+  const filters: rpc.Api.EventFilter[] = [
+    {
+      type: "contract",
+      contractIds: [CONTRACT_ADDRESS],
+      topics: [[xdr.ScVal.scvSymbol("request").toXDR("base64")]],
+    },
+  ];
+
+  const recent = new Map<bigint, VrfRequestEvent>();
+  let cursor: string | undefined;
+  for (let page = 0; page < RECONCILE_MAX_PAGES; page++) {
+    const response: any = await server.getEvents(
+      cursor
+        ? { filters, limit: RECONCILE_PAGE_SIZE, cursor }
+        : { filters, limit: RECONCILE_PAGE_SIZE, startLedger }
+    );
+    const batch = response.events ?? [];
+    for (const event of batch) {
+      const parsed = parseRequestEvent(event);
+      if (parsed) recent.set(parsed.requestId, parsed);
+    }
+    if (batch.length < RECONCILE_PAGE_SIZE || !response.cursor) break;
+    cursor = response.cursor;
+  }
+
+  const candidates = [...recent.values()].sort((a, b) => a.ledger - b.ledger);
   const pending: PendingRequest[] = [];
-  if (counter === 0n) {
-    recordListenerHeartbeat();
-    log.info("Reconciliation: contract has issued no requests yet.");
-    return pending;
+  for (let i = 0; i < candidates.length; i += RECONCILE_BATCH_IDS) {
+    const chunk = candidates.slice(i, i + RECONCILE_BATCH_IDS);
+    const res = await server.getLedgerEntries(
+      ...chunk.flatMap((c) => [
+        requestEntryKey("Fulfilled", c.requestId),
+        requestEntryKey("Refunded", c.requestId),
+      ])
+    );
+    const closed = new Set<bigint>();
+    for (const entry of res.entries) {
+      const data = (entry.val as any).contractData;
+      const key = scValToNative(data.key);
+      if (Array.isArray(key) && key.length === 2 && scValToNative(data.val) === true) {
+        closed.add(BigInt(key[1]));
+      }
+    }
+    for (const c of chunk) {
+      if (!closed.has(c.requestId)) {
+        pending.push({ requestId: c.requestId, requiredRound: c.requiredRound, epochId: c.epochId });
+      }
+    }
   }
-
-  const window = BigInt(Math.max(1, maxScan));
-  const lowest = counter - window + 1n;
-  const floor = lowest > 1n ? lowest : 1n;
-
-  await scanIdRange(server, floor, counter, pending);
-
-  // Older IDs: sweep one more window per pass with a cursor that walks down to
-  // 1 and then wraps. The newest window is checked every pass; every older ID
-  // is checked at least once every ceil((floor-1)/maxScan) passes, so after a
-  // long outage with heavy traffic nothing stays undiscovered forever.
-  let sweep: { lo: bigint; hi: bigint } | null = null;
-  if (floor > 1n) {
-    let hi = olderSweepCursor !== null && olderSweepCursor < floor ? olderSweepCursor : floor - 1n;
-    if (hi < 1n) hi = floor - 1n;
-    const lo = hi - window + 1n > 1n ? hi - window + 1n : 1n;
-    await scanIdRange(server, lo, hi, pending);
-    olderSweepCursor = lo > 1n ? lo - 1n : null; // null → wrap to the top next pass
-    sweep = { lo, hi };
-  } else {
-    olderSweepCursor = null;
-  }
-
-  pending.sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
   recordListenerHeartbeat();
 
-  const scanned = `${floor}..${counter}` + (sweep ? ` + older ${sweep.lo}..${sweep.hi}` : "");
+  const scanned = `${recent.size} request event(s) since ledger ${startLedger}`;
   if (pending.length) {
     log.warn(
-      `Reconciliation found ${pending.length} unfulfilled request(s) ` +
-        `(scanned ${scanned}): ` +
+      `Reconciliation found ${pending.length} open request(s) (${scanned}): ` +
         pending.map((p) => String(p.requestId)).join(", ")
     );
   } else {
-    log.info(`Reconciliation: no outstanding requests (scanned ${scanned}).`);
+    log.info(`Reconciliation: no open requests (${scanned}).`);
   }
   return pending;
 }
 
-/**
- * Position of the rolling sweep over IDs older than the newest window.
- * In-memory: after a restart the sweep restarts from the top, which only
- * re-checks IDs (idempotent), never skips them.
- */
-let olderSweepCursor: bigint | null = null;
-
-/** Test hook: reset the older-ID sweep. */
-export function resetReconcileSweep(): void {
-  olderSweepCursor = null;
-}
-
-async function scanIdRange(
-  server: rpc.Server,
-  floor: bigint,
-  top: bigint,
-  pending: PendingRequest[]
-): Promise<void> {
-  for (let hi = top; hi >= floor; hi -= BigInt(RECONCILE_BATCH_IDS)) {
-    const ids: bigint[] = [];
-    for (let id = hi; id >= floor && id > hi - BigInt(RECONCILE_BATCH_IDS); id--) {
-      ids.push(id);
-    }
-
-    const keys = ids.flatMap((id) => [
-      requestEntryKey("Fulfilled", id),
-      requestEntryKey("Refunded", id),
-      requestEntryKey("RequestRound", id),
-    ]);
-    const res = await server.getLedgerEntries(...keys);
-
-    const fulfilled = new Map<bigint, boolean>();
-    const refunded = new Map<bigint, boolean>();
-    const rounds = new Map<bigint, bigint>();
-    for (const entry of res.entries) {
-      const data = (entry.val as any).contractData;
-      const key = scValToNative(data.key);
-      if (!Array.isArray(key) || key.length !== 2) continue;
-      const [name, rawId] = key;
-      const id = BigInt(rawId);
-      const value = scValToNative(data.val);
-      if (name === "Fulfilled") fulfilled.set(id, value === true);
-      else if (name === "Refunded") refunded.set(id, value === true);
-      else if (name === "RequestRound") rounds.set(id, BigInt(value));
-    }
-
-    for (const id of ids) {
-      const round = rounds.get(id);
-      if (fulfilled.get(id) === false && refunded.get(id) !== true && round !== undefined) {
-        pending.push({ requestId: id, requiredRound: round });
-      }
-    }
-  }
-}
+const RECONCILE_PAGE_SIZE = 200;
+const RECONCILE_MAX_PAGES = 50;
 
 /**
  * Clamp a candidate startLedger so it always sits inside the RPC's retention
@@ -453,7 +476,15 @@ function parseRequestEvent(
     const native = scValToNative(val);
 
     // scValToNative returns the tuple as an array
-    if (Array.isArray(native) && native.length >= 3) {
+    if (Array.isArray(native) && native.length >= 4) {
+      return {
+        requestId: BigInt(native[0]),
+        requester: native[1].toString(),
+        epochId: Number(native[2]),
+        requiredRound: BigInt(native[3]),
+        ledger: event.ledger,
+      };
+    } else if (Array.isArray(native) && native.length >= 3) {
       return {
         requestId: BigInt(native[0]),
         requester: native[1].toString(),
@@ -588,8 +619,10 @@ export async function startListenerLoop(
       );
     }
 
-    for (const event of events) {
-      if (isActive && !isActive()) break;
+    // Handle a poll's events concurrently (bounded). The handler serializes
+    // its own on-chain sends; see concurrency.ts for why this is not a queue.
+    await mapLimit(events, WORKER_CONCURRENCY, async (event) => {
+      if (isActive && !isActive()) return;
       try {
         await handler(event);
       } catch (err) {
@@ -599,7 +632,7 @@ export async function startListenerLoop(
           }`
         );
       }
-    }
+    });
 
     if (
       options.periodic &&

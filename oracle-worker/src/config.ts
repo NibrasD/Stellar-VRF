@@ -29,8 +29,9 @@ for (const p of candidates) {
   }
 }
 
-import { Keypair, Networks } from "@stellar/stellar-sdk";
+import { Networks } from "@stellar/stellar-sdk";
 import { drandVerificationPolicyError, redisPolicyError } from "./policy.js";
+import { makeKeySet, type OracleKeySet } from "./keys.js";
 
 function requireEnv(key: string): string {
   const val = process.env[key];
@@ -58,15 +59,56 @@ export const NETWORK_PASSPHRASE = optionalEnv(
 
 export const CONTRACT_ADDRESS = requireEnv("CONTRACT_ADDRESS");
 
-// Oracle Stellar keypair (Ed25519)
-const oracleStellarSecret = requireEnv("ORACLE_STELLAR_SECRET");
-export const ORACLE_KEYPAIR = Keypair.fromSecret(oracleStellarSecret);
-export const ORACLE_PUBLIC_KEY = ORACLE_KEYPAIR.publicKey();
-export const ORACLE_ED25519_PK = ORACLE_KEYPAIR.rawPublicKey(); // 32 bytes
+// Oracle key sets (see keys.ts). `current` serves the active key epoch;
+// `previous` (optional) keeps serving requests that were created before the
+// last rotation. Set both during a rotation: new keys as current, old keys as
+// previous. Drop `previous` once its epoch has no pending requests left.
+export const ORACLE_CURRENT_KEYS: OracleKeySet = makeKeySet(
+  "current",
+  requireEnv("ORACLE_STELLAR_SECRET"),
+  requireEnv("ORACLE_BLS_SECRET_KEY"),
+  "ORACLE_BLS_SECRET_KEY"
+);
+const previousStellar = process.env.ORACLE_PREVIOUS_STELLAR_SECRET;
+const previousBls = process.env.ORACLE_PREVIOUS_BLS_SECRET_KEY;
+if (!!previousStellar !== !!previousBls) {
+  throw new Error(
+    "Set both ORACLE_PREVIOUS_STELLAR_SECRET and ORACLE_PREVIOUS_BLS_SECRET_KEY, or neither"
+  );
+}
+export const ORACLE_PREVIOUS_KEYS: OracleKeySet | null =
+  previousStellar && previousBls
+    ? makeKeySet("previous", previousStellar, previousBls, "ORACLE_PREVIOUS_BLS_SECRET_KEY")
+    : null;
+export const ORACLE_KEYS: OracleKeySet[] = ORACLE_PREVIOUS_KEYS
+  ? [ORACLE_CURRENT_KEYS, ORACLE_PREVIOUS_KEYS]
+  : [ORACLE_CURRENT_KEYS];
 
-// Oracle BLS12-381 private key (scalar)
-export const ORACLE_BLS_SECRET_HEX = requireEnv("ORACLE_BLS_SECRET_KEY");
-export const ORACLE_BLS_SECRET = BigInt("0x" + ORACLE_BLS_SECRET_HEX);
+// The current operator account: source of read-only simulations and the
+// account whose balance the fee guard watches.
+export const ORACLE_KEYPAIR = ORACLE_CURRENT_KEYS.stellar;
+export const ORACLE_PUBLIC_KEY = ORACLE_KEYPAIR.publicKey();
+
+/**
+ * After a successful fulfill of a callback request, also submit `deliver()`
+ * (best effort, one attempt, bounded by the resource guard and
+ * DELIVER_MAX_RESOURCE_FEE_STROOPS). The result is final either way; consumers can
+ * call `deliver()` themselves.
+ */
+export const AUTO_DELIVER = optionalEnv("AUTO_DELIVER", "true").toLowerCase() !== "false";
+/**
+ * Cap on the RESOURCE fee of a deliver() transaction (the part the consumer's
+ * `on_vrf` controls). The oracle pays for deliver(), and the request fee must
+ * also cover fulfill(), so keep this well below the contract's fee. 300 000
+ * stroops = 0.03 XLM. An `on_vrf` that costs more is left for the consumer to
+ * deliver itself.
+ */
+export const DELIVER_MAX_RESOURCE_FEE_STROOPS = BigInt(
+  optionalEnv("DELIVER_MAX_RESOURCE_FEE_STROOPS", "300000")
+);
+
+/** Requests handled at once (waiting for drand / building proofs). Sends stay serialized per account. */
+export const WORKER_CONCURRENCY = Math.max(1, parseInt(optionalEnv("WORKER_CONCURRENCY", "16"), 10));
 
 // ─── drand ──────────────────────────────────────────────────────────────────
 
@@ -169,6 +211,9 @@ export const TX_FEE = optionalEnv("TX_FEE", "1000000");
 
 export const VRF_DST = "SOROBAN_VRF_BLS12381G1_XMD:SHA-256_SSWU_RO_";
 export const BETA_DOMAIN = "VREP_BETA_V1";
+export const ALPHA_DOMAIN = "STELLAR_VRF_ALPHA_V2";
+/** Contract constants (lib.rs): fulfill() is rejected after this many rounds past the bound round. */
+export const TIMEOUT_ROUNDS = 100;
 
 export function printConfig(): void {
   console.log("╔═══════════════════════════════════════════════════════════╗");
@@ -177,6 +222,10 @@ export function printConfig(): void {
   console.log(`║ RPC:        ${SOROBAN_RPC_URL}`);
   console.log(`║ Contract:   ${CONTRACT_ADDRESS}`);
   console.log(`║ Oracle:     ${ORACLE_PUBLIC_KEY}`);
+  if (ORACLE_PREVIOUS_KEYS) {
+    console.log(`║ Previous:   ${ORACLE_PREVIOUS_KEYS.stellar.publicKey()} (old epoch requests)`);
+  }
+  console.log(`║ Deliver:    ${AUTO_DELIVER ? "auto (best effort)" : "off"}`);
   console.log(`║ Network:    ${NETWORK_PASSPHRASE}`);
   console.log(`║ drand API:  ${DRAND_API_URL}`);
   console.log(

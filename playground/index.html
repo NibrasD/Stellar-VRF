@@ -626,7 +626,7 @@
               <div class="val">${esc(String(proof.drand_round))}</div>
               <div class="desc">BLS12-381 quicknet beacon round used</div></div>
             <div class="pf"><div class="name">Oracle Public Key (192 bytes)</div>
-              <div class="val">${esc(toHex(proof.public_key).slice(0,40))}…</div>
+              <div class="val">${proof.public_key ? esc(toHex(proof.public_key).slice(0,40)) + "…" : "(V2: read from the request's key epoch)"}</div>
               <div class="desc">G2 point — verifiable identity of oracle</div></div>
             <div class="pf"><div class="name">drand Signature (96 bytes)</div>
               <div class="val">${esc(toHex(proof.drand_signature).slice(0,40))}…</div>
